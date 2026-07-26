@@ -1,0 +1,9 @@
+.git/
+.gitignore
+server/src/
+server/node_modules/
+server/dump.json
+server/test_workflow.js
+artwork/
+scripts/
+*.mcpb

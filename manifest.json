@@ -1,0 +1,67 @@
+{
+  "manifest_version": "0.3",
+  "name": "rimsynapse-mcp",
+  "display_name": "RimSynapse MCP",
+  "version": "1.1.0",
+  "description": "GitHub project management plus a local RimWorld build/launch/log harness for the RimSynapse mod ecosystem.",
+  "long_description": "Provides two families of tools. GitHub tools manage issues, project boards, wikis and testing plans across the RimSynapse organization. RimWorld tools build the mods in dependency order, deploy them into the game's Mods folder, launch RimWorld for automated smoke or TestRunner runs, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and [SYNAPSE-TEST] results.",
+  "author": {
+    "name": "RimSynapse"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "GITHUB_TOKEN": "${user_config.github_token}",
+        "RIMSYNAPSE_ROOT": "${user_config.rimsynapse_root}",
+        "RIMSYNAPSE_HARNESS": "${__dirname}/harness"
+      }
+    }
+  },
+  "tools": [
+    { "name": "create_issue", "description": "Create a GitHub issue in a RimSynapse repository" },
+    { "name": "search_issues", "description": "Search issues across RimSynapse repositories" },
+    { "name": "add_project_item", "description": "Add an issue to the project board" },
+    { "name": "get_project_items", "description": "List items on the project board" },
+    { "name": "update_project_item_status", "description": "Move a project item to a different status column" },
+    { "name": "cleanup_project_board", "description": "Tidy up stale entries on the project board" },
+    { "name": "update_project_item_iteration", "description": "Set the iteration field on a project item" },
+    { "name": "get_file_content", "description": "Read a file from a repository" },
+    { "name": "create_or_update_file", "description": "Create or update a file in a repository" },
+    { "name": "create_testing_plan_issues", "description": "Attach a testing plan to an issue and mark it as Testing" },
+    { "name": "sync_repo_wiki", "description": "Push Learning markdown to a repository wiki" },
+    { "name": "query_wiki_database", "description": "Query the wiki database" },
+    { "name": "build_mods", "description": "Build RimSynapse mods with dotnet in dependency order" },
+    { "name": "deploy_mods", "description": "Symlink the mods into the RimWorld Mods folder" },
+    { "name": "launch_rimworld", "description": "Launch RimWorld for a smoke or TestRunner run and stop it afterwards" },
+    { "name": "read_player_log", "description": "Parse and classify RimWorld's Player.log since the last launch" },
+    { "name": "run_tests", "description": "Build, launch with the TestRunner, and parse the log in one call" }
+  ],
+  "keywords": ["rimworld", "rimsynapse", "github", "modding", "testing"],
+  "license": "MIT",
+  "user_config": {
+    "github_token": {
+      "type": "string",
+      "title": "GitHub Token",
+      "description": "Personal access token with 'repo' scope. Required for the GitHub issue, project and wiki tools; the RimWorld build/launch tools work without it.",
+      "required": false,
+      "sensitive": true
+    },
+    "rimsynapse_root": {
+      "type": "directory",
+      "title": "RimSynapse Workspace",
+      "description": "Folder containing the RimSynapse mod repos and the _harness scripts (the folder with Core/, Factions/, _harness/).",
+      "required": false,
+      "default": "C:\\github\\rimsynapse"
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { workspaceRoot } from "./rimworldDev";
 
 export const gameIpcTools = [
     {
@@ -35,8 +36,21 @@ export const gameIpcTools = [
     }
 ];
 
-const toolInputPath = "d:/github/rimsynapse/Core/tool_input.json";
-const toolOutputPath = "d:/github/rimsynapse/Core/tool_output.json";
+// Both ends of this channel must agree on the directory. The C# side
+// (SynapseGameComponent.PollScriptInputFile) resolves it from the Core mod's own folder, so
+// these follow the same workspace root instead of a hardcoded drive; RIMSYNAPSE_ROOT
+// overrides both.
+function coreDir(): string {
+    return path.join(workspaceRoot(), "Core");
+}
+
+function toolInputFile(): string {
+    return path.join(coreDir(), "tool_input.json");
+}
+
+function toolOutputFile(): string {
+    return path.join(coreDir(), "tool_output.json");
+}
 
 async function callInGameTool(name: string, args: any): Promise<any> {
     const requestPayload = {
@@ -45,21 +59,21 @@ async function callInGameTool(name: string, args: any): Promise<any> {
     };
     
     // Clean old output file if it exists
-    if (fs.existsSync(toolOutputPath)) {
-        try { fs.unlinkSync(toolOutputPath); } catch (e) {}
+    if (fs.existsSync(toolOutputFile())) {
+        try { fs.unlinkSync(toolOutputFile()); } catch (e) {}
     }
     
-    fs.writeFileSync(toolInputPath, JSON.stringify(requestPayload, null, 2), "utf8");
+    fs.writeFileSync(toolInputFile(), JSON.stringify(requestPayload, null, 2), "utf8");
     
     // Poll for tool_output.json for up to 10 seconds (100 iterations * 100ms)
     for (let i = 0; i < 100; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        if (fs.existsSync(toolOutputPath)) {
+        if (fs.existsSync(toolOutputFile())) {
             try {
-                const outputContent = fs.readFileSync(toolOutputPath, "utf8");
+                const outputContent = fs.readFileSync(toolOutputFile(), "utf8");
                 const parsed = JSON.parse(outputContent);
-                fs.unlinkSync(toolOutputPath);
+                fs.unlinkSync(toolOutputFile());
                 return parsed;
             } catch (err: any) {
                 // If file is partially written or locked, let it poll again
