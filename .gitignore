@@ -1,2 +1,8 @@
 github_token.txt
 .env
+
+# packaged MCP bundle (build artifact)
+rimsynapse-mcp.mcpb
+
+# harness runtime state
+harness/.logmarker

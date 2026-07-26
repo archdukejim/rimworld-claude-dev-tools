@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.gameIpcTools = void 0;
 exports.handleGameIpcTool = handleGameIpcTool;
 const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const rimworldDev_1 = require("./rimworldDev");
 exports.gameIpcTools = [
     {
         name: "list_game_tools",
@@ -69,29 +71,40 @@ exports.gameIpcTools = [
         }
     }
 ];
-const toolInputPath = "d:/github/rimsynapse/Core/tool_input.json";
-const toolOutputPath = "d:/github/rimsynapse/Core/tool_output.json";
+// Both ends of this channel must agree on the directory. The C# side
+// (SynapseGameComponent.PollScriptInputFile) resolves it from the Core mod's own folder, so
+// these follow the same workspace root instead of a hardcoded drive; RIMSYNAPSE_ROOT
+// overrides both.
+function coreDir() {
+    return path.join((0, rimworldDev_1.workspaceRoot)(), "Core");
+}
+function toolInputFile() {
+    return path.join(coreDir(), "tool_input.json");
+}
+function toolOutputFile() {
+    return path.join(coreDir(), "tool_output.json");
+}
 async function callInGameTool(name, args) {
     const requestPayload = {
         name,
         arguments: args
     };
     // Clean old output file if it exists
-    if (fs.existsSync(toolOutputPath)) {
+    if (fs.existsSync(toolOutputFile())) {
         try {
-            fs.unlinkSync(toolOutputPath);
+            fs.unlinkSync(toolOutputFile());
         }
         catch (e) { }
     }
-    fs.writeFileSync(toolInputPath, JSON.stringify(requestPayload, null, 2), "utf8");
+    fs.writeFileSync(toolInputFile(), JSON.stringify(requestPayload, null, 2), "utf8");
     // Poll for tool_output.json for up to 10 seconds (100 iterations * 100ms)
     for (let i = 0; i < 100; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
-        if (fs.existsSync(toolOutputPath)) {
+        if (fs.existsSync(toolOutputFile())) {
             try {
-                const outputContent = fs.readFileSync(toolOutputPath, "utf8");
+                const outputContent = fs.readFileSync(toolOutputFile(), "utf8");
                 const parsed = JSON.parse(outputContent);
-                fs.unlinkSync(toolOutputPath);
+                fs.unlinkSync(toolOutputFile());
                 return parsed;
             }
             catch (err) {
