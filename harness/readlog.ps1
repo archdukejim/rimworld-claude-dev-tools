@@ -34,7 +34,10 @@ $patterns = [ordered]@{
     missingDependency   = '(?i)requires the mod|which is not loaded|you are missing|is not loaded'
     versionWarning      = '(?i)made for a different version|different version of RimWorld|not compatible with the current'
     xmlError            = '(?i)XML error|Could not (load|find|resolve)[^\n]*(Def|type)|Def named .* not found|Config error'
-    exception           = '(?i)exception|stacktrace'
+    # Match the shape of a thrown-exception report, not merely the word "exception".
+    # Code legitimately logs *about* exceptions (e.g. a handled parse warning naming the type),
+    # and treating those as failures produced false blocking results.
+    exception           = '(?i)Exception in |Unhandled exception|[\w.]+Exception:|stacktrace'
     error               = '(?i)^\s*(\[[^\]]*\])?\s*error\b|^Verse\.Log'
 }
 $cat = @{}; foreach ($k in $patterns.Keys) { $cat[$k] = @() }
