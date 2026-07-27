@@ -29,6 +29,19 @@ export const issueTools = [
             },
             required: ["query"]
         }
+    },
+    {
+        name: "add_issue_comment",
+        description: "Add a comment to an existing GitHub issue or pull request",
+        inputSchema: {
+            type: "object",
+            properties: {
+                repo: { type: "string", description: "The name of the repository" },
+                issueNumber: { type: "number", description: "The number of the issue or pull request" },
+                body: { type: "string", description: "The markdown text of the comment to add" }
+            },
+            required: ["repo", "issueNumber", "body"]
+        }
     }
 ];
 
@@ -52,6 +65,16 @@ export async function handleIssueTool(name: string, args: any, octokit: Octokit,
             url: i.html_url,
             state: i.state
         })), null, 2) }] };
+    }
+
+    if (name === "add_issue_comment") {
+        const { data } = await octokit.rest.issues.createComment({
+            owner: org,
+            repo: args.repo,
+            issue_number: args.issueNumber,
+            body: args.body
+        });
+        return { content: [{ type: "text", text: `Comment posted: ${data.html_url}` }] };
     }
     
     throw new Error(`Unknown issue tool: ${name}`);

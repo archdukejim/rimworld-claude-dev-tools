@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RimSynapse Local MCP Control Panel</title>
+    <!-- Modern Premium Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #080a10;
+            --panel-bg: rgba(17, 22, 37, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f7fafc;
+            --text-secondary: #a0aec0;
+            --cyan-glow: #00f2fe;
+            --purple-glow: #4facfe;
+            --accent-green: #00ff87;
+            --accent-red: #ff007f;
+            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            --font-main: 'Inter', sans-serif;
+            --font-mono: 'Fira Code', monospace;
+            --font-display: 'Orbitron', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(79, 172, 254, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(0, 242, 254, 0.05) 0%, transparent 40%);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 2rem 1rem;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1100px;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Header Styling */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            box-shadow: var(--glass-shadow);
+        }
+
+        .logo-group {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, var(--purple-glow), var(--cyan-glow));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-display);
+            font-weight: 900;
+            font-size: 1.5rem;
+            color: #080a10;
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.4);
+        }
+
+        .title-area h1 {
+            font-family: var(--font-display);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            background: linear-gradient(to right, #ffffff, var(--cyan-glow));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .title-area p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .server-badge {
+            font-family: var(--font-display);
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+            padding: 0.4rem 0.8rem;
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-secondary);
+        }
+
+        /* Dashboard Grid Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        /* Glassmorphic Panel Card */
+        .card {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            box-shadow: var(--glass-shadow);
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, transparent, rgba(0, 242, 254, 0.2), transparent);
+        }
+
+        .card:hover {
+            border-color: rgba(0, 242, 254, 0.2);
+        }
+
+        .card-title {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.75rem;
+        }
+
+        /* Status Widget Elements */
+        .status-display {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .status-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            position: relative;
+        }
+
+        .status-indicator.running {
+            background-color: var(--accent-green);
+            box-shadow: 0 0 12px var(--accent-green);
+            animation: pulse-green-glow 2s infinite;
+        }
+
+        .status-indicator.stopped {
+            background-color: var(--accent-red);
+            box-shadow: 0 0 12px var(--accent-red);
+        }
+
+        @keyframes pulse-green-glow {
+            0% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 135, 0.6);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(0, 255, 135, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 135, 0);
+            }
+        }
+
+        .status-text-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .status-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-value {
+            font-family: var(--font-display);
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 2px;
+        }
+
+        /* Key-Value Details List */
+        .details-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+
+        .details-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            padding: 0.2rem 0;
+        }
+
+        .details-key {
+            color: var(--text-secondary);
+        }
+
+        .details-val {
+            font-family: var(--font-mono);
+            font-weight: 500;
+            color: #ffffff;
+        }
+
+        /* Forms and Controls */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .form-input {
+            width: 100%;
+            background: rgba(8, 10, 16, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            color: #ffffff;
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-input:focus {
+            border-color: var(--cyan-glow);
+            box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+        }
+
+        .form-input:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        /* Action Buttons */
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        .btn {
+            font-family: var(--font-display);
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            padding: 1rem;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            outline: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+        }
+
+        .btn-launch {
+            background: linear-gradient(135deg, var(--purple-glow) 0%, var(--cyan-glow) 100%);
+            color: #080a10;
+        }
+
+        .btn-launch:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 242, 254, 0.3);
+        }
+
+        .btn-launch:active {
+            transform: translateY(0);
+        }
+
+        .btn-launch:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #d53f8c 0%, var(--accent-red) 100%);
+            color: #ffffff;
+        }
+
+        .btn-stop:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 0, 127, 0.3);
+        }
+
+        .btn-stop:active {
+            transform: translateY(0);
+        }
+
+        .btn-stop:disabled {
+            background: rgba(255, 255, 255, 0.02);
+            color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.02);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Real-time Console Log Box */
+        .console-card {
+            grid-column: 1 / -1;
+            padding: 1.5rem;
+        }
+
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .console-controls {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+        }
+
+        .console-checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .console-checkbox-group input {
+            cursor: pointer;
+            accent-color: var(--cyan-glow);
+        }
+
+        .btn-clear {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.3rem 0.75rem;
+            font-size: 0.75rem;
+            font-family: var(--font-main);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-clear:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .console-log-box {
+            background: #04060a;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+            height: 250px;
+            padding: 1rem;
+            overflow-y: auto;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: #d1d5db;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .log-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-stdout {
+            color: #a3e635;
+        }
+
+        .log-stderr {
+            color: #f87171;
+            font-weight: 500;
+        }
+
+        .log-system {
+            color: #38bdf8;
+            font-style: italic;
+        }
+
+        /* Documentation & Quick Guide Card */
+        .doc-card {
+            grid-column: 1 / -1;
+        }
+
+        .doc-intro {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .endpoint-block {
+            background: rgba(8, 10, 16, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .method-badge {
+            font-family: var(--font-display);
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .method-post {
+            background: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .method-get {
+            background: rgba(52, 211, 153, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+
+        .endpoint-uri {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: #ffffff;
+        }
+
+        .code-snippet {
+            background: #04060a;
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: #d1d5db;
+            overflow-x: auto;
+            white-space: pre;
+            line-height: 1.4;
+            border: 1px solid rgba(255, 255, 255, 0.02);
+        }
+
+        footer {
+            margin-top: 3rem;
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.2);
+            text-align: center;
+            letter-spacing: 1px;
+            font-family: var(--font-display);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-group">
+                <div class="logo-icon">RS</div>
+                <div class="title-area">
+                    <h1>RimSynapse MCP</h1>
+                    <p>Manager and Endpoint Controller</p>
+                </div>
+            </div>
+            <div class="server-badge">v1.6.4871 Compatible</div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Left Side: Status Monitor -->
+            <div class="card">
+                <div class="card-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                    Server Monitor
+                </div>
+                
+                <div class="status-display">
+                    <div id="statusDot" class="status-indicator stopped"></div>
+                    <div class="status-text-group">
+                        <div class="status-label">Status</div>
+                        <div id="statusText" class="status-value">Stopped</div>
+                    </div>
+                </div>
+
+                <div class="details-list">
+                    <div class="details-row">
+                        <span class="details-key">Task Manager Name</span>
+                        <span class="details-val" style="color: var(--cyan-glow);">localMCP.exe</span>
+                    </div>
+                    <div class="details-row">
+                        <span class="details-key">Process ID (PID)</span>
+                        <span id="pidValue" class="details-val">--</span>
+                    </div>
+                    <div class="details-row">
+                        <span class="details-key">Manager Control Port</span>
+                        <span class="details-val">4001</span>
+                    </div>
+                    <div class="details-row">
+                        <span class="details-key">SSE Connection URL</span>
+                        <span id="sseUrlValue" class="details-val">--</span>
+                    </div>
+                    <div class="details-row">
+                        <span class="details-key">Last API Call Received</span>
+                        <span id="lastCallValue" class="details-val">Never</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Life Cycle Control -->
+            <div class="card">
+                <div class="card-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                    Process Controller
+                </div>
+
+                <div class="form-group">
+                    <label for="mcpPort" class="form-label">Exposed MCP Port</label>
+                    <div class="input-wrapper">
+                        <input type="number" id="mcpPort" class="form-input" value="3000" min="1024" max="65535">
+                    </div>
+                </div>
+
+                <div class="btn-group">
+                    <button id="btnLaunch" class="btn btn-launch">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        Launch MCP Server
+                    </button>
+                    <button id="btnStop" class="btn btn-stop" disabled>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                        Force STOP Server
+                    </button>
+                </div>
+            </div>
+
+            <!-- Console Log Panel -->
+            <div class="card console-card">
+                <div class="console-header">
+                    <div class="card-title" style="border: none; padding: 0;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        Real-time Console Output
+                    </div>
+                    <div class="console-controls">
+                        <label class="console-checkbox-group">
+                            <input type="checkbox" id="autoScroll" checked>
+                            Auto-Scroll
+                        </label>
+                        <button id="btnClearConsole" class="btn-clear">Clear Logs</button>
+                    </div>
+                </div>
+
+                <div id="consoleBox" class="console-log-box">
+                    <div class="log-line log-system">Console initialized. Ready to launch local server.</div>
+                </div>
+            </div>
+
+            <!-- AI Developer Integration Guide -->
+            <div class="card doc-card">
+                <div class="card-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    AI Agent Tool REST API Guide
+                </div>
+                
+                <p class="doc-intro">
+                    Exposing HTTP endpoints allows non-mcp clients and standard scripts to interact directly with local developer tools. Here is how your AI agent can query and execute commands:
+                </p>
+
+                <div class="endpoint-block">
+                    <div class="endpoint-header">
+                        <span class="method-badge method-get">GET</span>
+                        <span id="docGetTools" class="endpoint-uri">http://localhost:3000/api/tools</span>
+                    </div>
+                    <div class="doc-intro">Retrieves the full list of registered tools, inputs, and schemas.</div>
+                </div>
+
+                <div class="endpoint-block">
+                    <div class="endpoint-header">
+                        <span class="method-badge method-post">POST</span>
+                        <span id="docPostTool" class="endpoint-uri">http://localhost:3000/api/tools/:name</span>
+                    </div>
+                    <div class="doc-intro">Executes a specific tool command. Replace <code>:name</code> with the tool name.</div>
+                    
+                    <div class="form-label">Example Javascript Request Payload:</div>
+                    <div id="codeExample" class="code-snippet">fetch("http://localhost:3000/api/tools/launch_rimworld", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    arguments: {
+      quicktest: true,
+      nosound: true
+    }
+  })
+})
+.then(res => res.json())
+.then(data => console.log(data));</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            RIMSYNAPSE CORE SYSTEM DEVELOPMENT PORTAL
+        </footer>
+    </div>
+
+    <!-- Interface Controller Logic -->
+    <script>
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+        const pidValue = document.getElementById("pidValue");
+        const sseUrlValue = document.getElementById("sseUrlValue");
+        const lastCallValue = document.getElementById("lastCallValue");
+        const mcpPortInput = document.getElementById("mcpPort");
+        const btnLaunch = document.getElementById("btnLaunch");
+        const btnStop = document.getElementById("btnStop");
+        const consoleBox = document.getElementById("consoleBox");
+        const autoScrollCheck = document.getElementById("autoScroll");
+        const btnClearConsole = document.getElementById("btnClearConsole");
+
+        // Documentation endpoints
+        const docGetTools = document.getElementById("docGetTools");
+        const docPostTool = document.getElementById("docPostTool");
+        const codeExample = document.getElementById("codeExample");
+
+        let activePort = 3000;
+        let knownLogCount = 0;
+
+        // Escape HTML to prevent injection
+        function escapeHtml(text) {
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Format relative times
+        function formatRelativeTime(timestamp) {
+            if (!timestamp) {
+                return "Never";
+            }
+            const secondsAgo = Math.floor((Date.now() - timestamp) / 1000);
+            if (secondsAgo < 5) {
+                return "Just now";
+            }
+            if (secondsAgo < 60) {
+                return secondsAgo + " seconds ago";
+            }
+            const minutesAgo = Math.floor(secondsAgo / 60);
+            return minutesAgo + " minute(s) ago";
+        }
+
+        // Update document text helpers when port changes
+        function updateDocExplanations(port) {
+            activePort = port;
+            docGetTools.textContent = "http://localhost:" + port + "/api/tools";
+            docPostTool.textContent = "http://localhost:" + port + "/api/tools/:name";
+            
+            codeExample.textContent = 'fetch("http://localhost:' + port + '/api/tools/launch_rimworld", {\n' +
+                '  method: "POST",\n' +
+                '  headers: {\n' +
+                '    "Content-Type": "application/json"\n' +
+                '  },\n' +
+                '  body: JSON.stringify({\n' +
+                '    arguments: {\n' +
+                '      quicktest: true,\n' +
+                '      nosound: true\n' +
+                '    }\n' +
+                '  })\n' +
+                '})\n' +
+                '.then(res => res.json())\n' +
+                '.then(data => console.log(data));';
+        }
+
+        mcpPortInput.addEventListener("input", function() {
+            const val = parseInt(mcpPortInput.value, 10);
+            if (val > 0) {
+                updateDocExplanations(val);
+            }
+        });
+
+        // Clear local console
+        btnClearConsole.addEventListener("click", function() {
+            consoleBox.innerHTML = '<div class="log-line log-system">Local console display cleared.</div>';
+        });
+
+        // Appending logs with specific formatting
+        function appendLogsToConsole(logLines) {
+            if (logLines.length === 0) {
+                return;
+            }
+            
+            // If new logs are received
+            if (logLines.length > knownLogCount) {
+                const newLines = logLines.slice(knownLogCount);
+                newLines.forEach(line => {
+                    const lineDiv = document.createElement("div");
+                    lineDiv.className = "log-line";
+                    
+                    if (line.includes("[STDOUT]")) {
+                        lineDiv.classList.add("log-stdout");
+                    } else if (line.includes("[STDERR]")) {
+                        lineDiv.classList.add("log-stderr");
+                    } else {
+                        lineDiv.classList.add("log-system");
+                    }
+                    
+                    lineDiv.textContent = line;
+                    consoleBox.appendChild(lineDiv);
+                });
+                
+                knownLogCount = logLines.length;
+                
+                if (autoScrollCheck.checked) {
+                    consoleBox.scrollTop = consoleBox.scrollHeight;
+                }
+            }
+        }
+
+        let isPolling = false;
+        let lastActivityTimestamp = null;
+
+        // Poll system status and logs
+        function pollStatus() {
+            if (isPolling) {
+                return;
+            }
+            isPolling = true;
+            
+            fetch("/api/manager/status")
+                .then(res => res.json())
+                .then(data => {
+                    const running = data.running;
+                    lastActivityTimestamp = data.lastActivity;
+                    
+                    if (running) {
+                        statusDot.className = "status-indicator running";
+                        statusText.textContent = "Running";
+                        statusText.style.color = "var(--accent-green)";
+                        pidValue.textContent = data.pid;
+                        mcpPortInput.disabled = true;
+                        btnLaunch.disabled = true;
+                        btnStop.disabled = false;
+                        
+                        // Show connection endpoint
+                        sseUrlValue.textContent = "http://localhost:" + data.port + "/sse";
+                        
+                        // Update port value display
+                        if (data.port !== activePort) {
+                            mcpPortInput.value = data.port;
+                            updateDocExplanations(data.port);
+                        }
+                    } else {
+                        statusDot.className = "status-indicator stopped";
+                        statusText.textContent = "Stopped";
+                        statusText.style.color = "var(--text-secondary)";
+                        pidValue.textContent = "--";
+                        mcpPortInput.disabled = false;
+                        btnLaunch.disabled = false;
+                        btnStop.disabled = true;
+                        sseUrlValue.textContent = "--";
+                        knownLogCount = 0; // Reset counter when stopped
+                    }
+                    
+                    // Update relative timestamp for last call
+                    lastCallValue.textContent = formatRelativeTime(lastActivityTimestamp);
+                    
+                    // Trigger log fetch
+                    return fetch("/api/manager/logs");
+                })
+                .then(res => {
+                    if (res) {
+                        return res.json();
+                    }
+                })
+                .then(logData => {
+                    if (logData) {
+                        appendLogsToConsole(logData.logs);
+                    }
+                })
+                .catch(err => {
+                    // Fail silently to prevent spamming errors on disconnect
+                })
+                .finally(() => {
+                    isPolling = false;
+                });
+        }
+
+        // Action trigger: Launch
+        btnLaunch.addEventListener("click", function() {
+            const port = parseInt(mcpPortInput.value, 10) || 3000;
+            btnLaunch.disabled = true;
+            mcpPortInput.disabled = true;
+            
+            const sysLine = document.createElement("div");
+            sysLine.className = "log-line log-system";
+            sysLine.textContent = "[" + new Date().toLocaleTimeString() + "] Requesting server compilation and startup...";
+            consoleBox.appendChild(sysLine);
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+
+            fetch("/api/manager/launch", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ port: port })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    // Poll immediately
+                    pollStatus();
+                } else {
+                    const errLine = document.createElement("div");
+                    errLine.className = "log-line log-stderr";
+                    errLine.textContent = "Launch failed: " + data.error;
+                    consoleBox.appendChild(errLine);
+                    btnLaunch.disabled = false;
+                    mcpPortInput.disabled = false;
+                }
+            })
+            .catch(err => {
+                const errLine = document.createElement("div");
+                errLine.className = "log-line log-stderr";
+                errLine.textContent = "Request error: " + err.message;
+                consoleBox.appendChild(errLine);
+                btnLaunch.disabled = false;
+                mcpPortInput.disabled = false;
+            });
+        });
+
+        // Action trigger: Force Stop
+        btnStop.addEventListener("click", function() {
+            btnStop.disabled = true;
+            
+            const sysLine = document.createElement("div");
+            sysLine.className = "log-line log-system";
+            sysLine.textContent = "[" + new Date().toLocaleTimeString() + "] Sending force-stop request...";
+            consoleBox.appendChild(sysLine);
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+
+            fetch("/api/manager/stop", {
+                method: "POST"
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    pollStatus();
+                }
+            })
+            .catch(err => {
+                const errLine = document.createElement("div");
+                errLine.className = "log-line log-stderr";
+                errLine.textContent = "Error sending stop request: " + err.message;
+                consoleBox.appendChild(errLine);
+            });
+        });
+
+        // Init and periodic polling
+        updateDocExplanations(3000);
+        pollStatus();
+        setInterval(pollStatus, 1000);
+        
+        // Rapid updates for relative timer display
+        setInterval(function() {
+            if (lastActivityTimestamp) {
+                lastCallValue.textContent = formatRelativeTime(lastActivityTimestamp);
+            }
+        }, 2000);
+    </script>
+</body>
+</html>

@@ -46,7 +46,10 @@ function loadConfig() {
     // Fallback defaults
     return {
         defaultProjectId: "PVT_kwDOEfI01s4Bdlhx",
-        organization: "RimSynapse"
+        organization: "RimSynapse",
+        rimworldPath: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\RimWorldWin64.exe",
+        rimworldModsDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\Mods",
+        savedatafolder: "D:\\RimWorldDevData"
     };
 }
 function getGitHubToken() {
