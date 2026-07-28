@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync, spawn } from "child_process";
-import { loadConfig } from "../config";
+import { loadConfig, getSaveDataFolder } from "../config";
 
 export const rimworldDevTools = [
     {
@@ -414,7 +414,7 @@ export async function handleRimworldDevTool(name: string, args: any) {
     }
     
     if (name === "launch_rimworld") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const quicktest = args.quicktest === true;
         const developer = args.developer !== false;
         const killExisting = args.killExisting !== false;
@@ -602,7 +602,12 @@ export async function handleRimworldDevTool(name: string, args: any) {
         // Read the log regardless of how the launch ended — a crash still leaves evidence.
         const log = await runHarness("readlog.ps1", [], 60 * 1000);
 
-        const ok = build?.ok === true && log?.ok === true;
+        // launch.ok was previously ignored here, so a launch that ended without the
+        // TestRunner ever printing SUMMARY could not fail the run no matter what the
+        // script reported. All three stages have to agree: the build produced binaries,
+        // the game got far enough to finish the suite, and the log carries no blocking
+        // entries and no shortfall in case count.
+        const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
         return {
             isError: !ok,
             content: [{ type: "text", text: JSON.stringify({ ok, stage: "complete", build, launch, log }, null, 2) }]
@@ -610,7 +615,7 @@ export async function handleRimworldDevTool(name: string, args: any) {
     }
 
     if (name === "read_rimworld_log") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const linesToGet = args.lines || 100;
         
         let logPath = "";

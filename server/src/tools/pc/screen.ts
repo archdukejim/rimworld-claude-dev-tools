@@ -1,5 +1,4 @@
-import { screen, Region as NutRegion } from "@nut-tree-fork/nut-js";
-import sharp from "sharp";
+import { nut, sharp } from "./native";
 import { CaptureFormat, Region as CustomRegion } from "./types";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -15,6 +14,7 @@ const MAX_SCREENSHOTS = 20;
  * @returns Base64 encoded image data with filename context
  */
 export async function captureScreen(format: CaptureFormat = CaptureFormat.PNG, quality: number = 80): Promise<string> {
+  const { screen, Region: NutRegion } = nut();
   let tempFilepath = "";
   let finalFilepath = "";
   try {
@@ -45,7 +45,9 @@ export async function captureScreen(format: CaptureFormat = CaptureFormat.PNG, q
     let resultMessage: string;
 
     if (format === CaptureFormat.JPEG) {
-      imageBuffer = await sharp(tempFilepath)
+      // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
+      // machine where sharp will not load.
+      imageBuffer = await sharp()(tempFilepath)
         .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
         .toBuffer();
       await fs.writeFile(finalFilepath, imageBuffer);
@@ -77,6 +79,7 @@ export async function captureScreen(format: CaptureFormat = CaptureFormat.PNG, q
  * @returns Base64 encoded image data with filename context
  */
 export async function captureRegion(region: CustomRegion, format: CaptureFormat = CaptureFormat.PNG, quality: number = 80): Promise<string> {
+  const { screen, Region: NutRegion } = nut();
   let tempFilepath = "";
   let finalFilepath = "";
   try {
@@ -104,7 +107,9 @@ export async function captureRegion(region: CustomRegion, format: CaptureFormat 
     let resultMessage: string;
 
     if (format === CaptureFormat.JPEG) {
-      imageBuffer = await sharp(tempFilepath)
+      // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
+      // machine where sharp will not load.
+      imageBuffer = await sharp()(tempFilepath)
         .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
         .toBuffer();
       await fs.writeFile(finalFilepath, imageBuffer);
@@ -133,6 +138,7 @@ export async function captureRegion(region: CustomRegion, format: CaptureFormat 
  * @returns The screen dimensions as width and height
  */
 export async function getScreenSize(): Promise<{ width: number; height: number }> {
+  const { screen } = nut();
   const width = await screen.width();
   const height = await screen.height();
   return {

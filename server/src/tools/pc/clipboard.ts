@@ -1,5 +1,5 @@
 import { exec } from "child_process";
-import { clipboard } from "@nut-tree-fork/nut-js";
+import { nut } from "./native";
 import { copyToClipboard, pasteFromClipboard } from "./keyboard";
 
 /**
@@ -7,6 +7,7 @@ import { copyToClipboard, pasteFromClipboard } from "./keyboard";
  * @returns The text content from the clipboard
  */
 export async function getClipboardText(): Promise<string> {
+  const { clipboard } = nut();
   try {
     return await clipboard.getContent();
   } catch (error) {
@@ -20,6 +21,7 @@ export async function getClipboardText(): Promise<string> {
  * @param text - The text to set to the clipboard
  */
 export async function setClipboardText(text: string): Promise<void> {
+  const { clipboard } = nut();
   try {
     await clipboard.setContent(text);
   } catch (error) {

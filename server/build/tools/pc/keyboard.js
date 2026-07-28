@@ -8,7 +8,7 @@ exports.releaseKey = releaseKey;
 exports.copyToClipboard = copyToClipboard;
 exports.pasteFromClipboard = pasteFromClipboard;
 exports.typeTextWithDelay = typeTextWithDelay;
-const nut_js_1 = require("@nut-tree-fork/nut-js");
+const native_1 = require("./native");
 const types_1 = require("./types");
 /**
  * Maps our key enum to nut.js key enum
@@ -16,21 +16,23 @@ const types_1 = require("./types");
  * @returns Corresponding nut.js key
  */
 function mapToNutKey(key) {
+    const { Key: NutKey } = (0, native_1.nut)();
     if (key === types_1.Key.WINDOWS) {
-        return nut_js_1.Key.LeftSuper;
+        return NutKey.LeftSuper;
     }
     if (key === types_1.Key.ENTER) {
-        return nut_js_1.Key.Enter;
+        return NutKey.Enter;
     }
-    return nut_js_1.Key[key.toUpperCase()];
+    return NutKey[key.toUpperCase()];
 }
 /**
  * Types the specified text
  * @param text - The text to type
  */
 async function typeText(text) {
+    const { keyboard } = (0, native_1.nut)();
     try {
-        await nut_js_1.keyboard.type(text);
+        await keyboard.type(text);
     }
     catch (error) {
         console.error("Error typing text:", error);
@@ -42,13 +44,14 @@ async function typeText(text) {
  * @param key - The key to press
  */
 async function pressKey(key) {
+    const { keyboard } = (0, native_1.nut)();
     try {
         const nutKey = mapToNutKey(key);
         if (!nutKey) {
             throw new Error(`Invalid key: ${key}`);
         }
-        await nut_js_1.keyboard.pressKey(nutKey);
-        await nut_js_1.keyboard.releaseKey(nutKey);
+        await keyboard.pressKey(nutKey);
+        await keyboard.releaseKey(nutKey);
     }
     catch (error) {
         console.error("Error pressing key:", error);
@@ -63,22 +66,23 @@ async function pressKeyShortcut(keys) {
     if (keys.length === 0) {
         throw new Error("No keys provided for shortcut");
     }
+    const { keyboard } = (0, native_1.nut)();
     const nutKeys = keys.map(k => mapToNutKey(k));
     if (nutKeys.some(k => !k)) {
         throw new Error("Invalid key in shortcut");
     }
     try {
         for (const key of nutKeys) {
-            await nut_js_1.keyboard.pressKey(key);
+            await keyboard.pressKey(key);
         }
         for (let i = nutKeys.length - 1; i >= 0; i--) {
-            await nut_js_1.keyboard.releaseKey(nutKeys[i]);
+            await keyboard.releaseKey(nutKeys[i]);
         }
     }
     catch (error) {
         try {
             for (const key of nutKeys) {
-                await nut_js_1.keyboard.releaseKey(key);
+                await keyboard.releaseKey(key);
             }
         }
         catch (releaseError) {
@@ -93,12 +97,13 @@ async function pressKeyShortcut(keys) {
  * @param key - The key to hold down
  */
 async function holdKey(key) {
+    const { keyboard } = (0, native_1.nut)();
     try {
         const nutKey = mapToNutKey(key);
         if (!nutKey) {
             throw new Error(`Invalid key: ${key}`);
         }
-        await nut_js_1.keyboard.pressKey(nutKey);
+        await keyboard.pressKey(nutKey);
     }
     catch (error) {
         console.error("Error holding key:", error);
@@ -110,12 +115,13 @@ async function holdKey(key) {
  * @param key - The key to release
  */
 async function releaseKey(key) {
+    const { keyboard } = (0, native_1.nut)();
     try {
         const nutKey = mapToNutKey(key);
         if (!nutKey) {
             throw new Error(`Invalid key: ${key}`);
         }
-        await nut_js_1.keyboard.releaseKey(nutKey);
+        await keyboard.releaseKey(nutKey);
     }
     catch (error) {
         console.error("Error releasing key:", error);
@@ -164,9 +170,10 @@ async function pasteFromClipboard() {
  * @param delayMs - Delay between keystrokes in milliseconds
  */
 async function typeTextWithDelay(text, delayMs = 100) {
+    const { keyboard } = (0, native_1.nut)();
     try {
         for (let i = 0; i < text.length; i++) {
-            await nut_js_1.keyboard.type(text.charAt(i));
+            await keyboard.type(text.charAt(i));
             await new Promise(resolve => setTimeout(resolve, delayMs));
         }
     }

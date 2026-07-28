@@ -1,4 +1,4 @@
-import { keyboard, Key as NutKey } from "@nut-tree-fork/nut-js";
+import { nut } from "./native";
 import { Key } from "./types";
 
 /**
@@ -7,6 +7,7 @@ import { Key } from "./types";
  * @returns Corresponding nut.js key
  */
 function mapToNutKey(key: Key): any {
+  const { Key: NutKey } = nut();
   if (key === Key.WINDOWS) {
     return NutKey.LeftSuper;
   }
@@ -21,6 +22,7 @@ function mapToNutKey(key: Key): any {
  * @param text - The text to type
  */
 export async function typeText(text: string): Promise<void> {
+  const { keyboard } = nut();
   try {
     await keyboard.type(text);
   } catch (error) {
@@ -34,6 +36,7 @@ export async function typeText(text: string): Promise<void> {
  * @param key - The key to press
  */
 export async function pressKey(key: Key): Promise<void> {
+  const { keyboard } = nut();
   try {
     const nutKey = mapToNutKey(key);
     if (!nutKey) {
@@ -55,6 +58,7 @@ export async function pressKeyShortcut(keys: Key[]): Promise<void> {
   if (keys.length === 0) {
     throw new Error("No keys provided for shortcut");
   }
+  const { keyboard } = nut();
   const nutKeys = keys.map(k => mapToNutKey(k));
   if (nutKeys.some(k => !k)) {
     throw new Error("Invalid key in shortcut");
@@ -84,6 +88,7 @@ export async function pressKeyShortcut(keys: Key[]): Promise<void> {
  * @param key - The key to hold down
  */
 export async function holdKey(key: Key): Promise<void> {
+  const { keyboard } = nut();
   try {
     const nutKey = mapToNutKey(key);
     if (!nutKey) {
@@ -101,6 +106,7 @@ export async function holdKey(key: Key): Promise<void> {
  * @param key - The key to release
  */
 export async function releaseKey(key: Key): Promise<void> {
+  const { keyboard } = nut();
   try {
     const nutKey = mapToNutKey(key);
     if (!nutKey) {
@@ -153,6 +159,7 @@ export async function pasteFromClipboard(): Promise<void> {
  * @param delayMs - Delay between keystrokes in milliseconds
  */
 export async function typeTextWithDelay(text: string, delayMs: number = 100): Promise<void> {
+  const { keyboard } = nut();
   try {
     for (let i = 0; i < text.length; i++) {
       await keyboard.type(text.charAt(i));

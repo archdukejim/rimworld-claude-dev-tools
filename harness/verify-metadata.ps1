@@ -83,6 +83,19 @@ foreach ($mod in $mods) {
     # (3) the Workshop copy
     if (Test-Path $steamPath) {
         $steam = Get-Content $steamPath -Raw
+
+        # Steam's description field is maxlength=8000. Over that, the save is REJECTED
+        # SILENTLY — the edit page accepts the paste, the Save button appears to work, and
+        # the live page keeps the old text. v0.6.0/v0.6.1 descriptions hit this at 12k
+        # chars and several "successful" saves changed nothing.
+        $steamLen = ($steam -replace "`r`n", "`n").Length
+        if ($steamLen -gt 8000) {
+            $problems += @{ mod=$name
+                            issue="steam_description.txt is $steamLen chars; Steam's limit is 8000 and it rejects longer descriptions silently — trim it by $($steamLen - 8000)" }
+        } else {
+            $checked += @{ mod=$name; field='workshop length'; value="$steamLen/8000" }
+        }
+
         if ($steam -match '(?m)^\[b\]Version:\[/b\]\s*v([0-9][0-9\.]*)') {
             $steamVersion = $matches[1]
             if ($steamVersion -ne $modVersion) {

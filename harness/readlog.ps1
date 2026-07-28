@@ -79,12 +79,42 @@ foreach ($ln in $cat.synapseTest) {
     }
 }
 
+# Did the suite actually finish? Counting only PASS/FAIL lines meant a run that died
+# partway through reported the handful of cases it managed and a clean bill of health:
+# 5 of 88 cases, failed=0, ok=true. Zero failures out of five is not a pass when
+# eighty-three never ran, and that is indistinguishable from a real green unless the
+# announced count is checked against the reported one.
+$announced = $null
+foreach ($ln in $cat.synapseTest) {
+    if ($ln -match 'Running\s+(\d+)\s+case') { $announced = [int]$Matches[1] }
+}
+$sawSummary = @($cat.synapseTest | Where-Object { $_ -match '\[SYNAPSE-TEST\]\s+SUMMARY' }).Count -gt 0
+$reported   = $passed + $failed
+$incomplete = $false
+$incompleteReason = $null
+
+# Only meaningful when the TestRunner actually announced itself; a smoke run has no cases.
+if ($null -ne $announced) {
+    if ($reported -lt $announced) {
+        $incomplete = $true
+        $last = if ($cases.Count -gt 0) { $cases[$cases.Count - 1].name } else { '(none reported)' }
+        $incompleteReason = "suite announced $announced case(s) but reported $reported; last case to report was $last"
+    } elseif (-not $sawSummary) {
+        $incomplete = $true
+        $incompleteReason = "suite reported all $reported case(s) but never printed SUMMARY"
+    }
+}
+
 $counts = @{}; foreach ($k in $patterns.Keys) { $counts[$k] = $cat[$k].Count }
 $trim   = @{}; foreach ($k in $patterns.Keys) { $trim[$k] = @($cat[$k] | Select-Object -First $MaxPerCategory) }
 
-# Blocking = anything that breaks load/behavior. Warnings (version/missingDep) are non-blocking here.
+# Blocking = anything that breaks load/behavior, plus a suite that did not finish.
+# Warnings (version/missingDep) are non-blocking here.
 $blocking = $counts.harmonyPatchFailure + $counts.xmlError + $counts.exception + $counts.error + $failed
+if ($incomplete) { $blocking++ }
 $ok = ($blocking -eq 0)
 
-RS-Json @{ ok=$ok; blockingCount=$blocking; counts=$counts; categories=$trim; tests=@{ passed=$passed; failed=$failed; cases=$cases } }
+if ($incomplete) { RS-Log "INCOMPLETE: $incompleteReason" }
+
+RS-Json @{ ok=$ok; blockingCount=$blocking; counts=$counts; categories=$trim; tests=@{ passed=$passed; failed=$failed; announced=$announced; reported=$reported; sawSummary=$sawSummary; incomplete=$incomplete; incompleteReason=$incompleteReason; cases=$cases } }
 if (-not $ok) { exit 1 }
