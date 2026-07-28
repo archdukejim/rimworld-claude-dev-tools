@@ -40,6 +40,131 @@ const graphql_1 = require("@octokit/graphql");
 const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("../config");
+/**
+ * Every folder RimWorld will look in for mods, and the packageId each one declares.
+ *
+ * Covers the local Mods directory and the Steam Workshop content directory, because a modlist
+ * routinely mixes both — Empire and VOE come from the Workshop while the RimSynapse mods are
+ * local. A packageId present in neither is not installed, which is worth saying out loud rather
+ * than writing into the config and letting RimWorld drop it silently.
+ */
+function modFolderIndex(config) {
+    const index = new Map();
+    const modsDir = config.rimworldModsDir || "";
+    const workshopDir = modsDir
+        ? path.resolve(modsDir, "..", "..", "..", "workshop", "content", "294100")
+        : "";
+    // The base game and the official DLCs are packageIds too (ludeon.rimworld,
+    // ludeon.rimworld.royalty, ...) and they live in Data/, not Mods/. Scanning it beats
+    // hardcoding an allowlist, which would need editing every time Ludeon ships an expansion.
+    const dataDir = modsDir ? path.resolve(modsDir, "..", "Data") : "";
+    for (const root of [modsDir, workshopDir, dataDir]) {
+        if (!root || !fs.existsSync(root))
+            continue;
+        let entries = [];
+        try {
+            entries = fs.readdirSync(root);
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const aboutPath = path.join(root, entry, "About", "About.xml");
+            if (!fs.existsSync(aboutPath))
+                continue;
+            try {
+                const xml = fs.readFileSync(aboutPath, "utf8");
+                const id = /<packageId>([^<]+)<\/packageId>/i.exec(xml)?.[1]?.trim().toLowerCase();
+                // First wins: the local copy is scanned before the Workshop one, matching the
+                // intent that local overrides published.
+                if (id && !index.has(id))
+                    index.set(id, path.join(root, entry));
+            }
+            catch { /* an unreadable About.xml is simply not an index entry */ }
+        }
+    }
+    return index;
+}
+/** The loadAfter / loadBefore a mod declares, lowercased. Empty when the mod is not installed. */
+function declaredOrdering(folder) {
+    if (!folder)
+        return { after: [], before: [] };
+    const aboutPath = path.join(folder, "About", "About.xml");
+    if (!fs.existsSync(aboutPath))
+        return { after: [], before: [] };
+    let xml = "";
+    try {
+        xml = fs.readFileSync(aboutPath, "utf8");
+    }
+    catch {
+        return { after: [], before: [] };
+    }
+    const listOf = (tag) => {
+        const block = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i").exec(xml)?.[1];
+        if (!block)
+            return [];
+        return Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim().toLowerCase());
+    };
+    // modDependencies imply ordering too: a hard dependency must load first.
+    const deps = Array.from((/<modDependencies>([\s\S]*?)<\/modDependencies>/i.exec(xml)?.[1] ?? "")
+        .matchAll(/<packageId>([^<]+)<\/packageId>/gi)).map(m => m[1].trim().toLowerCase());
+    return {
+        after: [...listOf("loadAfter"), ...deps],
+        before: listOf("loadBefore")
+    };
+}
+/**
+ * Order mods so every declared loadAfter / modDependency comes first, preserving the caller's
+ * order wherever the declarations do not care.
+ *
+ * A stable topological sort rather than a comparator: "load after X" is not a total order, and
+ * feeding a non-transitive comparator to Array.sort produces whatever the engine feels like.
+ * Cycles are reported rather than thrown on — a broken pair of declarations in somebody else's
+ * mod should not stop the modlist being written.
+ */
+function orderByDeclaredDependencies(mods, index) {
+    const present = new Set(mods.map(m => m.toLowerCase()));
+    const edges = new Map(); // mod -> mods that must precede it
+    for (const mod of mods) {
+        const key = mod.toLowerCase();
+        if (!edges.has(key))
+            edges.set(key, new Set());
+        const { after, before } = declaredOrdering(index.get(key));
+        for (const dep of after) {
+            if (present.has(dep) && dep !== key)
+                edges.get(key).add(dep);
+        }
+        for (const later of before) {
+            if (!present.has(later) || later === key)
+                continue;
+            if (!edges.has(later))
+                edges.set(later, new Set());
+            edges.get(later).add(key);
+        }
+    }
+    const order = [];
+    const placed = new Set();
+    const cycles = [];
+    const remaining = mods.map(m => m.toLowerCase());
+    while (remaining.length > 0) {
+        // Take the first mod whose prerequisites are all placed — first, not any, so the caller's
+        // ordering survives wherever the declarations are silent.
+        const readyAt = remaining.findIndex(m => Array.from(edges.get(m) ?? []).every(dep => placed.has(dep) || !present.has(dep)));
+        if (readyAt === -1) {
+            // Everything left is in a cycle. Emit in caller order and say so.
+            cycles.push(...remaining);
+            for (const m of remaining) {
+                order.push(m);
+                placed.add(m);
+            }
+            break;
+        }
+        const [next] = remaining.splice(readyAt, 1);
+        order.push(next);
+        placed.add(next);
+    }
+    return { order, cycles };
+}
 exports.testingTools = [
     {
         name: "create_testing_plan_issues",
@@ -361,7 +486,7 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
         // 1. Harmony
         // 2. Core (ludeon.rimworld)
         // 3. Official DLCs (ludeon.rimworld.royalty, ludeon.rimworld.ideology, etc.)
-        // 4. Other mods (e.g. rimsynapse.core, rimsynapse.nvidiatool)
+        // 4. Other mods, ordered by the loadAfter/loadBefore they declare
         const officialOrder = [
             "brrainz.harmony",
             "ludeon.rimworld",
@@ -371,18 +496,20 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
             "ludeon.rimworld.anomaly",
             "ludeon.rimworld.odyssey"
         ];
-        activeList.sort((a, b) => {
-            const idxA = officialOrder.indexOf(a.toLowerCase());
-            const idxB = officialOrder.indexOf(b.toLowerCase());
-            if (idxA !== -1 && idxB !== -1) {
-                return idxA - idxB;
-            }
-            if (idxA !== -1)
-                return -1;
-            if (idxB !== -1)
-                return 1;
-            return a.localeCompare(b);
-        });
+        // Everything past the official block used to fall through to a.localeCompare(b), which
+        // is alphabetical and knows nothing about dependencies. That put rimsynapse.factions
+        // ahead of rimsynapse.regionsandterritories, and since 0.7 Factions binds against R&T's
+        // assembly: every Factions type failed to resolve, its patches never bound, and the only
+        // evidence was four "Could not find a type named ..." lines. RimWorld obeys this file and
+        // treats loadAfter as advisory, so a modlist writer that ignores loadAfter is a modlist
+        // writer that can silently disable a mod.
+        const { order: sortedTail, cycles } = orderByDeclaredDependencies(activeList.filter(m => officialOrder.indexOf(m.toLowerCase()) === -1), modFolderIndex(config));
+        activeList = [
+            ...activeList
+                .filter(m => officialOrder.indexOf(m.toLowerCase()) !== -1)
+                .sort((a, b) => officialOrder.indexOf(a.toLowerCase()) - officialOrder.indexOf(b.toLowerCase())),
+            ...sortedTail
+        ];
         // Format activeMods XML block
         const newActiveXml = `<activeMods>\n` + activeList.map(m => `        <li>${m}</li>`).join("\n") + `\n    </activeMods>`;
         if (content.includes("<activeMods>")) {
@@ -392,10 +519,31 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
             content = content.replace("<ModsConfigData>", `<ModsConfigData>\n    ${newActiveXml}`);
         }
         fs.writeFileSync(configPath, content, "utf8");
+        // Say what was written, where, and what is wrong with it. A modlist naming a mod that is
+        // not installed used to be accepted in silence: RimWorld drops the entry, the mod's own
+        // "not detected" branch logs, and the run looks like evidence about that mod when it is
+        // only evidence that it was never loaded.
+        const installed = modFolderIndex(config);
+        const missing = activeList.filter(m => !installed.has(m.toLowerCase()));
+        const notes = [];
+        notes.push(`Wrote ${configPath}`);
+        if (missing.length > 0) {
+            notes.push(`NOT INSTALLED (RimWorld will ignore these): ${missing.join(", ")}`);
+        }
+        if (cycles.length > 0) {
+            notes.push(`Circular loadAfter/loadBefore among: ${cycles.join(", ")} — left in the order given.`);
+        }
         return {
+            isError: missing.length > 0,
             content: [{
                     type: "text",
-                    text: `Successfully configured ModsConfig.xml. Active mods: ${JSON.stringify(activeList)}.`
+                    text: [
+                        missing.length > 0
+                            ? `Configured ModsConfig.xml, but ${missing.length} requested mod(s) are not installed.`
+                            : `Successfully configured ModsConfig.xml.`,
+                        ...notes,
+                        `Active mods, in load order: ${JSON.stringify(activeList)}`
+                    ].join("\n")
                 }]
         };
     }

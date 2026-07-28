@@ -77,6 +77,13 @@ export const rimworldDevTools = [
                 timeoutSec: {
                     type: "number",
                     description: "Max seconds to wait for the TestRunner to report results (default: 420)."
+                },
+                savedatafolder: {
+                    type: "string",
+                    description:
+                        "Which RimWorld config the run reads, and therefore which modlist it tests. " +
+                        "Defaults to the same folder configure_active_mods writes, so configuring a " +
+                        "modlist and then running the tests validates that modlist."
                 }
             }
         }
@@ -593,9 +600,17 @@ export async function handleRimworldDevTool(name: string, args: any) {
             };
         }
 
+        // Launch against the same config configure_active_mods writes. Previously launch.ps1 was
+        // called with no savedatafolder, so RimWorld read the default AppData\LocalLow config
+        // while the modlist had been written to the dev folder — configuring a modlist had no
+        // effect on the test run, and the run validated whatever was last left in the default.
+        // That produced a confident false conclusion once already: Empire and VOE reported "not
+        // detected" and it read as a broken integration when neither mod was ever active.
+        const savedata = args.savedatafolder || loadConfig().savedatafolder || getSaveDataFolder();
+
         const launch = await runHarness(
             "launch.ps1",
-            ["-Test", "-TimeoutSec", String(timeoutSec)],
+            ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", savedata],
             (timeoutSec + 180) * 1000
         );
 
