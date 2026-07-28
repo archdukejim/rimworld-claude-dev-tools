@@ -261,7 +261,7 @@
     "rimsynapse_root": {
       "type": "directory",
       "title": "RimSynapse Workspace",
-      "description": "Folder containing the RimSynapse mod repos and the _harness scripts (the folder with Core/, Factions/, _harness/).",
+      "description": "Folder containing the RimSynapse mod repo checkouts - the one with Core/, Factions/ and Regions-and-Territories/ inside it. Validated by looking for Core/About/About.xml. The PowerShell harness ships inside this extension and is not looked for here.",
       "required": false,
       "default": "C:\\github\\rimsynapse"
     },
