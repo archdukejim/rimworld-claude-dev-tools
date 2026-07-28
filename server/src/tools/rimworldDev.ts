@@ -165,6 +165,13 @@ const foldersWhitelist = [
     "Patches",
     "Languages",
     "Sounds",
+    "Strings",
+    // Learning/ is RimSynapse's own convention, not a RimWorld one: Core reads Learning/*.md
+    // at startup and injects them into the in-game Learning Helper, and sync-wiki.ps1 publishes
+    // the same folder to each repo's GitHub wiki. It was missing from this list, so every
+    // deployed and published copy shipped without its in-game wiki — 27 concepts against the
+    // repo's 30. Every mod description advertises "Official Wiki and Documentation".
+    "Learning",
     "Common",
     "1.0",
     "1.1",
@@ -174,6 +181,22 @@ const foldersWhitelist = [
     "1.5",
     "1.6"
 ];
+
+/**
+ * Top-level entries that are deliberately not shipped, so they can be reported as skipped
+ * rather than counted as omissions worth looking at.
+ *
+ * The whitelist stays a whitelist rather than becoming a blocklist: these repo roots carry
+ * _to_delete, game_state.json, dev logs, Design/, docs/ and CLAUDE.md, and defaulting to
+ * "ship everything not named" would push all of it to the Workshop. What was actually wrong
+ * was that omissions were silent — so the deploy now names anything it passed over that is
+ * not on this list.
+ */
+const knownNotShipped = new Set([
+    "Source", "Tests", "obj", "bin", ".git", ".github", ".vs", ".agents",
+    "node_modules", "Design", "Development", "docs", "_to_delete",
+    "CLAUDE.md", "CHANGELOG.md", "FutureFeatures.md", ".gitignore", ".gitattributes"
+]);
 
 const filesWhitelist = [
     "LICENSE",
@@ -410,6 +433,33 @@ export async function handleRimworldDevTool(name: string, args: any) {
                     if (fs.existsSync(srcFile) && fs.lstatSync(srcFile).isFile()) {
                         fs.copyFileSync(srcFile, destFile);
                     }
+                }
+
+                // Say what shipped, and name anything passed over that is not deliberately
+                // excluded. A whitelist that silently drops a folder is how Learning/ went
+                // unpublished for months while the mod descriptions advertised an in-game wiki;
+                // the omission was only visible as a concept count three layers away.
+                const shipped: string[] = [];
+                const unexpected: string[] = [];
+                for (const entry of fs.readdirSync(mod.src)) {
+                    const isDir = fs.lstatSync(path.join(mod.src, entry)).isDirectory();
+                    const listed = isDir ? foldersWhitelist.includes(entry) : filesWhitelist.includes(entry);
+                    if (listed) {
+                        if (fs.existsSync(path.join(destPath, entry))) shipped.push(entry);
+                    } else if (!knownNotShipped.has(entry)) {
+                        unexpected.push(entry);
+                    }
+                }
+
+                const learningDir = path.join(destPath, "Learning");
+                const learningCount = fs.existsSync(learningDir)
+                    ? fs.readdirSync(learningDir).filter(f => f.toLowerCase().endsWith(".md")).length
+                    : 0;
+
+                logs += `  Packaged: ${shipped.join(", ") || "(nothing)"}\n`;
+                if (learningCount > 0) logs += `  Learning docs: ${learningCount}\n`;
+                if (unexpected.length > 0) {
+                    logs += `  NOT PACKAGED (not on the whitelist — intended?): ${unexpected.join(", ")}\n`;
                 }
                 logs += `  Deployment successful.\n`;
             } catch (err: any) {
