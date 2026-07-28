@@ -21,23 +21,27 @@
 #>
 param(
     [string]$Repo,
+    # Where to look. In CI this is the single-repo checkout, which is the mod folder itself.
+    [string]$Root,
     [switch]$WhatIf
 )
 . "$PSScriptRoot\lib.ps1"
 
+if ($Root) { $Global:RS_Root = Resolve-WorkspaceRoot -Root $Root }
+
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "rimsynapse-wiki-sync"
 if (-not (Test-Path $work)) { New-Item -ItemType Directory -Force $work | Out-Null }
 
-$targets = if ($Repo) { @($Repo) } else {
-    @(Get-ChildItem $RS_Root -Directory |
-      Where-Object { Test-Path (Join-Path $_.FullName 'Learning') } |
-      Select-Object -ExpandProperty Name | Sort-Object)
-}
+# Resolve to real folders rather than assuming "$RS_Root\$name": in a single-repo checkout
+# the root IS the mod, so that join would point one level too deep and silently find nothing.
+# Throws when the root or the -Repo filter matches no mod at all.
+$targets = Get-HarnessMods -Root $RS_Root -Repo $Repo
 
 $synced = @(); $skipped = @(); $problems = @()
 
-foreach ($name in $targets) {
-    $learning = Join-Path $RS_Root "$name\Learning"
+foreach ($mod in $targets) {
+    $name     = $mod.Name
+    $learning = Join-Path $mod.FullName 'Learning'
     if (-not (Test-Path $learning)) { $skipped += @{ repo=$name; reason='no Learning/ folder' }; continue }
 
     $clone = Join-Path $work $name

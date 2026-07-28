@@ -23,9 +23,15 @@
 .OUTPUTS   JSON: { ok, checked[], problems[] }
 #>
 param(
-    [switch]$Build
+    [switch]$Build,
+    # Check one mod instead of every mod present.
+    [string]$Repo,
+    # Where to look. In CI this is the single-repo checkout, which is the mod folder itself.
+    [string]$Root
 )
 . "$PSScriptRoot\lib.ps1"
+
+if ($Root) { $Global:RS_Root = Resolve-WorkspaceRoot -Root $Root }
 
 if ($Build) {
     RS-Log "Rebuilding all mods before verification ..."
@@ -41,10 +47,32 @@ if ($Build) {
 $checked  = @()
 $problems = @()
 
-foreach ($name in $RS_BuildOrder.Keys) {
-    $repoDir = Join-Path $RS_Root $name
+# Iterating $RS_BuildOrder.Keys and joining each name to $RS_Root was the vacuous-pass path:
+# in a single-repo checkout every join missed, every iteration hit the `continue` below, and the
+# gate reported ok with an empty checked list — a clean bill of health from inspecting nothing.
+# Get-HarnessMods resolves real folders for both layouts and throws when there are none.
+# Build order is preserved where it applies, so Core is still verified before its dependents.
+$modsToCheck = @(Get-HarnessMods -Root $RS_Root -Repo $Repo |
+                 Sort-Object @{ Expression = {
+                     $i = @($RS_BuildOrder.Keys).IndexOf($_.Name)
+                     if ($i -ge 0) { $i } else { [int]::MaxValue }
+                 }}, Name)
+
+foreach ($mod in $modsToCheck) {
+    $name    = $mod.Name
+    $repoDir = $mod.FullName
     $asmDir  = Join-Path $repoDir 'Assemblies'
-    if (-not (Test-Path $asmDir)) { continue }
+    if (-not (Test-Path $asmDir)) {
+        # A data-only mod legitimately ships nothing to verify. A mod with a csproj does not:
+        # a missing Assemblies folder there means it was never built, and skipping it quietly
+        # is how "0 binaries verified" ends up reported as a clean run.
+        if ($RS_BuildOrder.Contains($name)) {
+            $problems += @{ repo=$name; issue='no Assemblies folder — the mod has a csproj but was never built, so nothing could be verified' }
+        } else {
+            $checked += @{ repo=$name; mode='data-only'; result='no assemblies to verify' }
+        }
+        continue
+    }
 
     Push-Location $repoDir
     try {

@@ -20,14 +20,22 @@
 .EXAMPLE   .\verify-metadata.ps1
 .OUTPUTS   JSON: { ok, checked[], problems[] }
 #>
+param(
+    # Check one mod instead of every mod in the workspace.
+    [string]$Repo,
+    # Where to look. Defaults to RIMSYNAPSE_ROOT, then an upward walk. In CI this is the
+    # single-repo checkout, which is the mod folder itself.
+    [string]$Root
+)
 . "$PSScriptRoot\lib.ps1"
+
+if ($Root) { $Global:RS_Root = Resolve-WorkspaceRoot -Root $Root }
 
 $checked  = @()
 $problems = @()
 
-$mods = @(Get-ChildItem $RS_Root -Directory |
-          Where-Object { Test-Path (Join-Path $_.FullName 'About\About.xml') } |
-          Sort-Object Name)
+# Throws, rather than returning nothing, when the filter or the root matches no mod.
+$mods = Get-HarnessMods -Root $RS_Root -Repo $Repo
 
 foreach ($mod in $mods) {
     $name      = $mod.Name
