@@ -81,4 +81,24 @@ if ($Test) {
 $sw.Stop()
 Get-Process -Name 'RimWorldWin64' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-RS-Json @{ ok=$true; mode=$(if($Test){'test'}else{'smoke'}); exited=$exited; killed=$killed; timedOut=$timedOut; sawSummary=$sawSummary; elapsedSec=[math]::Round($sw.Elapsed.TotalSeconds,1) }
+# ok was hardcoded $true here, which made every launch look successful no matter how it
+# ended. A run whose game exited before the TestRunner printed SUMMARY reported ok with
+# sawSummary=$false sitting right beside it, and the caller believed the ok.
+#
+# In test mode the SUMMARY line is the only evidence the suite ran to completion, so it is
+# the condition. In smoke mode the game is expected to still be alive when we stop it;
+# having exited on its own means it died during load.
+$reason = $null
+if ($Test) {
+    if (-not $sawSummary) {
+        $reason = if ($timedOut)   { "timed out after ${TimeoutSec}s without a SUMMARY line" }
+                  elseif ($exited) { "game exited before the TestRunner printed SUMMARY" }
+                  else             { "no SUMMARY line seen" }
+    }
+} elseif ($exited) {
+    $reason = "game exited during load (crash on boot)"
+}
+$launchOk = ($null -eq $reason)
+if ($reason) { RS-Log "Launch not ok: $reason" }
+
+RS-Json @{ ok=$launchOk; reason=$reason; mode=$(if($Test){'test'}else{'smoke'}); exited=$exited; killed=$killed; timedOut=$timedOut; sawSummary=$sawSummary; elapsedSec=[math]::Round($sw.Elapsed.TotalSeconds,1) }

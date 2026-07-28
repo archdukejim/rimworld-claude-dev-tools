@@ -600,7 +600,12 @@ async function handleRimworldDevTool(name, args) {
         const launch = await runHarness("launch.ps1", ["-Test", "-TimeoutSec", String(timeoutSec)], (timeoutSec + 180) * 1000);
         // Read the log regardless of how the launch ended — a crash still leaves evidence.
         const log = await runHarness("readlog.ps1", [], 60 * 1000);
-        const ok = build?.ok === true && log?.ok === true;
+        // launch.ok was previously ignored here, so a launch that ended without the
+        // TestRunner ever printing SUMMARY could not fail the run no matter what the
+        // script reported. All three stages have to agree: the build produced binaries,
+        // the game got far enough to finish the suite, and the log carries no blocking
+        // entries and no shortfall in case count.
+        const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
         return {
             isError: !ok,
             content: [{ type: "text", text: JSON.stringify({ ok, stage: "complete", build, launch, log }, null, 2) }]
