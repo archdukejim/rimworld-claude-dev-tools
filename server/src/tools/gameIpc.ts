@@ -81,7 +81,20 @@ async function callInGameTool(name: string, args: any): Promise<any> {
         }
     }
     
-    throw new Error("Timeout waiting for in-game tool execution response. Is the game running and unpaused?");
+    // The old message — "Is the game running and unpaused?" — was a guess, and a wrong one twice
+    // over: once while the game was running fine but the request had been written to a folder the
+    // game was not reading, and once while the game had already died of a native crash. Neither
+    // time did checking the game state help. What actually diagnoses this is the path being
+    // watched and whether the request is still sitting there unread.
+    const stillPending = fs.existsSync(toolInputFile());
+    const detail = stillPending
+        ? `The request is still unread at ${toolInputFile()}, so nothing is polling it. ` +
+          `The game polls the Core mod folder it was loaded from — check that the loaded Core is the one at this path ` +
+          `(RIMSYNAPSE_ROOT overrides it), and that the game has reached a live game: the poll runs from ` +
+          `GameComponentUpdate, which only ticks once a Game exists.`
+        : `The request was consumed but no response appeared at ${toolOutputFile()}, so the game read it and did not answer.`;
+
+    throw new Error(`Timeout after 10s waiting for an in-game tool response. ${detail}`);
 }
 
 export async function handleGameIpcTool(name: string, args: any) {
