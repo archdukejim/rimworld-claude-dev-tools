@@ -7,15 +7,16 @@ exports.pasteClipboardText = pasteClipboardText;
 exports.pasteText = pasteText;
 exports.getClipboardImage = getClipboardImage;
 const child_process_1 = require("child_process");
-const nut_js_1 = require("@nut-tree-fork/nut-js");
+const native_1 = require("./native");
 const keyboard_1 = require("./keyboard");
 /**
  * Gets text from the clipboard
  * @returns The text content from the clipboard
  */
 async function getClipboardText() {
+    const { clipboard } = (0, native_1.nut)();
     try {
-        return await nut_js_1.clipboard.getContent();
+        return await clipboard.getContent();
     }
     catch (error) {
         console.error("Error getting clipboard text:", error);
@@ -27,8 +28,9 @@ async function getClipboardText() {
  * @param text - The text to set to the clipboard
  */
 async function setClipboardText(text) {
+    const { clipboard } = (0, native_1.nut)();
     try {
-        await nut_js_1.clipboard.setContent(text);
+        await clipboard.setContent(text);
     }
     catch (error) {
         console.error("Error setting clipboard text:", error);

@@ -9,20 +9,21 @@ exports.doubleClickAt = doubleClickAt;
 exports.scrollMouse = scrollMouse;
 exports.dragMouse = dragMouse;
 exports.dragMouseFromTo = dragMouseFromTo;
-const nut_js_1 = require("@nut-tree-fork/nut-js");
+const native_1 = require("./native");
 const types_1 = require("./types");
 /**
  * Moves the mouse to the specified coordinates
  * @param position - The position to move the mouse to (x, y coordinates)
  */
 async function moveMouse(position) {
+    const { mouse, screen } = (0, native_1.nut)();
     try {
-        const screenWidth = await nut_js_1.screen.width();
-        const screenHeight = await nut_js_1.screen.height();
+        const screenWidth = await screen.width();
+        const screenHeight = await screen.height();
         if (position.x < 0 || position.x > screenWidth || position.y < 0 || position.y > screenHeight) {
             throw new Error(`Coordinates out of bounds. Screen size is ${screenWidth}x${screenHeight}`);
         }
-        await nut_js_1.mouse.move([position]);
+        await mouse.move([position]);
     }
     catch (error) {
         console.error("Error moving mouse:", error);
@@ -34,8 +35,9 @@ async function moveMouse(position) {
  * @returns The current mouse position (x, y coordinates)
  */
 async function getMousePosition() {
+    const { mouse } = (0, native_1.nut)();
     try {
-        const position = await nut_js_1.mouse.getPosition();
+        const position = await mouse.getPosition();
         return {
             x: position.x,
             y: position.y
@@ -51,15 +53,16 @@ async function getMousePosition() {
  * @param button - The mouse button to click (left, middle, right)
  */
 async function clickMouse(button = types_1.MouseButton.LEFT) {
+    const { mouse, Button } = (0, native_1.nut)();
     try {
         if (button === types_1.MouseButton.LEFT) {
-            await nut_js_1.mouse.leftClick();
+            await mouse.leftClick();
         }
         else if (button === types_1.MouseButton.MIDDLE) {
-            await nut_js_1.mouse.click(nut_js_1.Button.MIDDLE);
+            await mouse.click(Button.MIDDLE);
         }
         else if (button === types_1.MouseButton.RIGHT) {
-            await nut_js_1.mouse.rightClick();
+            await mouse.rightClick();
         }
         else {
             throw new Error("Invalid mouse button");
@@ -89,8 +92,9 @@ async function clickMouseAt(position, button = types_1.MouseButton.LEFT) {
  * Double-clicks the mouse at the current position
  */
 async function doubleClick() {
+    const { mouse, Button } = (0, native_1.nut)();
     try {
-        await nut_js_1.mouse.doubleClick(nut_js_1.Button.LEFT);
+        await mouse.doubleClick(Button.LEFT);
     }
     catch (error) {
         console.error("Error double-clicking mouse:", error);
@@ -117,12 +121,13 @@ async function doubleClickAt(position) {
  * @param amount - The amount to scroll (number of clicks)
  */
 async function scrollMouse(direction, amount = 1) {
+    const { mouse } = (0, native_1.nut)();
     try {
         if (direction === types_1.ScrollDirection.UP) {
-            await nut_js_1.mouse.scrollUp(amount);
+            await mouse.scrollUp(amount);
         }
         else if (direction === types_1.ScrollDirection.DOWN) {
-            await nut_js_1.mouse.scrollDown(amount);
+            await mouse.scrollDown(amount);
         }
         else {
             throw new Error("Invalid scroll direction");
@@ -138,14 +143,15 @@ async function scrollMouse(direction, amount = 1) {
  * @param target - The target position to drag to
  */
 async function dragMouse(target) {
+    const { mouse, Button } = (0, native_1.nut)();
     try {
-        await nut_js_1.mouse.pressButton(nut_js_1.Button.LEFT);
+        await mouse.pressButton(Button.LEFT);
         await moveMouse(target);
-        await nut_js_1.mouse.releaseButton(nut_js_1.Button.LEFT);
+        await mouse.releaseButton(Button.LEFT);
     }
     catch (error) {
         try {
-            await nut_js_1.mouse.releaseButton(nut_js_1.Button.LEFT);
+            await mouse.releaseButton(Button.LEFT);
         }
         catch (releaseError) {
             // Ignore
@@ -160,15 +166,16 @@ async function dragMouse(target) {
  * @param end - The end position to drag to
  */
 async function dragMouseFromTo(start, end) {
+    const { mouse, Button } = (0, native_1.nut)();
     try {
         await moveMouse(start);
-        await nut_js_1.mouse.pressButton(nut_js_1.Button.LEFT);
+        await mouse.pressButton(Button.LEFT);
         await moveMouse(end);
-        await nut_js_1.mouse.releaseButton(nut_js_1.Button.LEFT);
+        await mouse.releaseButton(Button.LEFT);
     }
     catch (error) {
         try {
-            await nut_js_1.mouse.releaseButton(nut_js_1.Button.LEFT);
+            await mouse.releaseButton(Button.LEFT);
         }
         catch (releaseError) {
             // Ignore

@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "rimsynapse-mcp",
   "display_name": "RimSynapse MCP",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "GitHub project management plus a local RimWorld build/launch/log harness for the RimSynapse mod ecosystem.",
-  "long_description": "Provides two families of tools. GitHub tools manage issues, project boards, wikis and testing plans across the RimSynapse organization. RimWorld tools build the mods in dependency order, deploy them into the game's Mods folder, launch RimWorld for automated smoke or TestRunner runs, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and [SYNAPSE-TEST] results.",
+  "long_description": "GitHub tools manage issues, project boards, wikis and testing plans across the RimSynapse organization; these are the only tools that need a token, and every other family works without one. RimWorld tools deploy the mods into the game's Mods folder, launch RimWorld for automated smoke or TestRunner runs, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and [SYNAPSE-TEST] results. Game IPC tools call into a running game. Faction and psychology tools read live world and colonist state. Desktop control tools drive the mouse, keyboard, clipboard, screen capture and UI automation for driving RimWorld itself; these depend on native modules, and if those fail to load on a given machine only that family goes unavailable rather than the whole server.",
   "author": {
     "name": "RimSynapse"
   },
@@ -13,34 +13,242 @@
     "entry_point": "server/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/index.js"],
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
       "env": {
         "GITHUB_TOKEN": "${user_config.github_token}",
         "RIMSYNAPSE_ROOT": "${user_config.rimsynapse_root}",
+        "RIMSYNAPSE_SAVEDATA": "${user_config.rimworld_savedata}",
         "RIMSYNAPSE_HARNESS": "${__dirname}/harness"
       }
     }
   },
   "tools": [
-    { "name": "create_issue", "description": "Create a GitHub issue in a RimSynapse repository" },
-    { "name": "search_issues", "description": "Search issues across RimSynapse repositories" },
-    { "name": "add_project_item", "description": "Add an issue to the project board" },
-    { "name": "get_project_items", "description": "List items on the project board" },
-    { "name": "update_project_item_status", "description": "Move a project item to a different status column" },
-    { "name": "cleanup_project_board", "description": "Tidy up stale entries on the project board" },
-    { "name": "update_project_item_iteration", "description": "Set the iteration field on a project item" },
-    { "name": "get_file_content", "description": "Read a file from a repository" },
-    { "name": "create_or_update_file", "description": "Create or update a file in a repository" },
-    { "name": "create_testing_plan_issues", "description": "Attach a testing plan to an issue and mark it as Testing" },
-    { "name": "sync_repo_wiki", "description": "Push Learning markdown to a repository wiki" },
-    { "name": "query_wiki_database", "description": "Query the wiki database" },
-    { "name": "build_mods", "description": "Build RimSynapse mods with dotnet in dependency order" },
-    { "name": "deploy_mods", "description": "Symlink the mods into the RimWorld Mods folder" },
-    { "name": "launch_rimworld", "description": "Launch RimWorld for a smoke or TestRunner run and stop it afterwards" },
-    { "name": "read_player_log", "description": "Parse and classify RimWorld's Player.log since the last launch" },
-    { "name": "run_tests", "description": "Build, launch with the TestRunner, and parse the log in one call" }
+    {
+      "name": "create_issue",
+      "description": "Create a new GitHub issue in a repository"
+    },
+    {
+      "name": "search_issues",
+      "description": "Search for issues and pull requests"
+    },
+    {
+      "name": "add_issue_comment",
+      "description": "Add a comment to an existing GitHub issue or pull request"
+    },
+    {
+      "name": "add_project_item",
+      "description": "Add an issue or pull request to the RimSynapse Roadmap project."
+    },
+    {
+      "name": "get_project_items",
+      "description": "Get all items currently on the RimSynapse Roadmap project."
+    },
+    {
+      "name": "update_project_item_status",
+      "description": "Update the status of a project item (e.g. 'Todo', 'In progress', 'Done')."
+    },
+    {
+      "name": "cleanup_project_board",
+      "description": "Scans the project board for any items that are marked as CLOSED on GitHub, and automatically moves their project status to 'Done'."
+    },
+    {
+      "name": "update_project_item_iteration",
+      "description": "Assigns a project item to a specific sprint/iteration."
+    },
+    {
+      "name": "get_file_content",
+      "description": "Get the content of a file from a repository"
+    },
+    {
+      "name": "create_or_update_file",
+      "description": "Create or update a file in a repository"
+    },
+    {
+      "name": "create_testing_plan_issues",
+      "description": "Parse a local testing plan Markdown file, add it as a comment to the issue, and set the project item status to 'Testing'"
+    },
+    {
+      "name": "restart_game",
+      "description": "Brings down the running RimWorld process and relaunches it with quicktest developer mode (-quicktest) enabled to bypass the main menu and load a test colony immediately."
+    },
+    {
+      "name": "configure_active_mods",
+      "description": "Configures active mods and DLCs in RimWorld's ModsConfig.xml. Resolves file path dynamically."
+    },
+    {
+      "name": "sync_repo_wiki",
+      "description": "Syncs a local Learning folder to its GitHub Wiki repository"
+    },
+    {
+      "name": "query_wiki_database",
+      "description": "Query the RimSynapse Wiki database. Used for accessing Mod Lore and Intelligent Referencing."
+    },
+    {
+      "name": "get_all_factions",
+      "description": "Returns a list of all faction names and details currently in the game."
+    },
+    {
+      "name": "get_motivated_factions",
+      "description": "Returns a list of hostile factions along with their perceived colony strength and greed ratio (wealth vs defense). Use this to determine which faction to send in a raid."
+    },
+    {
+      "name": "get_faction_relations_history",
+      "description": "Returns a summary of relations history and recent interactions with a specific faction."
+    },
+    {
+      "name": "trigger_settlement_crisis",
+      "description": "Triggers a localized crisis (e.g. Blight) at a random settlement of the target faction. Can be used for subterfuge."
+    },
+    {
+      "name": "trigger_leader_backstory_generation",
+      "description": "Manually triggers the three-step backstory and profile generation pipeline for all faction leaders."
+    },
+    {
+      "name": "get_colonist_psychology_profile",
+      "description": "Retrieves traits, sanity breaks predictions, weighted memories, burdens, social network relationship stats (trust/familiarity), and therapy sessions history for a colonist."
+    },
+    {
+      "name": "get_recent_social_interactions",
+      "description": "Retrieves a chronological list of recent social chatter logs (insults, chit-chat, deep talks) on the map."
+    },
+    {
+      "name": "launch_quicktest",
+      "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
+    },
+    {
+      "name": "capture_screen",
+      "description": "Capture the entire screen as an image"
+    },
+    {
+      "name": "capture_region",
+      "description": "Capture a specific region of the screen"
+    },
+    {
+      "name": "get_screen_size",
+      "description": "Get the dimensions of the screen"
+    },
+    {
+      "name": "move_mouse",
+      "description": "Move the mouse cursor to a specific position"
+    },
+    {
+      "name": "get_mouse_position",
+      "description": "Get the current position of the mouse cursor"
+    },
+    {
+      "name": "click_mouse",
+      "description": "Click the mouse at the current position"
+    },
+    {
+      "name": "click_at",
+      "description": "Click the mouse at a specific position"
+    },
+    {
+      "name": "double_click",
+      "description": "Double-click the mouse at the current position"
+    },
+    {
+      "name": "double_click_at",
+      "description": "Double-click the mouse at a specific position"
+    },
+    {
+      "name": "scroll_mouse",
+      "description": "Scroll the mouse wheel"
+    },
+    {
+      "name": "drag_mouse",
+      "description": "Drag the mouse from current position to target position"
+    },
+    {
+      "name": "drag_mouse_from_to",
+      "description": "Drag the mouse from start position to end position"
+    },
+    {
+      "name": "type_text",
+      "description": "Type text at the current cursor position"
+    },
+    {
+      "name": "type_text_with_delay",
+      "description": "Type text with a delay between keystrokes"
+    },
+    {
+      "name": "press_key",
+      "description": "Press a keyboard key"
+    },
+    {
+      "name": "press_key_shortcut",
+      "description": "Press a keyboard shortcut (combination of keys)"
+    },
+    {
+      "name": "hold_key",
+      "description": "Hold down a keyboard key"
+    },
+    {
+      "name": "release_key",
+      "description": "Release a held keyboard key"
+    },
+    {
+      "name": "get_clipboard_text",
+      "description": "Get text from the clipboard"
+    },
+    {
+      "name": "set_clipboard_text",
+      "description": "Set text to the clipboard"
+    },
+    {
+      "name": "copy_selected_text",
+      "description": "Copy selected text to clipboard and return it"
+    },
+    {
+      "name": "paste_text",
+      "description": "Paste text at current cursor position"
+    },
+    {
+      "name": "get_clipboard_image",
+      "description": "Get image from the clipboard (if available) as base64 data"
+    },
+    {
+      "name": "get_ui_element_info",
+      "description": "Finds a UI element within a specified window using UI Automation and returns its properties (Name, AutomationId, ClassName, ControlType, BoundingRectangle, IsEnabled, IsOffscreen, Value). Requires window title and at least one element identifier (name, automationId, or className)."
+    },
+    {
+      "name": "invoke_ui_element_action",
+      "description": "Performs an action (Click, SetValue, Focus) on a specified UI element found via UI Automation. Requires window title, action, and at least one element identifier. Requires valueToSet for the SetValue action."
+    },
+    {
+      "name": "deploy_rimworld_mods",
+      "description": "Compiles C# assemblies and packages clean mod files into the target RimWorld Mods directory."
+    },
+    {
+      "name": "launch_rimworld",
+      "description": "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters."
+    },
+    {
+      "name": "run_rimworld_tests",
+      "description": "Full automated test cycle: build the mods in dependency order, launch RimWorld with the in-game TestRunner (-synapse-test), then classify the log. Stops early if the build fails. Returns the build summary plus [SYNAPSE-TEST] PASS/FAIL results and any errors. Requires the RimSynapse.TestRunner mod to be active and loaded last."
+    },
+    {
+      "name": "read_rimworld_log",
+      "description": "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any [SYNAPSE-TEST] PASS/FAIL results from the TestRunner mod. Pass raw:true for an unfiltered tail instead."
+    },
+    {
+      "name": "list_game_tools",
+      "description": "Retrieves the directory of all active gameplay tools exposed by RimSynapse Core inside the running RimWorld instance. Can optionally filter by a search query."
+    },
+    {
+      "name": "execute_game_tool",
+      "description": "Executes an interactive gameplay tool inside RimWorld by name, passing a JSON arguments object."
+    }
   ],
-  "keywords": ["rimworld", "rimsynapse", "github", "modding", "testing"],
+  "keywords": [
+    "rimworld",
+    "rimsynapse",
+    "github",
+    "modding",
+    "testing"
+  ],
   "license": "MIT",
   "user_config": {
     "github_token": {
@@ -56,10 +264,19 @@
       "description": "Folder containing the RimSynapse mod repos and the _harness scripts (the folder with Core/, Factions/, _harness/).",
       "required": false,
       "default": "C:\\github\\rimsynapse"
+    },
+    "rimworld_savedata": {
+      "type": "directory",
+      "title": "Dev Instance Save Folder",
+      "description": "Where the isolated dev instance of RimWorld keeps its saves, prefs and logs (passed as -savedatafolder). Must be on a drive this machine actually has; it is created if missing. Keep it separate from your normal RimWorld save folder.",
+      "required": false,
+      "default": "C:\\RimWorldDevData"
     }
   },
   "compatibility": {
-    "platforms": ["win32"],
+    "platforms": [
+      "win32"
+    ],
     "runtimes": {
       "node": ">=18.0.0"
     }

@@ -82,12 +82,25 @@ const ALL_TOOLS = [
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools
 ];
+// The tools that cannot do anything without a GitHub token. The token is optional overall - the
+// RimWorld and pc-control families never touch GitHub - so this is checked per call rather than at
+// startup, and every other tool stays usable on a machine with no token configured.
+const GITHUB_BACKED_TOOLS = new Set([
+    ...issues_1.issueTools.map((t) => t.name),
+    ...projects_1.projectTools.map((t) => t.name),
+    ...codebase_1.codebaseTools.map((t) => t.name),
+    ...sync_1.syncTools.map((t) => t.name),
+    "create_testing_plan_issues",
+]);
 // 3. Register Tools
 server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
     return { tools: ALL_TOOLS };
 });
 server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    if (GITHUB_BACKED_TOOLS.has(name)) {
+        (0, config_1.requireGitHubToken)(token, name);
+    }
     if (issues_1.issueTools.some(t => t.name === name)) {
         return await (0, issues_1.handleIssueTool)(name, args, octokit, config.organization);
     }
@@ -212,6 +225,9 @@ async function main() {
             const name = req.params.name;
             const args = req.body.arguments || req.body || {};
             try {
+                if (GITHUB_BACKED_TOOLS.has(name)) {
+                    (0, config_1.requireGitHubToken)(token, name);
+                }
                 let result;
                 if (issues_1.issueTools.some(t => t.name === name)) {
                     result = await (0, issues_1.handleIssueTool)(name, args, octokit, config.organization);

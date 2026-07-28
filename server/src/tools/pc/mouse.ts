@@ -1,4 +1,4 @@
-import { mouse, screen, Button } from "@nut-tree-fork/nut-js";
+import { nut } from "./native";
 import { MouseButton, Point, ScrollDirection } from "./types";
 
 /**
@@ -6,6 +6,7 @@ import { MouseButton, Point, ScrollDirection } from "./types";
  * @param position - The position to move the mouse to (x, y coordinates)
  */
 export async function moveMouse(position: Point): Promise<void> {
+  const { mouse, screen } = nut();
   try {
     const screenWidth = await screen.width();
     const screenHeight = await screen.height();
@@ -24,6 +25,7 @@ export async function moveMouse(position: Point): Promise<void> {
  * @returns The current mouse position (x, y coordinates)
  */
 export async function getMousePosition(): Promise<Point> {
+  const { mouse } = nut();
   try {
     const position = await mouse.getPosition();
     return {
@@ -41,6 +43,7 @@ export async function getMousePosition(): Promise<Point> {
  * @param button - The mouse button to click (left, middle, right)
  */
 export async function clickMouse(button: MouseButton = MouseButton.LEFT): Promise<void> {
+  const { mouse, Button } = nut();
   try {
     if (button === MouseButton.LEFT) {
       await mouse.leftClick();
@@ -76,6 +79,7 @@ export async function clickMouseAt(position: Point, button: MouseButton = MouseB
  * Double-clicks the mouse at the current position
  */
 export async function doubleClick(): Promise<void> {
+  const { mouse, Button } = nut();
   try {
     await mouse.doubleClick(Button.LEFT);
   } catch (error) {
@@ -104,6 +108,7 @@ export async function doubleClickAt(position: Point): Promise<void> {
  * @param amount - The amount to scroll (number of clicks)
  */
 export async function scrollMouse(direction: ScrollDirection, amount: number = 1): Promise<void> {
+  const { mouse } = nut();
   try {
     if (direction === ScrollDirection.UP) {
       await mouse.scrollUp(amount);
@@ -123,6 +128,7 @@ export async function scrollMouse(direction: ScrollDirection, amount: number = 1
  * @param target - The target position to drag to
  */
 export async function dragMouse(target: Point): Promise<void> {
+  const { mouse, Button } = nut();
   try {
     await mouse.pressButton(Button.LEFT);
     await moveMouse(target);
@@ -144,6 +150,7 @@ export async function dragMouse(target: Point): Promise<void> {
  * @param end - The end position to drag to
  */
 export async function dragMouseFromTo(start: Point, end: Point): Promise<void> {
+  const { mouse, Button } = nut();
   try {
     await moveMouse(start);
     await mouse.pressButton(Button.LEFT);

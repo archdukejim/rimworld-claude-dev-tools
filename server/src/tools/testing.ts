@@ -3,7 +3,7 @@ import * as fs from "fs";
 import { graphql } from "@octokit/graphql";
 import * as path from "path";
 import { execSync, spawn } from "child_process";
-import { loadConfig } from "../config";
+import { loadConfig, getSaveDataFolder } from "../config";
 
 export const testingTools = [
     {
@@ -192,7 +192,7 @@ export async function handleTestingTool(
     if (name === "restart_game") {
         const quicktest = args.quicktest !== false;
         const config = loadConfig();
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const pidFilePath = path.join(__dirname, "..", "..", "dev_instance_pid.txt");
 
         // 1. Safe Kill: terminate only tracked dev PID or processes running with custom savedatafolder
@@ -277,7 +277,7 @@ export async function handleTestingTool(
 
     if (name === "configure_active_mods") {
         const config = loadConfig();
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const configDir = path.join(savedata, "Config");
         const configPath = path.join(configDir, "ModsConfig.xml");
 

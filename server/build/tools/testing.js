@@ -206,7 +206,7 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
     if (name === "restart_game") {
         const quicktest = args.quicktest !== false;
         const config = (0, config_1.loadConfig)();
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
         const pidFilePath = path.join(__dirname, "..", "..", "dev_instance_pid.txt");
         // 1. Safe Kill: terminate only tracked dev PID or processes running with custom savedatafolder
         let killMsg = "No active dev instance found to close.";
@@ -287,7 +287,7 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
     }
     if (name === "configure_active_mods") {
         const config = (0, config_1.loadConfig)();
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
         const configDir = path.join(savedata, "Config");
         const configPath = path.join(configDir, "ModsConfig.xml");
         if (!fs.existsSync(configPath)) {

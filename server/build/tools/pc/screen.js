@@ -32,15 +32,11 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.captureScreen = captureScreen;
 exports.captureRegion = captureRegion;
 exports.getScreenSize = getScreenSize;
-const nut_js_1 = require("@nut-tree-fork/nut-js");
-const sharp_1 = __importDefault(require("sharp"));
+const native_1 = require("./native");
 const types_1 = require("./types");
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
@@ -54,6 +50,7 @@ const MAX_SCREENSHOTS = 20;
  * @returns Base64 encoded image data with filename context
  */
 async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
+    const { screen, Region: NutRegion } = (0, native_1.nut)();
     let tempFilepath = "";
     let finalFilepath = "";
     try {
@@ -62,11 +59,11 @@ async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
         finalFilepath = path.resolve(finalFilename);
         const tempFilename = `temp_screenshot_${(0, crypto_1.randomBytes)(8).toString('hex')}.png`;
         tempFilepath = path.resolve(tempFilename);
-        const width = await nut_js_1.screen.width();
-        const height = await nut_js_1.screen.height();
-        const fullScreenRegion = new nut_js_1.Region(0, 0, width, height);
+        const width = await screen.width();
+        const height = await screen.height();
+        const fullScreenRegion = new NutRegion(0, 0, width, height);
         console.error(`Attempting to capture screen to temporary file: ${tempFilepath}`);
-        await nut_js_1.screen.captureRegion(tempFilepath, fullScreenRegion);
+        await screen.captureRegion(tempFilepath, fullScreenRegion);
         console.error(`Screen capture command executed for: ${tempFilepath}`);
         try {
             await fs.access(tempFilepath);
@@ -79,7 +76,9 @@ async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
         let imageBuffer;
         let resultMessage;
         if (format === types_1.CaptureFormat.JPEG) {
-            imageBuffer = await (0, sharp_1.default)(tempFilepath)
+            // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
+            // machine where sharp will not load.
+            imageBuffer = await (0, native_1.sharp)()(tempFilepath)
                 .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
                 .toBuffer();
             await fs.writeFile(finalFilepath, imageBuffer);
@@ -114,6 +113,7 @@ async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
  * @returns Base64 encoded image data with filename context
  */
 async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality = 80) {
+    const { screen, Region: NutRegion } = (0, native_1.nut)();
     let tempFilepath = "";
     let finalFilepath = "";
     try {
@@ -122,9 +122,9 @@ async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality
         finalFilepath = path.resolve(finalFilename);
         const tempFilename = `temp_screenshot_${(0, crypto_1.randomBytes)(8).toString('hex')}.png`;
         tempFilepath = path.resolve(tempFilename);
-        const nutRegion = new nut_js_1.Region(region.left, region.top, region.width, region.height);
+        const nutRegion = new NutRegion(region.left, region.top, region.width, region.height);
         console.error(`Attempting to capture region to temporary file: ${tempFilepath}`);
-        await nut_js_1.screen.captureRegion(tempFilepath, nutRegion);
+        await screen.captureRegion(tempFilepath, nutRegion);
         console.error(`Region capture command executed for: ${tempFilepath}`);
         try {
             await fs.access(tempFilepath);
@@ -137,7 +137,9 @@ async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality
         let imageBuffer;
         let resultMessage;
         if (format === types_1.CaptureFormat.JPEG) {
-            imageBuffer = await (0, sharp_1.default)(tempFilepath)
+            // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
+            // machine where sharp will not load.
+            imageBuffer = await (0, native_1.sharp)()(tempFilepath)
                 .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
                 .toBuffer();
             await fs.writeFile(finalFilepath, imageBuffer);
@@ -169,8 +171,9 @@ async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality
  * @returns The screen dimensions as width and height
  */
 async function getScreenSize() {
-    const width = await nut_js_1.screen.width();
-    const height = await nut_js_1.screen.height();
+    const { screen } = (0, native_1.nut)();
+    const width = await screen.width();
+    const height = await screen.height();
     return {
         width,
         height

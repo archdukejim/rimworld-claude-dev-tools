@@ -33,40 +33,105 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getSaveDataFolder = getSaveDataFolder;
 exports.loadConfig = loadConfig;
 exports.getGitHubToken = getGitHubToken;
+exports.requireGitHubToken = requireGitHubToken;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-function loadConfig() {
-    const configPath = path.join(__dirname, "..", "..", "..", "mcp-config", "config.json");
-    if (fs.existsSync(configPath)) {
-        const content = fs.readFileSync(configPath, "utf-8");
-        return JSON.parse(content);
-    }
-    // Fallback defaults
-    return {
-        defaultProjectId: "PVT_kwDOEfI01s4Bdlhx",
-        organization: "RimSynapse",
-        rimworldPath: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\RimWorldWin64.exe",
-        rimworldModsDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\Mods",
-        savedatafolder: "D:\\RimWorldDevData"
-    };
+/**
+ * Where an isolated dev instance keeps its saves, prefs and logs.
+ *
+ * This is machine-specific: it was a hardcoded D:\ path, which silently produces a broken
+ * -savedatafolder argument on any box without that drive. RIMSYNAPSE_SAVEDATA (wired to a
+ * user_config field in manifest.json) lets each machine name its own, in the same style as
+ * RIMSYNAPSE_ROOT and RIMSYNAPSE_HARNESS.
+ */
+function getSaveDataFolder() {
+    return process.env.RIMSYNAPSE_SAVEDATA?.trim() || "C:\\RimWorldDevData";
 }
-function getGitHubToken() {
-    const tokenFilePath = path.join(__dirname, "..", "..", "github_token.txt");
-    let githubToken;
-    if (fs.existsSync(tokenFilePath)) {
-        const fileContent = fs.readFileSync(tokenFilePath, "utf-8");
-        const tokenLine = fileContent.split("\n").find(line => line.startsWith("TOKEN="));
-        if (tokenLine) {
-            githubToken = tokenLine.split("=")[1].trim();
+const DEFAULT_CONFIG = {
+    defaultProjectId: "PVT_kwDOEfI01s4Bdlhx",
+    organization: "RimSynapse",
+    rimworldPath: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\RimWorldWin64.exe",
+    rimworldModsDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\Mods",
+    savedatafolder: getSaveDataFolder()
+};
+function loadConfig() {
+    // The server runs from two different layouts and mcp-config sits at a different depth in each:
+    // from source the entry is server/build/index.js (two levels down from the repo root), inside a
+    // packed .mcpb it is server/index.js (one level down from the extension root). Checking both
+    // is what makes the config.json that ships in the bundle actually get read - the previous
+    // single hardcoded path resolved above the root in either layout, so this always fell through
+    // to the defaults below and the packaged config was dead weight.
+    const candidates = [
+        path.join(__dirname, "..", "..", "mcp-config", "config.json"), // source: server/build -> repo root
+        path.join(__dirname, "..", "mcp-config", "config.json"), // bundle: server -> extension root
+        path.join(__dirname, "..", "..", "..", "mcp-config", "config.json"),
+    ];
+    for (const configPath of candidates) {
+        if (!fs.existsSync(configPath)) {
+            continue;
+        }
+        try {
+            const fromFile = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+            // Merge rather than replace. The shipped mcp-config/config.json only carries the GitHub
+            // identifiers, so returning it wholesale would leave rimworldPath, rimworldModsDir and
+            // savedatafolder undefined and break the RimWorld tools.
+            return { ...DEFAULT_CONFIG, ...fromFile };
+        }
+        catch (err) {
+            // A malformed config should not stop the server from starting on the defaults.
+            console.error(`Ignoring unreadable config at ${configPath}:`, err instanceof Error ? err.message : err);
         }
     }
-    if (!githubToken) {
-        githubToken = process.env.GITHUB_TOKEN;
+    return { ...DEFAULT_CONFIG };
+}
+/**
+ * The GitHub token, or an empty string when none is configured.
+ *
+ * This deliberately does not throw. The token is declared optional in manifest.json - the RimWorld
+ * build, launch and log tools need nothing from GitHub - but this used to throw at module load,
+ * which killed the entire server on any machine that had not set one up. A fresh install with the
+ * token field left blank is the normal case, not an error, so the absence is reported per-call by
+ * requireGitHubToken instead of at startup.
+ */
+function getGitHubToken() {
+    // Env first: this is what manifest.json wires user_config.github_token into.
+    const fromEnv = process.env.GITHUB_TOKEN?.trim();
+    if (fromEnv) {
+        return fromEnv;
     }
-    if (!githubToken) {
-        throw new Error("No GitHub token found. Please set GITHUB_TOKEN or ensure github_token.txt exists with TOKEN=...");
+    const tokenFileCandidates = [
+        path.join(__dirname, "..", "..", "github_token.txt"), // source: server/build -> repo root
+        path.join(__dirname, "..", "github_token.txt"), // bundle: server -> extension root
+    ];
+    for (const tokenFilePath of tokenFileCandidates) {
+        if (!fs.existsSync(tokenFilePath)) {
+            continue;
+        }
+        try {
+            const fileContent = fs.readFileSync(tokenFilePath, "utf-8");
+            const tokenLine = fileContent.split("\n").find(line => line.startsWith("TOKEN="));
+            if (tokenLine) {
+                const token = tokenLine.slice("TOKEN=".length).trim();
+                if (token) {
+                    return token;
+                }
+            }
+        }
+        catch {
+            // Fall through to the next candidate.
+        }
     }
-    return githubToken;
+    return "";
+}
+/** Throws a message the user can act on. Call this from tools that genuinely need GitHub. */
+function requireGitHubToken(token, toolName) {
+    if (!token) {
+        throw new Error(`The '${toolName}' tool needs a GitHub token, and none is configured. ` +
+            `Set the GitHub Token field in the extension's settings (a personal access token with 'repo' scope), ` +
+            `or set the GITHUB_TOKEN environment variable. ` +
+            `The RimWorld build, launch and log tools do not need one and will keep working without it.`);
+    }
 }

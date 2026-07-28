@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync, spawn } from "child_process";
-import { loadConfig } from "../config";
+import { loadConfig, getSaveDataFolder } from "../config";
 
 export const rimworldDevTools = [
     {
@@ -414,7 +414,7 @@ export async function handleRimworldDevTool(name: string, args: any) {
     }
     
     if (name === "launch_rimworld") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const quicktest = args.quicktest === true;
         const developer = args.developer !== false;
         const killExisting = args.killExisting !== false;
@@ -610,7 +610,7 @@ export async function handleRimworldDevTool(name: string, args: any) {
     }
 
     if (name === "read_rimworld_log") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const linesToGet = args.lines || 100;
         
         let logPath = "";

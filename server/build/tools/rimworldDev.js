@@ -428,7 +428,7 @@ async function handleRimworldDevTool(name, args) {
         return { content: [{ type: "text", text: logs }] };
     }
     if (name === "launch_rimworld") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
         const quicktest = args.quicktest === true;
         const developer = args.developer !== false;
         const killExisting = args.killExisting !== false;
@@ -607,7 +607,7 @@ async function handleRimworldDevTool(name, args) {
         };
     }
     if (name === "read_rimworld_log") {
-        const savedata = args.savedatafolder || config.savedatafolder || "D:\\RimWorldDevData";
+        const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
         const linesToGet = args.lines || 100;
         let logPath = "";
         const candidates = [

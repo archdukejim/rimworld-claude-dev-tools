@@ -24,7 +24,7 @@ import { psychologyTools, handlePsychologyTool } from "./tools/psychology";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
-import { loadConfig, getGitHubToken } from "./config";
+import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 
 // 1. Setup Config & Auth
 const config = loadConfig();
@@ -55,6 +55,17 @@ const ALL_TOOLS = [
     ...gameIpcTools
 ];
 
+// The tools that cannot do anything without a GitHub token. The token is optional overall - the
+// RimWorld and pc-control families never touch GitHub - so this is checked per call rather than at
+// startup, and every other tool stays usable on a machine with no token configured.
+const GITHUB_BACKED_TOOLS = new Set<string>([
+    ...issueTools.map((t: any) => t.name),
+    ...projectTools.map((t: any) => t.name),
+    ...codebaseTools.map((t: any) => t.name),
+    ...syncTools.map((t: any) => t.name),
+    "create_testing_plan_issues",
+]);
+
 // 3. Register Tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: ALL_TOOLS as any };
@@ -62,7 +73,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params as any;
-    
+
+    if (GITHUB_BACKED_TOOLS.has(name)) {
+        requireGitHubToken(token, name);
+    }
+
     if (issueTools.some(t => t.name === name)) {
         return await handleIssueTool(name, args, octokit, config.organization);
     }
@@ -209,8 +224,12 @@ async function main() {
             notifyActivity();
             const name = req.params.name;
             const args = req.body.arguments || req.body || {};
-            
+
             try {
+                if (GITHUB_BACKED_TOOLS.has(name)) {
+                    requireGitHubToken(token, name);
+                }
+
                 let result;
                 if (issueTools.some(t => t.name === name)) {
                     result = await handleIssueTool(name, args, octokit, config.organization);
