@@ -13,7 +13,12 @@
 param(
     [switch]$Test,
     [int]$BootWaitSec = 90,     # smoke: how long to let mods load before killing (Intel iGPU = slow)
-    [int]$TimeoutSec  = 300     # test: max wait for TestRunner auto-quit
+    [int]$TimeoutSec  = 300,    # test: max wait for TestRunner auto-quit
+    # Which config RimWorld reads. Without this the game falls back to the default
+    # AppData\LocalLow config, while configure_active_mods writes the dev savedatafolder — so
+    # configuring a modlist had no effect on a test run, and the run silently validated whatever
+    # was last left in the default config. The caller passes the same folder it configured.
+    [string]$SaveDataFolder = ""
 )
 . "$PSScriptRoot\lib.ps1"
 
@@ -42,6 +47,25 @@ Set-Content -Path $RS_Marker -Value $marker -NoNewline
 
 $args = @('-quicktest')
 if ($Test) { $args += '-synapse-test' }
+if ($SaveDataFolder) { $args += "-savedatafolder=$SaveDataFolder" }
+
+# Report the modlist this run will actually use, read back from the config the launch will read.
+# A run that cannot state its own modlist cannot be trusted about what it validated.
+$modsConfigPath = if ($SaveDataFolder) {
+    Join-Path $SaveDataFolder 'Config\ModsConfig.xml'
+} else {
+    Join-Path $env:USERPROFILE 'AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Config\ModsConfig.xml'
+}
+$activeMods = @()
+if (Test-Path $modsConfigPath) {
+    try {
+        [xml]$mc = Get-Content $modsConfigPath -Raw
+        $activeMods = @($mc.ModsConfigData.activeMods.li)
+    } catch { RS-Log "Could not read modlist from $modsConfigPath : $($_.Exception.Message)" }
+} else {
+    RS-Log "No ModsConfig.xml at $modsConfigPath"
+}
+RS-Log "Modlist ($($activeMods.Count) active) from $modsConfigPath"
 
 RS-Log "Launching: RimWorldWin64.exe $($args -join ' ')"
 $proc = Start-Process -FilePath $RS_GameExe -ArgumentList $args -PassThru
@@ -101,4 +125,4 @@ if ($Test) {
 $launchOk = ($null -eq $reason)
 if ($reason) { RS-Log "Launch not ok: $reason" }
 
-RS-Json @{ ok=$launchOk; reason=$reason; mode=$(if($Test){'test'}else{'smoke'}); exited=$exited; killed=$killed; timedOut=$timedOut; sawSummary=$sawSummary; elapsedSec=[math]::Round($sw.Elapsed.TotalSeconds,1) }
+RS-Json @{ ok=$launchOk; reason=$reason; mode=$(if($Test){'test'}else{'smoke'}); exited=$exited; killed=$killed; timedOut=$timedOut; sawSummary=$sawSummary; elapsedSec=[math]::Round($sw.Elapsed.TotalSeconds,1); modsConfigPath=$modsConfigPath; activeMods=$activeMods }

@@ -114,6 +114,12 @@ exports.rimworldDevTools = [
                 timeoutSec: {
                     type: "number",
                     description: "Max seconds to wait for the TestRunner to report results (default: 420)."
+                },
+                savedatafolder: {
+                    type: "string",
+                    description: "Which RimWorld config the run reads, and therefore which modlist it tests. " +
+                        "Defaults to the same folder configure_active_mods writes, so configuring a " +
+                        "modlist and then running the tests validates that modlist."
                 }
             }
         }
@@ -597,7 +603,14 @@ async function handleRimworldDevTool(name, args) {
                 content: [{ type: "text", text: JSON.stringify({ ok: false, stage: "build", build }, null, 2) }]
             };
         }
-        const launch = await runHarness("launch.ps1", ["-Test", "-TimeoutSec", String(timeoutSec)], (timeoutSec + 180) * 1000);
+        // Launch against the same config configure_active_mods writes. Previously launch.ps1 was
+        // called with no savedatafolder, so RimWorld read the default AppData\LocalLow config
+        // while the modlist had been written to the dev folder — configuring a modlist had no
+        // effect on the test run, and the run validated whatever was last left in the default.
+        // That produced a confident false conclusion once already: Empire and VOE reported "not
+        // detected" and it read as a broken integration when neither mod was ever active.
+        const savedata = args.savedatafolder || (0, config_1.loadConfig)().savedatafolder || (0, config_1.getSaveDataFolder)();
+        const launch = await runHarness("launch.ps1", ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", savedata], (timeoutSec + 180) * 1000);
         // Read the log regardless of how the launch ended — a crash still leaves evidence.
         const log = await runHarness("readlog.ps1", [], 60 * 1000);
         // launch.ok was previously ignored here, so a launch that ended without the
