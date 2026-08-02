@@ -6,6 +6,28 @@ first.
 
 ---
 
+## Agent / orchestration  ← current priority
+
+### Orchestrator agent (Claude Agent SDK app)
+_not yet a tracked issue_ · `enhancement` · **proposed, prioritized**
+
+An autonomous agent that drives the dev→test→merge loop, using the MCP server as
+its toolset. Split by determinism: deterministic MCP tools own config/launch/data
+pulls; the agent owns judgment (what to test/merge, resolving mod-order gaps).
+Runtime: standalone TypeScript Agent SDK app in `agent/`. **Agent-first** — the
+async job broker (#3) becomes its parallel execution backend, added later.
+Plan: `docs/plans/orchestrator-agent.md`.
+
+### `resolve_mod_load_order` (read-only MCP connector)
+_not yet a tracked issue_ · `enhancement` · proposed (first piece of the agent)
+
+Reads each mod's `About.xml` (`loadAfter`/`loadBefore`/`force*`/`modDependencies`),
+topo-sorts the declared constraints, and returns `{ resolved, ambiguous, cycles,
+conflicts }`. Deterministic where metadata allows; surfaces the gaps for the agent
+to resolve with judgment. Pure "MCP pulls data, agent decides."
+
+---
+
 ## Steam Workshop
 
 ### 1. Window navigation + screenshot → JPEG for description embedding

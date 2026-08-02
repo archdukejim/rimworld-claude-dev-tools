@@ -131,6 +131,69 @@ function orderByDeclaredDependencies(mods: string[], index: ModIndex): { order: 
     return { order, cycles };
 }
 
+/**
+ * The official RimWorld load-order prefix: Harmony, base game, then DLCs. Everything
+ * else loads after this block, ordered by what it declares.
+ */
+const OFFICIAL_ORDER = [
+    "brrainz.harmony",
+    "ludeon.rimworld",
+    "ludeon.rimworld.royalty",
+    "ludeon.rimworld.ideology",
+    "ludeon.rimworld.biotech",
+    "ludeon.rimworld.anomaly",
+    "ludeon.rimworld.odyssey"
+];
+
+/**
+ * Resolve a set of active mods into RimWorld load order — the single source of
+ * truth shared by the `configure_active_mods` writer and the read-only
+ * `resolve_mod_load_order` connector, so the two can never disagree about what
+ * order will actually load.
+ *
+ * Rules (unchanged from the writer): dedupe, official block first, then the tail
+ * topologically sorted by declared loadAfter/loadBefore/modDependencies. Pure and
+ * read-only — reads About.xml, writes nothing.
+ *
+ * `ambiguous` is what the connector adds over the writer: installed mods that
+ * neither declare their own ordering nor are named by any other present mod, so the
+ * topo-sort can't place them and they float on caller order. Those are exactly the
+ * mods an agent has to judge. `uninstalled` are packageIds found in no mod folder —
+ * RimWorld silently drops them, so they are worth naming.
+ */
+export function resolveModLoadOrder(
+    activeMods: string[],
+    config: { rimworldModsDir?: string }
+): { resolved: string[]; cycles: string[]; ambiguous: string[]; uninstalled: string[] } {
+    const deduped = Array.from(new Set(activeMods.map(m => m.trim())));
+    const index = modFolderIndex(config);
+
+    const officials = deduped
+        .filter(m => OFFICIAL_ORDER.indexOf(m.toLowerCase()) !== -1)
+        .sort((a, b) => OFFICIAL_ORDER.indexOf(a.toLowerCase()) - OFFICIAL_ORDER.indexOf(b.toLowerCase()));
+
+    const tailInput = deduped.filter(m => OFFICIAL_ORDER.indexOf(m.toLowerCase()) === -1);
+    const { order: sortedTail, cycles } = orderByDeclaredDependencies(tailInput, index);
+    const resolved = [...officials, ...sortedTail];
+
+    // A mod is "placed" iff it declares ordering or another present mod names it.
+    // Everything installed and left out of that set is genuinely unplaced.
+    const present = new Set(tailInput.map(m => m.toLowerCase()));
+    const constrained = new Set<string>();
+    for (const m of tailInput) {
+        const { after, before } = declaredOrdering(index.get(m.toLowerCase()));
+        if (after.length || before.length) constrained.add(m.toLowerCase());
+        for (const t of [...after, ...before]) if (present.has(t)) constrained.add(t);
+    }
+    const ambiguous = tailInput.filter(
+        m => index.has(m.toLowerCase()) && !constrained.has(m.toLowerCase())
+    );
+
+    const uninstalled = deduped.filter(m => !index.has(m.toLowerCase()));
+
+    return { resolved, cycles, ambiguous, uninstalled };
+}
+
 export const testingTools = [
     {
         name: "create_testing_plan_issues",
@@ -189,6 +252,32 @@ export const testingTools = [
                 savedatafolder: {
                     type: "string",
                     description: "Optional custom path for -savedatafolder. Overrides the configured path."
+                }
+            }
+        }
+    },
+    {
+        name: "resolve_mod_load_order",
+        description:
+            "Read-only. Resolves a set of mod packageIds into RimWorld load order using the exact " +
+            "rules configure_active_mods writes with (official block first — harmony, core, DLCs — " +
+            "then a topological sort of declared loadAfter/loadBefore/modDependencies). Reads each " +
+            "mod's About.xml; writes nothing. Returns { resolved, ambiguous, cycles, uninstalled }: " +
+            "'ambiguous' = installed mods with no ordering constraints (the ones needing judgment), " +
+            "'cycles' = mutually-conflicting declarations left in the given order, 'uninstalled' = " +
+            "packageIds found in no mod folder (RimWorld silently drops them). If 'mods' is omitted, " +
+            "reads the current active list from ModsConfig.xml.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                mods: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "packageIds to resolve. If omitted, reads the current active list from ModsConfig.xml."
+                },
+                savedatafolder: {
+                    type: "string",
+                    description: "Optional; which ModsConfig.xml to read the active list from when 'mods' is omitted."
                 }
             }
         }
@@ -476,42 +565,13 @@ export async function handleTestingTool(
             }
         }
 
-        // Standardize list (keep duplicates out)
-        activeList = Array.from(new Set(activeList.map(m => m.trim())));
-
-        // Sort active mods list to respect official RimWorld load order:
-        // 1. Harmony
-        // 2. Core (ludeon.rimworld)
-        // 3. Official DLCs (ludeon.rimworld.royalty, ludeon.rimworld.ideology, etc.)
-        // 4. Other mods, ordered by the loadAfter/loadBefore they declare
-        const officialOrder = [
-            "brrainz.harmony",
-            "ludeon.rimworld",
-            "ludeon.rimworld.royalty",
-            "ludeon.rimworld.ideology",
-            "ludeon.rimworld.biotech",
-            "ludeon.rimworld.anomaly",
-            "ludeon.rimworld.odyssey"
-        ];
-
-        // Everything past the official block used to fall through to a.localeCompare(b), which
-        // is alphabetical and knows nothing about dependencies. That put rimsynapse.factions
-        // ahead of rimsynapse.regionsandterritories, and since 0.7 Factions binds against R&T's
-        // assembly: every Factions type failed to resolve, its patches never bound, and the only
-        // evidence was four "Could not find a type named ..." lines. RimWorld obeys this file and
-        // treats loadAfter as advisory, so a modlist writer that ignores loadAfter is a modlist
-        // writer that can silently disable a mod.
-        const { order: sortedTail, cycles } = orderByDeclaredDependencies(
-            activeList.filter(m => officialOrder.indexOf(m.toLowerCase()) === -1),
-            modFolderIndex(config)
-        );
-
-        activeList = [
-            ...activeList
-                .filter(m => officialOrder.indexOf(m.toLowerCase()) !== -1)
-                .sort((a, b) => officialOrder.indexOf(a.toLowerCase()) - officialOrder.indexOf(b.toLowerCase())),
-            ...sortedTail
-        ];
+        // Resolve into official-first, dependency-aware load order via the shared resolver.
+        // Ignoring loadAfter here once silently disabled Factions: alphabetical order put it
+        // ahead of Regions-and-Territories whose assembly it binds against, so every Factions
+        // type failed to resolve with only four "Could not find a type named ..." lines as
+        // evidence. RimWorld obeys this file and treats loadAfter as advisory.
+        const { resolved, cycles, uninstalled: missing } = resolveModLoadOrder(activeList, config);
+        activeList = resolved;
 
         // Format activeMods XML block
         const newActiveXml = `<activeMods>\n` + activeList.map(m => `        <li>${m}</li>`).join("\n") + `\n    </activeMods>`;
@@ -527,10 +587,7 @@ export async function handleTestingTool(
         // Say what was written, where, and what is wrong with it. A modlist naming a mod that is
         // not installed used to be accepted in silence: RimWorld drops the entry, the mod's own
         // "not detected" branch logs, and the run looks like evidence about that mod when it is
-        // only evidence that it was never loaded.
-        const installed = modFolderIndex(config);
-        const missing = activeList.filter(m => !installed.has(m.toLowerCase()));
-
+        // only evidence that it was never loaded. `missing` comes from the resolver above.
         const notes: string[] = [];
         notes.push(`Wrote ${configPath}`);
         if (missing.length > 0) {
@@ -555,5 +612,27 @@ export async function handleTestingTool(
         };
     }
     
+    if (name === "resolve_mod_load_order") {
+        const config = loadConfig();
+        let mods: string[] = Array.isArray(args.mods) ? args.mods.map((m: string) => String(m)) : [];
+
+        // No explicit set → resolve whatever ModsConfig.xml currently has active.
+        if (mods.length === 0) {
+            const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
+            const configPath = path.join(savedata, "Config", "ModsConfig.xml");
+            if (!fs.existsSync(configPath)) {
+                throw new Error(`No 'mods' provided and no ModsConfig.xml at ${configPath}.`);
+            }
+            const content = fs.readFileSync(configPath, "utf8");
+            const match = content.match(/<activeMods>([\s\S]*?)<\/activeMods>/);
+            if (match) {
+                for (const lm of match[1].matchAll(/<li>(.*?)<\/li>/g)) mods.push(lm[1].trim());
+            }
+        }
+
+        const result = resolveModLoadOrder(mods, config);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+
     throw new Error(`Unknown testing tool: ${name}`);
 }

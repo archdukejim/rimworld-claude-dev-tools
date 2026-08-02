@@ -78,6 +78,10 @@
       "description": "Configures active mods and DLCs in RimWorld's ModsConfig.xml. Resolves file path dynamically."
     },
     {
+      "name": "resolve_mod_load_order",
+      "description": "Read-only. Resolves mod packageIds into RimWorld load order (official block first, then a topological sort of declared loadAfter/loadBefore/modDependencies) and returns { resolved, ambiguous, cycles, uninstalled } without writing ModsConfig."
+    },
+    {
       "name": "sync_repo_wiki",
       "description": "Syncs a local Learning folder to its GitHub Wiki repository"
     },

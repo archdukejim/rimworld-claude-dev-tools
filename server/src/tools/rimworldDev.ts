@@ -353,6 +353,57 @@ function runHarness(scriptName: string, scriptArgs: string[], timeoutMs: number)
     });
 }
 
+/**
+ * The full RimWorld test cycle as a reusable, config-explicit core: build in
+ * dependency order, launch the in-game TestRunner against a **given**
+ * `savedatafolder`, then classify the log. Returns the same structured object the
+ * `run_rimworld_tests` tool has always emitted.
+ *
+ * Unlike the tool handler, this never reads `loadConfig()` / `getSaveDataFolder()`:
+ * `savedatafolder` is a required parameter. That is the invariant the async job
+ * broker depends on — every run's config is passed in and pinned by the caller,
+ * never inherited from a shared global (the root cause of Repo-MCP#18 / #19).
+ */
+export interface TestCycleOptions {
+    /** Build only this repo and its dependencies (e.g. "Factions"). Omit to build everything. */
+    repo?: string;
+    /** Required. Which RimWorld config the run reads — and therefore which modlist it tests. */
+    savedatafolder: string;
+    /** Max seconds to wait for the TestRunner to report results (default 420). */
+    timeoutSec?: number;
+}
+
+export async function runTestCycle(
+    opts: TestCycleOptions
+): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any }> {
+    const timeoutSec = opts.timeoutSec || 420;
+
+    const buildArgs = ["-Repo", opts.repo].filter(Boolean) as string[];
+    const build = await runHarness("build.ps1", opts.repo ? buildArgs : [], 10 * 60 * 1000);
+    if (!build || build.ok !== true) {
+        return { ok: false, stage: "build", build };
+    }
+
+    // Launch against the caller-pinned config. Previously launch.ps1 was called with no
+    // savedatafolder, so RimWorld read the default AppData\LocalLow config while the modlist
+    // had been written to the dev folder — configuring a modlist had no effect on the run.
+    const launch = await runHarness(
+        "launch.ps1",
+        ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", opts.savedatafolder],
+        (timeoutSec + 180) * 1000
+    );
+
+    // Read the log regardless of how the launch ended — a crash still leaves evidence.
+    // NOTE (Phase 2): readlog.ps1 currently reads the default log location; for per-job
+    // isolation it must accept -SaveDataFolder and read the job's own Player.log.
+    const log = await runHarness("readlog.ps1", [], 60 * 1000);
+
+    // All three stages have to agree: the build produced binaries, the game got far enough to
+    // finish the suite, and the log carries no blocking entries and no shortfall in case count.
+    const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
+    return { ok, stage: "complete", build, launch, log };
+}
+
 function copyFolderRecursiveSync(source: string, target: string) {
     if (!fs.existsSync(target)) {
         fs.mkdirSync(target, { recursive: true });
@@ -637,45 +688,19 @@ export async function handleRimworldDevTool(name: string, args: any) {
     }
 
     if (name === "run_rimworld_tests") {
-        // Delegates to the PowerShell harness, which owns build order, the Steam launch and
-        // log rotation. Each script prints a single JSON object, so this stays thin.
-        const timeoutSec = args.timeoutSec || 420;
-
-        const buildArgs = ["-Repo", args.repo].filter(Boolean) as string[];
-        const build = await runHarness("build.ps1", args.repo ? buildArgs : [], 10 * 60 * 1000);
-        if (!build || build.ok !== true) {
-            return {
-                isError: true,
-                content: [{ type: "text", text: JSON.stringify({ ok: false, stage: "build", build }, null, 2) }]
-            };
-        }
-
-        // Launch against the same config configure_active_mods writes. Previously launch.ps1 was
-        // called with no savedatafolder, so RimWorld read the default AppData\LocalLow config
-        // while the modlist had been written to the dev folder — configuring a modlist had no
-        // effect on the test run, and the run validated whatever was last left in the default.
-        // That produced a confident false conclusion once already: Empire and VOE reported "not
-        // detected" and it read as a broken integration when neither mod was ever active.
+        // Thin wrapper over the reusable runTestCycle core. The tool resolves the shared-default
+        // savedatafolder (args ▸ config ▸ platform default) and hands it in explicitly; the core
+        // itself never reads a global. The async job broker calls runTestCycle directly with a
+        // per-job pinned folder instead.
         const savedata = args.savedatafolder || loadConfig().savedatafolder || getSaveDataFolder();
-
-        const launch = await runHarness(
-            "launch.ps1",
-            ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", savedata],
-            (timeoutSec + 180) * 1000
-        );
-
-        // Read the log regardless of how the launch ended — a crash still leaves evidence.
-        const log = await runHarness("readlog.ps1", [], 60 * 1000);
-
-        // launch.ok was previously ignored here, so a launch that ended without the
-        // TestRunner ever printing SUMMARY could not fail the run no matter what the
-        // script reported. All three stages have to agree: the build produced binaries,
-        // the game got far enough to finish the suite, and the log carries no blocking
-        // entries and no shortfall in case count.
-        const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
+        const result = await runTestCycle({
+            repo: args.repo,
+            savedatafolder: savedata,
+            timeoutSec: args.timeoutSec
+        });
         return {
-            isError: !ok,
-            content: [{ type: "text", text: JSON.stringify({ ok, stage: "complete", build, launch, log }, null, 2) }]
+            isError: !result.ok,
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
         };
     }
 
