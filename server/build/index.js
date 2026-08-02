@@ -50,8 +50,6 @@ const codebase_1 = require("./tools/codebase");
 const testing_1 = require("./tools/testing");
 const sync_1 = require("./tools/sync");
 const wiki_1 = require("./tools/wiki");
-const factions_1 = require("./tools/factions");
-const psychology_1 = require("./tools/psychology");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
@@ -82,8 +80,6 @@ const ALL_TOOLS = [
     ...testing_1.testingTools,
     ...sync_1.syncTools,
     ...wiki_1.wikiTools,
-    ...factions_1.factionsTools,
-    ...psychology_1.psychologyTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
@@ -126,12 +122,6 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (wiki_1.wikiTools.some(t => t.name === name)) {
         return await (0, wiki_1.handleWikiTool)(name, args);
-    }
-    if (factions_1.factionsTools.some(t => t.name === name)) {
-        return await (0, factions_1.handleFactionsTool)(name, args);
-    }
-    if (psychology_1.psychologyTools.some(t => t.name === name)) {
-        return await (0, psychology_1.handlePsychologyTool)(name, args);
     }
     if (pcControl_1.pcControlTools.some(t => t.name === name)) {
         return await (0, pcControl_1.handlePcControlTool)(name, args);
@@ -272,12 +262,6 @@ async function main() {
                 }
                 else if (wiki_1.wikiTools.some(t => t.name === name)) {
                     result = await (0, wiki_1.handleWikiTool)(name, args);
-                }
-                else if (factions_1.factionsTools.some(t => t.name === name)) {
-                    result = await (0, factions_1.handleFactionsTool)(name, args);
-                }
-                else if (psychology_1.psychologyTools.some(t => t.name === name)) {
-                    result = await (0, psychology_1.handlePsychologyTool)(name, args);
                 }
                 else if (pcControl_1.pcControlTools.some(t => t.name === name)) {
                     result = await (0, pcControl_1.handlePcControlTool)(name, args);

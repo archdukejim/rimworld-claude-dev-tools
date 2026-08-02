@@ -98,34 +98,6 @@
       "description": "Query the RimSynapse Wiki database. Used for accessing Mod Lore and Intelligent Referencing."
     },
     {
-      "name": "get_all_factions",
-      "description": "Returns a list of all faction names and details currently in the game."
-    },
-    {
-      "name": "get_motivated_factions",
-      "description": "Returns a list of hostile factions along with their perceived colony strength and greed ratio (wealth vs defense). Use this to determine which faction to send in a raid."
-    },
-    {
-      "name": "get_faction_relations_history",
-      "description": "Returns a summary of relations history and recent interactions with a specific faction."
-    },
-    {
-      "name": "trigger_settlement_crisis",
-      "description": "Triggers a localized crisis (e.g. Blight) at a random settlement of the target faction. Can be used for subterfuge."
-    },
-    {
-      "name": "trigger_leader_backstory_generation",
-      "description": "Manually triggers the three-step backstory and profile generation pipeline for all faction leaders."
-    },
-    {
-      "name": "get_colonist_psychology_profile",
-      "description": "Retrieves traits, sanity breaks predictions, weighted memories, burdens, social network relationship stats (trust/familiarity), and therapy sessions history for a colonist."
-    },
-    {
-      "name": "get_recent_social_interactions",
-      "description": "Retrieves a chronological list of recent social chatter logs (insults, chit-chat, deep talks) on the map."
-    },
-    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },
