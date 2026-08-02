@@ -17,7 +17,9 @@ param(
     [switch]$Save,
     [switch]$Restore,
     [switch]$Show,
-    [string]$Name = 'RimSynapse-Test'
+    # Snapshot name. Defaults to $env:RS_MODLIST_NAME so a workspace can pick its own
+    # baseline without editing this script; falls back to the historical name.
+    [string]$Name = $(if ($env:RS_MODLIST_NAME) { $env:RS_MODLIST_NAME } else { 'RimSynapse-Test' })
 )
 . "$PSScriptRoot\lib.ps1"
 

@@ -40,6 +40,14 @@ generically (`lib.ps1` `Get-HarnessMods` / `Resolve-WorkspaceRoot`).
 `get_mod_metadata`, `configure_active_mods`, `read_rimworld_log`, `runTestCycle`,
 `launch_rimworld`, and `lib.ps1`'s mod-discovery helpers.
 
+**Progress:** C1 ✅ (discover mods in `rimworldDev.ts`, parity-verified). C2/C3 ✅
+(`lib.ps1` derives build order by matching csproj `<Reference>` DLL names to each mod's
+`<AssemblyName>`, topo-sorted; `build.ps1` builds a repo's transitive deps first — all
+constraints verified against the RimSynapse workspace). C6 ✅ (`RS_MODLIST_NAME` env).
+**Behavior change:** the derived build now includes any compiled mod (e.g. `LLM-Trainer`,
+which the old hardcoded list skipped); exclude with `RS_BUILD_EXCLUDE=Name1,Name2`.
+Remaining: C4 (hard-fork narrative tools), C5 (chip), C7 (identity/rename).
+
 ## Game-side fork line (mapped from Core/Source)
 
 **IPC contract:** `tool_input.json` `{ "name", "arguments": {…} }` → `tool_output.json`

@@ -1,7 +1,7 @@
 <#
-.SYNOPSIS  Build RimSynapse mods in dependency order (Core first, Factions last).
+.SYNOPSIS  Build the workspace's mods in dependency order (derived from csproj references).
 .EXAMPLE   .\build.ps1                 # build all compiled mods
-.EXAMPLE   .\build.ps1 -Repo Factions  # build one (and Core first if needed)
+.EXAMPLE   .\build.ps1 -Repo Factions  # build one (and its dependencies first)
 .OUTPUTS   JSON summary: { ok, built[], failed[], warnings[] }  (exit 1 on any failure)
 #>
 param(
@@ -10,24 +10,20 @@ param(
 )
 . "$PSScriptRoot\lib.ps1"
 
-# Decide which repos to build. A single-repo request still builds Core first.
-$targets = [ordered]@{}
+# Decide which mods to build. A single-repo request also builds its dependencies first,
+# in the dependency order derived from the csproj HintPath graph (RS_BuildInfo).
 if ($Repo) {
-    if (-not $RS_BuildOrder.Contains($Repo)) {
-        if ($RS_DataOnly -contains $Repo) { RS-Log "$Repo is data-only (nothing to build)."; RS-Json @{ ok=$true; built=@(); failed=@(); warnings=@() }; exit 0 }
-        Write-Error "Unknown repo '$Repo'. Known: $($RS_BuildOrder.Keys -join ', ')"; exit 2
+    if ($RS_DataOnly -contains $Repo) { RS-Log "$Repo is data-only (nothing to build)."; RS-Json @{ ok=$true; built=@(); failed=@(); warnings=@() }; exit 0 }
+    if (-not ($RS_BuildInfo.Order -contains $Repo)) {
+        Write-Error "Unknown repo '$Repo'. Known: $($RS_BuildInfo.Order -join ', ')"; exit 2
     }
-    if ($Repo -ne 'Core') { $targets['Core'] = $RS_BuildOrder['Core'] }
-    if ($Repo -eq 'Factions') { $targets['Regions-and-Territories'] = $RS_BuildOrder['Regions-and-Territories'] }
-    $targets[$Repo] = $RS_BuildOrder[$Repo]
-} else {
-    $targets = $RS_BuildOrder
 }
+$targetNames = Get-BuildTargets -Info $RS_BuildInfo -Repo $Repo
 
 $built = @(); $failed = @(); $warnings = @()
-foreach ($name in $targets.Keys) {
-    $proj = Join-Path $RS_Root (Join-Path $name $targets[$name])
-    if (-not (Test-Path $proj)) { RS-Log "SKIP $name (no csproj at $proj)"; continue }
+foreach ($name in $targetNames) {
+    $proj = $RS_BuildInfo.Csproj[$name]
+    if (-not $proj -or -not (Test-Path $proj)) { RS-Log "SKIP $name (no csproj at $proj)"; continue }
     RS-Log "Building $name ..."
     $out = & dotnet build $proj -c $Configuration --nologo 2>&1
     $code = $LASTEXITCODE

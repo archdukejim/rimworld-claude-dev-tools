@@ -100,21 +100,127 @@ if (Test-Path $propsPath) {
     } catch { }
 }
 
-# --- Build order (Core first; Factions last; AuraAlgorithm is data-only) ------
-# Ordered so each project's Core/dependency DLLs exist before it builds.
-$Global:RS_BuildOrder = [ordered]@{
-    'Core'                    = 'Source\RimSynapseCore.csproj'
-    'Regions-and-Territories' = 'Source\RimSynapseRegionsAndTerritories.csproj'
-    'Conversations'           = 'Source\RimSynapseConversations.csproj'
-    'Psychology'              = 'Source\RimSynapsePsychology.csproj'
-    'WorldNews'               = 'Source\RimSynapseWorldNews.csproj'
-    'NVIDIA-Tool'             = 'Source\RimSynapseNvidiaTool.csproj'
-    'Factions'                = 'Source\RimSynapseFactions.csproj'
-    # Dev-only harness mod; built last so it can reference every other assembly.
-    'TestRunner'              = 'Source\RimSynapseTestRunner.csproj'
+# --- Build order: derived from each mod's csproj, not hardcoded ---------------
+# A mod compiles if it has a Source\*.csproj. Inter-mod build dependencies are read
+# from <Reference><HintPath> entries that resolve into another mod's folder (mods bind
+# each other's built Assemblies\*.dll by relative path, e.g. Factions references
+# ..\..\Regions-and-Territories\Assemblies\...dll). Those edges topo-sort into an order
+# where every referenced DLL is built before the mod that needs it. HintPaths using
+# MSBuild variables ($(RimWorldPath), $(HarmonyPath)) are the game/Harmony and are ignored.
+
+# Optional exclude list (comma/semicolon separated mod names) so a workspace can keep a
+# compiled mod out of the test-cycle build without hardcoding — e.g. RS_BUILD_EXCLUDE=LLM-Trainer.
+$Global:RS_BuildExclude = @()
+if ($env:RS_BUILD_EXCLUDE) {
+    $Global:RS_BuildExclude = @($env:RS_BUILD_EXCLUDE -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
-# Data-only mods (no compile) — deployed but never built.
-$Global:RS_DataOnly = @('AuraAlgorithm')
+
+function Get-ModCsProj($modDir) {
+    $src = Join-Path $modDir 'Source'
+    if (-not (Test-Path $src)) { return $null }
+    $p = Get-ChildItem $src -Filter '*.csproj' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($p) { return $p.FullName } else { return $null }
+}
+
+# The assembly a mod compiles to: <AssemblyName> if set, else the csproj file name.
+# Mods bind each other by this DLL name, so it is the key that links a reference to a mod.
+function Get-ModAssemblyName($csprojPath) {
+    $name = $null
+    try {
+        [xml]$xml = Get-Content $csprojPath -Raw
+        foreach ($pg in @($xml.Project.PropertyGroup)) { if ($pg.AssemblyName) { $name = $pg.AssemblyName; break } }
+    } catch { }
+    if (-not $name) { $name = [System.IO.Path]::GetFileNameWithoutExtension($csprojPath) }
+    return $name.ToLower()
+}
+
+# The DLL base names a csproj references via <Reference><HintPath>. Matched against mod
+# assembly names to find inter-mod build edges. Robust to both reference styles: relative
+# (..\..\Core\Assemblies\X.dll) and MSBuild-var ($(SomeAssembly)\X.dll) — only the file
+# name matters, so a variable in the directory portion is harmless.
+function Get-CsProjRefAssemblies($csprojPath) {
+    try { [xml]$xml = Get-Content $csprojPath -Raw } catch { return @() }
+    $out = @()
+    foreach ($ig in @($xml.Project.ItemGroup)) {
+        foreach ($r in @($ig.Reference)) {
+            if (-not $r) { continue }
+            $hp = $r.HintPath
+            if (-not $hp) { continue }
+            $out += ([System.IO.Path]::GetFileNameWithoutExtension($hp)).ToLower()
+        }
+    }
+    return $out
+}
+
+function Resolve-BuildOrder($Root) {
+    $mods = Get-HarnessMods -Root $Root      # {Name, FullName}
+    $csproj  = @{}   # name -> csproj abs path (compiled mods only)
+    $dataOnly = @()
+    foreach ($m in $mods) {
+        $cs = Get-ModCsProj $m.FullName
+        if ($cs -and ($RS_BuildExclude -notcontains $m.Name)) { $csproj[$m.Name] = $cs }
+        else { $dataOnly += $m.Name }        # no csproj, or explicitly excluded
+    }
+
+    # assembly name -> mod name, to translate a referenced DLL back to the mod that builds it.
+    $asmToMod = @{}
+    foreach ($name in $csproj.Keys) { $asmToMod[(Get-ModAssemblyName $csproj[$name])] = $name }
+
+    # Dependency edges: mod -> compiled mods whose assembly it references.
+    $deps = @{}
+    foreach ($name in $csproj.Keys) {
+        $set = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($asm in (Get-CsProjRefAssemblies $csproj[$name])) {
+            if ($asmToMod.ContainsKey($asm)) {
+                $dep = $asmToMod[$asm]
+                if ($dep -ne $name) { [void]$set.Add($dep) }
+            }
+        }
+        $deps[$name] = $set
+    }
+
+    # Stable topological sort: pick the first (name-sorted) mod whose deps are all placed,
+    # so the order is deterministic and preserves name order wherever deps don't constrain it.
+    $order = @()
+    $placed = New-Object System.Collections.Generic.HashSet[string]
+    $remaining = @($csproj.Keys | Sort-Object)
+    while ($remaining.Count -gt 0) {
+        $idx = -1
+        for ($i = 0; $i -lt $remaining.Count; $i++) {
+            $ready = $true
+            foreach ($d in $deps[$remaining[$i]]) { if (-not $placed.Contains($d)) { $ready = $false; break } }
+            if ($ready) { $idx = $i; break }
+        }
+        if ($idx -lt 0) { foreach ($n in $remaining) { $order += $n; [void]$placed.Add($n) }; break }  # cycle
+        $n = $remaining[$idx]; $order += $n; [void]$placed.Add($n)
+        $remaining = @($remaining | Where-Object { $_ -ne $n })
+    }
+
+    return [pscustomobject]@{ Order = $order; Csproj = $csproj; DataOnly = $dataOnly; Deps = $deps }
+}
+
+# Given a build plan and an optional single repo, return the mods to build: the repo's
+# transitive dependencies first, then the repo, in canonical build order. No repo → all.
+function Get-BuildTargets {
+    param($Info, [string]$Repo)
+    if (-not $Repo) { return @($Info.Order) }
+    $need  = New-Object System.Collections.Generic.HashSet[string]
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    $stack.Push($Repo)
+    while ($stack.Count -gt 0) {
+        $n = $stack.Pop()
+        if (-not $need.Add($n)) { continue }
+        if ($Info.Deps.ContainsKey($n)) { foreach ($d in $Info.Deps[$n]) { $stack.Push($d) } }
+    }
+    return @($Info.Order | Where-Object { $need.Contains($_) })
+}
+
+$Global:RS_BuildInfo = Resolve-BuildOrder $RS_Root
+$Global:RS_DataOnly  = $RS_BuildInfo.DataOnly
+# Back-compat for scripts that read RS_BuildOrder (deploy.ps1, verify-binaries.ps1):
+# ordered map of build name -> absolute csproj path, in dependency order.
+$Global:RS_BuildOrder = [ordered]@{}
+foreach ($n in $RS_BuildInfo.Order) { $Global:RS_BuildOrder[$n] = $RS_BuildInfo.Csproj[$n] }
 
 function RS-Json($obj) { $obj | ConvertTo-Json -Depth 8 }
 function RS-Log($msg)  { Write-Host "[harness] $msg" }
