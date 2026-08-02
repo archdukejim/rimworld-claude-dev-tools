@@ -90,13 +90,23 @@ UI navigation (`pcControl`) only enters if a step has no data/config path.
 
 ## 5. New MCP connectors this needs (build as the agent hits gaps)
 
-- `resolve_mod_load_order` (read-only) — §3. **First connector to build.**
-- (candidate) richer `gameIpc` reads the agent asks for while interpreting runs.
-- (candidate) a deterministic `apply_mod_load_order` if `configure_active_mods`
-  can't express an arbitrary explicit order cleanly (verify first).
+Mod-introspection data layer (the "MCP pulls, agent decides" split) — **shipped:**
+- ✅ `resolve_mod_load_order` (read-only) — §3.
+- ✅ `list_installed_mods` (read-only) — inventory across local/Workshop/Data.
+- ✅ `get_mod_metadata` (read-only) — full About.xml by packageId, for evaluating
+  a new/ambiguous mod before placing it.
 
-"Agent-first" = build the agent's loop against existing tools, and add a connector
-the moment the agent needs data/action it can't get. Don't pre-build connectors.
+Not needed / deferred:
+- ~~`apply_mod_load_order`~~ — not needed; `configure_active_mods` already applies
+  the resolver's order deterministically (§7 Q3).
+- Local git ops (checkout/merge/worktree) — the SDK app does these directly via its
+  own shell, not as MCP tools.
+- (candidate) richer `gameIpc` reads the agent asks for while interpreting runs —
+  build if a gap appears.
+
+"Agent-first" = build the agent's loop against existing tools, add a connector the
+moment the agent needs data/action it can't get. The mod data layer is complete
+enough to scaffold A1.
 
 ## 6. Phasing
 

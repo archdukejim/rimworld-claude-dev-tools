@@ -18,13 +18,17 @@ Runtime: standalone TypeScript Agent SDK app in `agent/`. **Agent-first** — th
 async job broker (#3) becomes its parallel execution backend, added later.
 Plan: `docs/plans/orchestrator-agent.md`.
 
-### `resolve_mod_load_order` (read-only MCP connector)
-_not yet a tracked issue_ · `enhancement` · proposed (first piece of the agent)
+### Mod-introspection connectors (read-only) — **shipped**
+_not yet a tracked issue_ · `enhancement` · **done** (first pieces of the agent)
 
-Reads each mod's `About.xml` (`loadAfter`/`loadBefore`/`force*`/`modDependencies`),
-topo-sorts the declared constraints, and returns `{ resolved, ambiguous, cycles,
-conflicts }`. Deterministic where metadata allows; surfaces the gaps for the agent
-to resolve with judgment. Pure "MCP pulls data, agent decides."
+The "MCP pulls data, agent decides" data layer:
+- `resolve_mod_load_order` — topo-sorts declared `loadAfter`/`loadBefore`/
+  `modDependencies` and returns `{ resolved, ambiguous, cycles, uninstalled }`.
+  Shares one resolver with the `configure_active_mods` writer, so what the agent
+  resolves is what actually loads.
+- `list_installed_mods` — inventory across local Mods, Steam Workshop, and Data.
+- `get_mod_metadata` — full `About.xml` by packageId, for evaluating a new/
+  ambiguous mod before placing it.
 
 ---
 
