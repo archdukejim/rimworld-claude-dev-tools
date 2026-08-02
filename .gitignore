@@ -16,3 +16,5 @@ harness/triage-last-run.log
 server/node_modules/
 server/build/
 *.mcpb
+mcp-config/triage-lastseen.json
+mcp-config/.triage-currentmax.json

@@ -59,19 +59,37 @@ if (-not $env:ANTHROPIC_API_KEY) {
     exit 1
 }
 
-# --- launch the dedicated background Chrome (no window; extension SW runs) ---
-# Singleton per profile: a second launch is a no-op if it's already running, so
-# hourly runs don't stack windows.
-Write-Host "[triage] Ensuring dedicated Chrome (profile: $profileDir)..."
-Start-Process -FilePath $chrome -WindowStyle Hidden -ArgumentList @(
+# --- launch the dedicated Chrome (headless, no window; extension + Steam tab) ---
+# Clean slate first: kill any prior dedicated-profile Chrome so we don't stack
+# instances/tabs across hourly runs. Then launch headless=new (supports MV3
+# extensions) pointed at the notifications page so a steamcommunity.com tab
+# exists for the read tools. Cookies persist in the profile from the one-time login.
+Write-Host "[triage] Launching dedicated headless Chrome (profile: $profileDir)..."
+try {
+    Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*$profileDir*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch {}
+Start-Sleep -Seconds 1
+Start-Process -FilePath $chrome -ArgumentList @(
+    "--headless=new",
     "--user-data-dir=$profileDir",
     "--load-extension=$ext",
-    "--no-startup-window",
     "--no-first-run",
     "--no-default-browser-check",
-    "--disable-features=DialMediaRouteProvider"
+    "--disable-features=DialMediaRouteProvider",
+    "https://steamcommunity.com/my/commentnotifications"
 )
-Start-Sleep -Seconds 6   # let the extension service worker spin up
+Start-Sleep -Seconds 8   # let the extension service worker + tab spin up
+
+# --- cheap precheck (ZERO tokens): only proceed if there's genuinely new activity ---
+Write-Host "[triage] Precheck: scanning for new comments (no API spend)..."
+node (Join-Path $PSScriptRoot 'precheck-notifications.js') 2>&1 | Tee-Object -FilePath $log -Append
+$pc = $LASTEXITCODE
+if ($pc -eq 10) { "[triage] No new notifications — skipping (no tokens spent)." | Tee-Object -FilePath $log -Append; exit 0 }
+if ($pc -eq 20) { "[triage] Notifications unavailable (Steam logged out / bridge down) — skipping." | Tee-Object -FilePath $log -Append; exit 0 }
+if ($pc -ne 0)  { "[triage] Precheck returned $pc — skipping." | Tee-Object -FilePath $log -Append; exit 0 }
+Start-Sleep -Seconds 2   # let the precheck's MCP server release port 8766
 
 # --- run the draft triage agent (API-key auth, read-only tools only) ---
 $prompt = @"
@@ -99,5 +117,11 @@ try {
     claude -p $prompt --allowedTools $allowed 2>&1 | Tee-Object -FilePath $log -Append
     if ($LASTEXITCODE -ne 0) { throw "claude exited with code $LASTEXITCODE (see $log)" }
 } finally { Pop-Location }
+
+# Success: promote the observed high-water mark so future runs skip until the
+# NEXT genuinely-new comment arrives. (Left un-promoted on failure, so we retry.)
+$cm = Join-Path $repo 'mcp-config\.triage-currentmax.json'
+$ls = Join-Path $repo 'mcp-config\triage-lastseen.json'
+if (Test-Path $cm) { Move-Item -Force $cm $ls }
 
 Write-Host "[triage] Done. Report at $repo\mcp-config\triage-report.json"
