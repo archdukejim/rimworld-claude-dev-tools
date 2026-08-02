@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.rimworldDevTools = void 0;
 exports.workspaceRoot = workspaceRoot;
+exports.getModsMap = getModsMap;
 exports.classifyLog = classifyLog;
 exports.runTestCycle = runTestCycle;
 exports.handleRimworldDevTool = handleRimworldDevTool;
@@ -171,24 +172,51 @@ function workspaceRoot() {
     }
     return "C:\\github\\rimsynapse";
 }
-// dirName is the repo folder; name is the folder the mod is packaged into under Mods\.
-// Ordered so dependencies build first: Core, then Regions, then the rest, Factions last.
-const modDefs = [
-    { name: "RimSynapseCore", dirName: "Core", hasCsharp: true },
-    { name: "RimSynapseRegionsAndTerritories", dirName: "Regions-and-Territories", hasCsharp: true },
-    { name: "RimSynapseConversations", dirName: "Conversations", hasCsharp: true },
-    { name: "RimSynapsePsychology", dirName: "Psychology", hasCsharp: true },
-    { name: "RimSynapseWorldNews", dirName: "WorldNews", hasCsharp: true },
-    { name: "RimSynapseNVIDIATool", dirName: "NVIDIA-Tool", hasCsharp: true },
-    { name: "RimSynapseFactions", dirName: "Factions", hasCsharp: true },
-    { name: "RimSynapseAuraAlgorithm", dirName: "AuraAlgorithm", hasCsharp: false },
-    { name: "RimSynapseLLMTrainer", dirName: "LLM-Trainer", hasCsharp: true },
-    { name: "RimSynapseTestRunner", dirName: "TestRunner", hasCsharp: true }
-];
-// Kept as a getter so RIMSYNAPSE_ROOT is honoured at call time rather than import time.
+function hasCsharpProject(modDir) {
+    const sourceDir = path.join(modDir, "Source");
+    if (!fs.existsSync(sourceDir))
+        return false;
+    try {
+        return fs.readdirSync(sourceDir).some(f => f.toLowerCase().endsWith(".csproj"));
+    }
+    catch {
+        return false;
+    }
+}
+function isModFolder(dir) {
+    return fs.existsSync(path.join(dir, "About", "About.xml"));
+}
+function discoverMods(root) {
+    const asMod = (dir) => {
+        const dirName = path.basename(dir);
+        return { name: dirName, dirName, hasCsharp: hasCsharpProject(dir), src: dir };
+    };
+    // Single-repo layout: the root itself is a mod (what CI for one repo gets).
+    if (isModFolder(root))
+        return [asMod(root)];
+    // Workspace layout: each immediate child folder with About/About.xml is a mod.
+    let entries = [];
+    try {
+        entries = fs.readdirSync(root);
+    }
+    catch {
+        return [];
+    }
+    return entries
+        .map(e => path.join(root, e))
+        .filter(p => { try {
+        return fs.statSync(p).isDirectory() && isModFolder(p);
+    }
+    catch {
+        return false;
+    } })
+        .map(asMod)
+        .sort((a, b) => a.dirName.localeCompare(b.dirName));
+}
+// Kept as a getter so the workspace root is honoured at call time rather than import time.
+// Exported so the agent/broker can enumerate the developer's mods without hardcoding them.
 function getModsMap() {
-    const root = workspaceRoot();
-    return modDefs.map(m => ({ ...m, src: path.join(root, m.dirName) }));
+    return discoverMods(workspaceRoot());
 }
 const foldersWhitelist = [
     "About",
