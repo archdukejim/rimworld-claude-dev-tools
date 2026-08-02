@@ -93,12 +93,12 @@ Start-Sleep -Seconds 2   # let the precheck's MCP server release port 8766
 
 # --- run the draft triage agent (API-key auth, read-only tools only) ---
 $prompt = @"
-Follow the routine in $spec exactly, in draft mode (Phases 1-3 ONLY).
-First call swh_open_item for one of your workshop items to guarantee a
-steamcommunity.com tab exists, then classify recent comments, dedup against
-existing GitHub issues, and write the review report to
-mcp-config/triage-report.json. Do NOT create any GitHub issue and do NOT post
-any Steam reply. If Steam is not logged in, write a report noting that and stop.
+Review the steam comments (use the steam-comment-triage skill) in DRAFT mode
+only - Phases 1-3. First call swh_open_item for one of your workshop items to
+guarantee a steamcommunity.com tab exists, then classify recent comments, dedup
+against existing GitHub issues, and write the review report to
+mcp-config/triage-report.json. Do NOT create any GitHub issue and do NOT post any
+Steam reply. If Steam is not logged in, write a report noting that and stop.
 "@
 
 $allowed = @(
