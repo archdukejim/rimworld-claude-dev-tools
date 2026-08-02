@@ -16,37 +16,90 @@ type ModIndex = Map<string, string>;
  * local. A packageId present in neither is not installed, which is worth saying out loud rather
  * than writing into the config and letting RimWorld drop it silently.
  */
-function modFolderIndex(config: { rimworldModsDir?: string }): ModIndex {
-    const index: ModIndex = new Map();
+/** Where a mod folder was found. "data" = base game + official DLCs under RimWorld/Data. */
+type ModSource = "local" | "workshop" | "data";
+interface InstalledMod { packageId: string; name: string; source: ModSource; folder: string; }
 
+/**
+ * Scan every folder RimWorld looks in for mods and record the packageId + name each declares.
+ * Order matters: local first, then Workshop, then Data — so "first wins" means a local copy
+ * overrides a published one. The single scan behind both modFolderIndex and list_installed_mods.
+ */
+function scanInstalledMods(config: { rimworldModsDir?: string }): InstalledMod[] {
     const modsDir = config.rimworldModsDir || "";
+    // A modlist routinely mixes local mods with Workshop ones (Empire, VOE), so both are scanned.
     const workshopDir = modsDir
         ? path.resolve(modsDir, "..", "..", "..", "workshop", "content", "294100")
         : "";
-    // The base game and the official DLCs are packageIds too (ludeon.rimworld,
-    // ludeon.rimworld.royalty, ...) and they live in Data/, not Mods/. Scanning it beats
-    // hardcoding an allowlist, which would need editing every time Ludeon ships an expansion.
+    // The base game and official DLCs are packageIds too (ludeon.rimworld, ...) and live in Data/,
+    // not Mods/. Scanning it beats hardcoding an allowlist that needs editing every new expansion.
     const dataDir = modsDir ? path.resolve(modsDir, "..", "Data") : "";
 
-    for (const root of [modsDir, workshopDir, dataDir]) {
-        if (!root || !fs.existsSync(root)) continue;
+    const roots: Array<{ dir: string; source: ModSource }> = [
+        { dir: modsDir, source: "local" },
+        { dir: workshopDir, source: "workshop" },
+        { dir: dataDir, source: "data" }
+    ];
+
+    const found: InstalledMod[] = [];
+    const seen = new Set<string>();
+    for (const { dir, source } of roots) {
+        if (!dir || !fs.existsSync(dir)) continue;
         let entries: string[] = [];
-        try { entries = fs.readdirSync(root); } catch { continue; }
+        try { entries = fs.readdirSync(dir); } catch { continue; }
 
         for (const entry of entries) {
-            const aboutPath = path.join(root, entry, "About", "About.xml");
+            const folder = path.join(dir, entry);
+            const aboutPath = path.join(folder, "About", "About.xml");
             if (!fs.existsSync(aboutPath)) continue;
             try {
                 const xml = fs.readFileSync(aboutPath, "utf8");
                 const id = /<packageId>([^<]+)<\/packageId>/i.exec(xml)?.[1]?.trim().toLowerCase();
-                // First wins: the local copy is scanned before the Workshop one, matching the
-                // intent that local overrides published.
-                if (id && !index.has(id)) index.set(id, path.join(root, entry));
-            } catch { /* an unreadable About.xml is simply not an index entry */ }
+                if (!id || seen.has(id)) continue;   // first wins: local overrides published
+                const name = /<name>([\s\S]*?)<\/name>/i.exec(xml)?.[1]?.trim() || entry;
+                seen.add(id);
+                found.push({ packageId: id, name, source, folder });
+            } catch { /* an unreadable About.xml is simply not an entry */ }
         }
     }
+    return found;
+}
 
+function modFolderIndex(config: { rimworldModsDir?: string }): ModIndex {
+    const index: ModIndex = new Map();
+    for (const m of scanInstalledMods(config)) {
+        if (!index.has(m.packageId)) index.set(m.packageId, m.folder);
+    }
     return index;
+}
+
+/** Parse the About.xml fields an agent needs to place or evaluate a mod. */
+function readModAbout(folder: string): Record<string, any> {
+    const aboutPath = path.join(folder, "About", "About.xml");
+    const xml = fs.readFileSync(aboutPath, "utf8");
+    const tag = (t: string) => new RegExp(`<${t}>([\\s\\S]*?)</${t}>`, "i").exec(xml)?.[1]?.trim();
+    const list = (t: string): string[] => {
+        const block = new RegExp(`<${t}>([\\s\\S]*?)</${t}>`, "i").exec(xml)?.[1];
+        return block ? Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim()) : [];
+    };
+    const depIds = Array.from(
+        (/<modDependencies>([\s\S]*?)<\/modDependencies>/i.exec(xml)?.[1] ?? "")
+            .matchAll(/<packageId>([^<]+)<\/packageId>/gi)
+    ).map(m => m[1].trim());
+
+    return {
+        packageId: tag("packageId"),
+        name: tag("name"),
+        author: tag("author"),
+        description: tag("description"),
+        supportedVersions: list("supportedVersions"),
+        loadAfter: list("loadAfter"),
+        loadBefore: list("loadBefore"),
+        forceLoadAfter: list("forceLoadAfter"),
+        forceLoadBefore: list("forceLoadBefore"),
+        incompatibleWith: list("incompatibleWith"),
+        modDependencies: depIds
+    };
 }
 
 /** The loadAfter / loadBefore a mod declares, lowercased. Empty when the mod is not installed. */
@@ -280,6 +333,42 @@ export const testingTools = [
                     description: "Optional; which ModsConfig.xml to read the active list from when 'mods' is omitted."
                 }
             }
+        }
+    },
+    {
+        name: "list_installed_mods",
+        description:
+            "Read-only. Lists every mod RimWorld can see — scanning the local Mods folder, the Steam " +
+            "Workshop content folder, and the game's Data folder (base game + official DLCs). Returns " +
+            "each mod's packageId, name, source (local|workshop|data), and folder. The agent's inventory " +
+            "of what is available to activate. Writes nothing.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                source: {
+                    type: "string",
+                    enum: ["local", "workshop", "data"],
+                    description: "Optional filter to only mods from this source."
+                }
+            }
+        }
+    },
+    {
+        name: "get_mod_metadata",
+        description:
+            "Read-only. Reads a single mod's About.xml by packageId and returns its metadata: name, " +
+            "author, description, supportedVersions, and every ordering/relationship declaration " +
+            "(loadAfter, loadBefore, forceLoadAfter, forceLoadBefore, modDependencies, incompatibleWith). " +
+            "Use this to evaluate a new or ambiguous mod before deciding where it loads. Writes nothing.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                packageId: {
+                    type: "string",
+                    description: "The packageId to look up (case-insensitive), e.g. 'oskarpotocki.vanillafactionsexpanded.core'."
+                }
+            },
+            required: ["packageId"]
         }
     }
 ];
@@ -632,6 +721,32 @@ export async function handleTestingTool(
 
         const result = resolveModLoadOrder(mods, config);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+
+    if (name === "list_installed_mods") {
+        const config = loadConfig();
+        let mods = scanInstalledMods(config);
+        if (args.source) mods = mods.filter(m => m.source === args.source);
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify({ count: mods.length, mods }, null, 2)
+            }]
+        };
+    }
+
+    if (name === "get_mod_metadata") {
+        if (!args.packageId) throw new Error("get_mod_metadata requires a packageId.");
+        const config = loadConfig();
+        const folder = modFolderIndex(config).get(String(args.packageId).trim().toLowerCase());
+        if (!folder) {
+            return {
+                isError: true,
+                content: [{ type: "text", text: JSON.stringify({ found: false, packageId: args.packageId }, null, 2) }]
+            };
+        }
+        const meta = readModAbout(folder);
+        return { content: [{ type: "text", text: JSON.stringify({ found: true, folder, ...meta }, null, 2) }] };
     }
 
     throw new Error(`Unknown testing tool: ${name}`);

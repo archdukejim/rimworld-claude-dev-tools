@@ -82,6 +82,14 @@
       "description": "Read-only. Resolves mod packageIds into RimWorld load order (official block first, then a topological sort of declared loadAfter/loadBefore/modDependencies) and returns { resolved, ambiguous, cycles, uninstalled } without writing ModsConfig."
     },
     {
+      "name": "list_installed_mods",
+      "description": "Read-only. Lists every installed mod (local Mods, Steam Workshop, and game Data folders) with packageId, name, source, and folder."
+    },
+    {
+      "name": "get_mod_metadata",
+      "description": "Read-only. Reads a mod's About.xml by packageId and returns name, author, description, supportedVersions, and all load-order/dependency/incompatibility declarations."
+    },
+    {
       "name": "sync_repo_wiki",
       "description": "Syncs a local Learning folder to its GitHub Wiki repository"
     },
