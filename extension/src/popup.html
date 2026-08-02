@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Steam Workshop Helper</h1>
+      <span id="version" class="version"></span>
+    </header>
+
+    <section id="auth" class="auth">
+      <span class="dot" id="auth-dot"></span>
+      <span id="auth-text">Checking Steam login…</span>
+    </section>
+
+    <section id="status" class="card">
+      <div class="muted">Detecting active Steam Workshop tab…</div>
+    </section>
+
+    <section class="actions">
+      <button id="btn-refresh" class="secondary">Detect item</button>
+      <button id="btn-comments">List comments</button>
+    </section>
+
+    <section id="output" class="output" hidden></section>
+
+    <footer>
+      <button id="btn-snippet" class="link">Copy Claude usage snippet</button>
+      <a class="link" href="https://github.com/archdukejim/steam-workshop-helper#readme" target="_blank" rel="noreferrer">Docs</a>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

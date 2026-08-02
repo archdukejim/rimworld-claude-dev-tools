@@ -6,3 +6,13 @@ rimsynapse-mcp.mcpb
 
 # harness runtime state
 harness/.logmarker
+
+# steam workshop triage runtime state
+mcp-config/triage-report.json
+mcp-config/triage-state.json
+harness/triage-last-run.log
+
+# node build artifacts
+server/node_modules/
+server/build/
+*.mcpb

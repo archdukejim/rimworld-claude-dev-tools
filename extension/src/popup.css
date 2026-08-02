@@ -1,0 +1,120 @@
+:root {
+  --bg: #1b2838;
+  --bg-card: #223349;
+  --fg: #c7d5e0;
+  --muted: #8f98a0;
+  --accent: #66c0f4;
+  --accent-2: #4c9e2f;
+  --danger: #d9534f;
+  --border: #2a3f5a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 12px;
+  font: 13px/1.45 "Segoe UI", Roboto, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+h1 { font-size: 15px; margin: 0; color: #fff; }
+.version { color: var(--muted); font-size: 11px; }
+.muted { color: var(--muted); }
+
+.auth {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.auth .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.auth.in .dot { background: var(--accent-2); box-shadow: 0 0 6px var(--accent-2); }
+.auth.out .dot { background: var(--danger); }
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.card .title { font-weight: 600; color: #fff; }
+.card .row { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.card .k { color: var(--muted); }
+.card .v { text-align: right; word-break: break-all; }
+
+.actions { display: flex; gap: 8px; margin-bottom: 10px; }
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #06121f;
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+button.secondary { background: transparent; color: var(--fg); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.output {
+  background: #0e1722;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: Consolas, "SF Mono", monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.comment { border-bottom: 1px solid var(--border); padding: 6px 0; }
+.comment:last-child { border-bottom: 0; }
+.comment .meta { color: var(--accent); font-size: 11px; }
+.comment .body { margin-top: 2px; }
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+.link:hover { text-decoration: underline; }
+
+.err { color: var(--danger); }
+.ok { color: var(--accent-2); }

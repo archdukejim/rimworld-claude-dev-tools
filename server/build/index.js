@@ -56,13 +56,19 @@ const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
 const config_1 = require("./config");
+// Steam Workshop families (merged in from steam-workshop-helper)
+const bridge_1 = require("./bridge");
+const workshop_1 = require("./tools/workshop");
+const github_1 = require("./tools/github");
 // 1. Setup Config & Auth
 const config = (0, config_1.loadConfig)();
 const token = (0, config_1.getGitHubToken)();
 const octokit = new rest_1.Octokit({ auth: token });
+// Steam loopback bridge — set in main(); the swh_* tools require it.
+let bridge = null;
 // 2. Setup MCP Server
 const server = new index_js_1.Server({
-    name: "rimsynapse-mcp-server",
+    name: "rimworld-claude-dev-tools",
     version: "1.0.0"
 }, {
     capabilities: {
@@ -80,7 +86,9 @@ const ALL_TOOLS = [
     ...psychology_1.psychologyTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
-    ...gameIpc_1.gameIpcTools
+    ...gameIpc_1.gameIpcTools,
+    ...workshop_1.swhTools,
+    ...github_1.githubTools
 ];
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
 // RimWorld and pc-control families never touch GitHub - so this is checked per call rather than at
@@ -134,10 +142,28 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     if (gameIpc_1.gameIpcTools.some(t => t.name === name)) {
         return await (0, gameIpc_1.handleGameIpcTool)(name, args);
     }
+    // Steam Workshop GitHub issue tools (repo-map based; API direct, no bridge).
+    if (github_1.githubTools.some(t => t.name === name)) {
+        return await (0, github_1.handleGithubTool)(name, args);
+    }
+    // Steam Workshop actions run in the browser via the loopback bridge.
+    if (workshop_1.swhTools.some(t => t.name === name)) {
+        if (!bridge)
+            throw new Error("Steam loopback bridge not started yet.");
+        return await (0, workshop_1.handleSwhTool)(name, args, bridge);
+    }
     throw new Error(`Unknown tool: ${name}`);
 });
 // 4. Start Server
 async function main() {
+    // Start the Steam Workshop loopback bridge (127.0.0.1). Best-effort: if the
+    // port is taken, the RimWorld/GitHub tools still work; only swh_* are affected.
+    try {
+        bridge = await (0, bridge_1.startBridge)(config);
+    }
+    catch (err) {
+        console.error("[rwdt] Steam bridge failed to start (swh_* tools disabled):", err instanceof Error ? err.message : err);
+    }
     const isSse = process.argv.includes("--sse");
     if (isSse) {
         let port = 3000;
@@ -262,6 +288,14 @@ async function main() {
                 else if (gameIpc_1.gameIpcTools.some(t => t.name === name)) {
                     result = await (0, gameIpc_1.handleGameIpcTool)(name, args);
                 }
+                else if (github_1.githubTools.some(t => t.name === name)) {
+                    result = await (0, github_1.handleGithubTool)(name, args);
+                }
+                else if (workshop_1.swhTools.some(t => t.name === name)) {
+                    if (!bridge)
+                        throw new Error("Steam loopback bridge not started yet.");
+                    result = await (0, workshop_1.handleSwhTool)(name, args, bridge);
+                }
                 else {
                     res.status(404).json({ error: "Unknown tool: " + name });
                     return;
@@ -279,7 +313,7 @@ async function main() {
     else {
         const transport = new stdio_js_1.StdioServerTransport();
         await server.connect(transport);
-        console.error("RimSynapse MCP Server running on stdio");
+        console.error("RimWorld Claude Dev Tools MCP running on stdio");
     }
 }
 main().catch((err) => {
