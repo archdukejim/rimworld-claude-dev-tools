@@ -44,9 +44,13 @@ generically (`lib.ps1` `Get-HarnessMods` / `Resolve-WorkspaceRoot`).
 (`lib.ps1` derives build order by matching csproj `<Reference>` DLL names to each mod's
 `<AssemblyName>`, topo-sorted; `build.ps1` builds a repo's transitive deps first — all
 constraints verified against the RimSynapse workspace). C6 ✅ (`RS_MODLIST_NAME` env).
-**Behavior change:** the derived build now includes any compiled mod (e.g. `LLM-Trainer`,
-which the old hardcoded list skipped); exclude with `RS_BUILD_EXCLUDE=Name1,Name2`.
-Remaining: C4 (hard-fork narrative tools), C5 (chip), C7 (identity/rename).
+C4 ✅ (faction/psychology tool families removed — 71→64 tools; verified over live MCP).
+C5 ✅ (moot — the `d:/` path lived in the deleted files). **Behavior change:** the derived
+build now includes any compiled mod (e.g. `LLM-Trainer`, which the old hardcoded list
+skipped); exclude with `RS_BUILD_EXCLUDE=Name1,Name2`.
+
+**W1 is complete.** Remaining: **W2** (fork the game-side bridge into this repo — the
+headline C# work) and **C7/W4** (product identity/rename, packaging, docs).
 
 ## Game-side fork line (mapped from Core/Source)
 
