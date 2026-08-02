@@ -43,8 +43,18 @@ if (-not $chrome) { throw "Chrome not found. Set SWH_CHROME_PATH to chrome.exe."
 
 "[triage] $(Get-Date -Format s) starting" | Out-File $log
 
+# A Scheduled Task's environment may not inherit a user-scoped `setx` var, so
+# resolve ANTHROPIC_API_KEY directly from the registry (user, then machine).
+# ANTHROPIC_API_KEY takes precedence over the (unrefreshable) subscription OAuth,
+# which is what makes an unattended `claude -p` run authenticate reliably.
 if (-not $env:ANTHROPIC_API_KEY) {
-    "[triage] ERROR: ANTHROPIC_API_KEY is not set; a headless run cannot authenticate. See docs/SCHEDULING.md." |
+    $env:ANTHROPIC_API_KEY = [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','User')
+    if (-not $env:ANTHROPIC_API_KEY) {
+        $env:ANTHROPIC_API_KEY = [Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','Machine')
+    }
+}
+if (-not $env:ANTHROPIC_API_KEY) {
+    "[triage] ERROR: ANTHROPIC_API_KEY is not set (user or machine). A headless run cannot authenticate. See docs/SCHEDULING.md." |
         Tee-Object -FilePath $log -Append
     exit 1
 }

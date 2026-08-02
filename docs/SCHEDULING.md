@@ -12,11 +12,16 @@ nothing. You review and approve interactively afterward.
 ## One-time setup (required for unattended runs)
 
 1. **API key** — a scheduled headless run can't refresh the subscription OAuth
-   session, so Claude Code authenticates via an API key. Set it as a user env
-   var (you set it; it's never stored in the repo):
+   session, so Claude Code authenticates via an API key (`ANTHROPIC_API_KEY`
+   takes precedence over OAuth and is used immediately in `-p` mode). Set it (you
+   set it; it's never stored in the repo):
    ```bash
    setx ANTHROPIC_API_KEY "sk-ant-..."
    ```
+   The runner reads it from the registry (user, then machine) at run time, so a
+   user-scoped `setx` reaches the Scheduled Task even though the task's inherited
+   environment might not include it. (For a task running as SYSTEM/another
+   account, use `setx /M` instead — needs an elevated shell.)
 2. **Log into Steam once in the dedicated profile** — launch it visibly, sign in,
    then close it. The login cookie persists in that profile for future runs:
    ```bash
