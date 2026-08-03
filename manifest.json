@@ -102,6 +102,10 @@
       "description": "Read the bundled RimWorld modding knowledge base (mod structure, Defs/XML, XML patches, C#/Harmony, load order, and how to drive this toolkit to launch/test/evaluate). List, read, or search the docs."
     },
     {
+      "name": "search_game_api",
+      "description": "Search the RimWorld C# API corpus (public Verse/RimWorld types + members from the in-game dump_game_api tool) for a query and return matching types with member signatures, so the agent writes correct C#/Harmony against the real API."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },
