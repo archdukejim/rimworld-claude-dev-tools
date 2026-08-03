@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { buildStage, runStage } from "./rimworldDev";
 import { resolveModLoadOrder } from "./testing";
 import { loadConfig } from "../config";
@@ -29,6 +30,7 @@ interface Job {
     build?: any;      // build-stage result, carried into the run stage
     result?: any;
     error?: string;
+    cancelRequested?: boolean;   // set by cancel_job while running; the run worker honors it
     submittedAt: number;
     startedAt?: number;   // build start
     finishedAt?: number;
@@ -123,6 +125,19 @@ export function verifyPinnedConfig(job: Job): { ok: boolean; reason?: string; ex
     return { ok: true };
 }
 
+/** Kill the RimWorld process a job launched, identified by its pinned savedatafolder on the
+ *  command line. Runs are serial, so at most one game is live at a time. Best-effort. */
+function killGameForSavedata(savedata: string): void {
+    try {
+        const esc = savedata.replace(/'/g, "''");
+        execSync(
+            `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'RimWorldWin64.exe'\\" | ` +
+            `Where-Object { $_.CommandLine -like '*${esc}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`,
+            { stdio: "ignore" }
+        );
+    } catch { /* nothing to kill, or already gone */ }
+}
+
 // --- Build lane: one build at a time (shared workspace); hands each build off to the run lane ---
 async function drainBuilds(): Promise<void> {
     if (buildWorkerRunning) return;
@@ -186,12 +201,17 @@ async function drainRuns(): Promise<void> {
             persist(job);
             try {
                 const { launch, log } = await runStage(job.pinned.savedatafolder, job.request.timeoutSec || 420);
-                const ok = job.build?.ok === true && launch?.ok === true && log?.ok === true;
-                job.result = { ok, stage: "complete", build: job.build, launch, log };
-                job.status = ok ? "done" : "failed";
+                if (job.cancelRequested) {
+                    // The game was killed by cancel_job; the run "ended" but the result is void.
+                    job.status = "cancelled";
+                } else {
+                    const ok = job.build?.ok === true && launch?.ok === true && log?.ok === true;
+                    job.result = { ok, stage: "complete", build: job.build, launch, log };
+                    job.status = ok ? "done" : "failed";
+                }
             } catch (err: any) {
-                job.status = "failed";
-                job.error = String(err?.message || err);
+                job.status = job.cancelRequested ? "cancelled" : "failed";
+                if (!job.cancelRequested) job.error = String(err?.message || err);
             }
             job.finishedAt = Date.now();
             persist(job);
@@ -306,7 +326,15 @@ export async function handleJobsTool(name: string, args: any) {
             persist(job);
             return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "cancelled" }, null, 2) }] };
         }
-        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: job.status, note: "only pending/queued jobs can be cancelled (a build/run in flight cannot)" }, null, 2) }] };
+        // Running: kill the live game; the run worker marks it cancelled when the launch returns.
+        if (job.status === "running") {
+            job.cancelRequested = true;
+            persist(job);
+            killGameForSavedata(job.pinned.savedatafolder);
+            return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "cancelling", note: "killed the running game; job will settle to cancelled" }, null, 2) }] };
+        }
+        const note = job.status === "building" ? "a build in flight cannot be cancelled" : "job already finished";
+        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: job.status, note }, null, 2) }] };
     }
 
     throw new Error(`Unknown jobs tool: ${name}`);
