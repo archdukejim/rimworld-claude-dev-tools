@@ -42,11 +42,11 @@ const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("../config");
 /**
- * Scan every folder RimWorld looks in for mods and record the packageId + name each declares.
- * Order matters: local first, then Workshop, then Data — so "first wins" means a local copy
- * overrides a published one. The single scan behind both modFolderIndex and list_installed_mods.
+ * Every mod folder RimWorld can see, in scan order (local, then Workshop, then Data),
+ * WITHOUT deduping — so two folders declaring the same packageId both appear. That raw
+ * view is what detect_mod_conflicts needs to spot collisions.
  */
-function scanInstalledMods(config) {
+function scanModRoots(config) {
     const modsDir = config.rimworldModsDir || "";
     // A modlist routinely mixes local mods with Workshop ones (Empire, VOE), so both are scanned.
     const workshopDir = modsDir
@@ -61,7 +61,6 @@ function scanInstalledMods(config) {
         { dir: dataDir, source: "data" }
     ];
     const found = [];
-    const seen = new Set();
     for (const { dir, source } of roots) {
         if (!dir || !fs.existsSync(dir))
             continue;
@@ -80,14 +79,29 @@ function scanInstalledMods(config) {
             try {
                 const xml = fs.readFileSync(aboutPath, "utf8");
                 const id = /<packageId>([^<]+)<\/packageId>/i.exec(xml)?.[1]?.trim().toLowerCase();
-                if (!id || seen.has(id))
-                    continue; // first wins: local overrides published
+                if (!id)
+                    continue;
                 const name = /<name>([\s\S]*?)<\/name>/i.exec(xml)?.[1]?.trim() || entry;
-                seen.add(id);
                 found.push({ packageId: id, name, source, folder });
             }
             catch { /* an unreadable About.xml is simply not an entry */ }
         }
+    }
+    return found;
+}
+/**
+ * Scan every folder RimWorld looks in for mods and record the packageId + name each declares.
+ * Order matters: local first, then Workshop, then Data — so "first wins" means a local copy
+ * overrides a published one. The single scan behind both modFolderIndex and list_installed_mods.
+ */
+function scanInstalledMods(config) {
+    const seen = new Set();
+    const found = [];
+    for (const m of scanModRoots(config)) {
+        if (seen.has(m.packageId))
+            continue; // first wins: local overrides published
+        seen.add(m.packageId);
+        found.push(m);
     }
     return found;
 }
@@ -385,6 +399,30 @@ exports.testingTools = [
                 }
             },
             required: ["packageId"]
+        }
+    },
+    {
+        name: "detect_mod_conflicts",
+        description: "Read-only. Analyzes a mod set (or the active ModsConfig list) for the conflicts a modder " +
+            "must deconflict: duplicate packageIds across installed folders (RimWorld loads only the " +
+            "first, silently shadowing the rest — e.g. a Workshop mod squatting a DLC's id), " +
+            "incompatibleWith pairs that are both active, and load-order cycles from declared " +
+            "loadAfter/loadBefore. Returns { conflictCount, duplicatePackageIds, incompatiblePairs, " +
+            "cycles }. Reads About.xml; writes nothing. If 'mods' is omitted, reads the active list " +
+            "from ModsConfig.xml.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                mods: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "packageIds to analyze. If omitted, reads the active list from ModsConfig.xml."
+                },
+                savedatafolder: {
+                    type: "string",
+                    description: "Optional; which ModsConfig.xml to read the active list from when 'mods' is omitted."
+                }
+            }
         }
     }
 ];
@@ -727,6 +765,64 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
         }
         const meta = readModAbout(folder);
         return { content: [{ type: "text", text: JSON.stringify({ found: true, folder, ...meta }, null, 2) }] };
+    }
+    if (name === "detect_mod_conflicts") {
+        const config = (0, config_1.loadConfig)();
+        let mods = Array.isArray(args.mods) ? args.mods.map((m) => String(m)) : [];
+        if (mods.length === 0) {
+            const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
+            const configPath = path.join(savedata, "Config", "ModsConfig.xml");
+            if (fs.existsSync(configPath)) {
+                const content = fs.readFileSync(configPath, "utf8");
+                const match = content.match(/<activeMods>([\s\S]*?)<\/activeMods>/);
+                if (match)
+                    for (const lm of match[1].matchAll(/<li>(.*?)<\/li>/g))
+                        mods.push(lm[1].trim());
+            }
+        }
+        const setLower = new Set(mods.map(m => m.toLowerCase()));
+        const index = modFolderIndex(config);
+        // 1. Duplicate packageIds across installed folders — RimWorld loads only the first.
+        const byId = new Map();
+        for (const m of scanModRoots(config)) {
+            if (!byId.has(m.packageId))
+                byId.set(m.packageId, []);
+            byId.get(m.packageId).push(m.folder);
+        }
+        const duplicatePackageIds = Array.from(byId.entries())
+            .filter(([, folders]) => folders.length > 1)
+            .map(([packageId, folders]) => ({
+            packageId,
+            folders,
+            note: `${folders.length} folders declare this id; RimWorld loads the first and shadows ${folders.length - 1}`
+        }));
+        // 2. incompatibleWith pairs where both sides are in the set.
+        const incompatiblePairs = [];
+        const seenPair = new Set();
+        for (const m of mods) {
+            const folder = index.get(m.toLowerCase());
+            if (!folder)
+                continue;
+            const inc = readModAbout(folder).incompatibleWith || [];
+            for (const other of inc) {
+                if (!setLower.has(other.toLowerCase()))
+                    continue;
+                const key = [m.toLowerCase(), other.toLowerCase()].sort().join("|");
+                if (!seenPair.has(key)) {
+                    seenPair.add(key);
+                    incompatiblePairs.push({ a: m, b: other });
+                }
+            }
+        }
+        // 3. Load-order cycles within the set (official block never cycles).
+        const { cycles } = orderByDeclaredDependencies(mods.filter(m => OFFICIAL_ORDER.indexOf(m.toLowerCase()) === -1), index);
+        const conflictCount = duplicatePackageIds.length + incompatiblePairs.length + (cycles.length > 0 ? 1 : 0);
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({ conflictCount, duplicatePackageIds, incompatiblePairs, cycles }, null, 2)
+                }]
+        };
     }
     throw new Error(`Unknown testing tool: ${name}`);
 }

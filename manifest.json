@@ -90,6 +90,10 @@
       "description": "Read-only. Reads a mod's About.xml by packageId and returns name, author, description, supportedVersions, and all load-order/dependency/incompatibility declarations."
     },
     {
+      "name": "detect_mod_conflicts",
+      "description": "Read-only. Analyzes a mod set (or the active ModsConfig list) for duplicate packageIds (shadowing), incompatibleWith pairs both active, and load-order cycles. Returns { conflictCount, duplicatePackageIds, incompatiblePairs, cycles }."
+    },
+    {
       "name": "sync_repo_wiki",
       "description": "Syncs a local Learning folder to its GitHub Wiki repository"
     },
