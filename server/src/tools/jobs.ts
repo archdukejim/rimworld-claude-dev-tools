@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import { buildStage, runStage } from "./rimworldDev";
+import { buildStage, runStage, workspaceRoot } from "./rimworldDev";
 import { resolveModLoadOrder } from "./testing";
 import { loadConfig } from "../config";
 
@@ -25,7 +25,7 @@ type JobStatus = "pending" | "building" | "queued" | "running" | "done" | "faile
 interface Job {
     id: string;
     status: JobStatus;
-    request: { repo?: string; mods?: string[]; timeoutSec?: number };
+    request: { repo?: string; mods?: string[]; timeoutSec?: number; isolate?: boolean };
     pinned: { savedatafolder: string; activeMods?: string[] };
     build?: any;      // build-stage result, carried into the run stage
     result?: any;
@@ -138,6 +138,93 @@ function killGameForSavedata(savedata: string): void {
     } catch { /* nothing to kill, or already gone */ }
 }
 
+function findCsproj(modDir: string): string | null {
+    const src = path.join(modDir, "Source");
+    if (!fs.existsSync(src)) return null;
+    try {
+        const f = fs.readdirSync(src).find(x => x.toLowerCase().endsWith(".csproj"));
+        return f ? path.join(src, f) : null;
+    } catch { return null; }
+}
+
+/**
+ * Build a job in its own git worktree of the mod repo (committed HEAD), so the build is
+ * isolated: it never touches the working tree and cannot collide with another build's obj/ —
+ * which makes isolated builds safe to run in parallel. Works for standalone mods (deps via
+ * $(RimWorldPath)/Harmony/Workshop, not relative inter-mod paths). The built Assemblies are
+ * deployed into the live mod location (what the game loads), then the worktree is removed.
+ * Returns the same {ok, stage, build} shape as the normal build path.
+ */
+async function isolatedBuild(job: Job): Promise<{ ok: boolean; stage: string; build?: any; reason?: string }> {
+    const repo = job.request.repo;
+    if (!repo) return { ok: false, stage: "isolate", reason: "isolate requires a 'repo' (the mod's own git repo)" };
+    const repoDir = path.join(workspaceRoot(), repo);
+    try {
+        execSync(`git -C "${repoDir}" rev-parse --is-inside-work-tree`, { stdio: "ignore" });
+    } catch {
+        return { ok: false, stage: "isolate", reason: `${repoDir} is not a git repo; isolate needs one (or submit without isolate)` };
+    }
+
+    const wt = path.join(jobsRoot(), job.id, "wt");
+    try {
+        execSync(`git -C "${repoDir}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
+    } catch (e: any) {
+        return { ok: false, stage: "isolate", reason: `git worktree add failed: ${String(e?.message || e)}` };
+    }
+
+    try {
+        // GamePath.props is dev-local (git-ignored) so it's absent from the fresh worktree; copy it.
+        const props = path.join(repoDir, "Source", "GamePath.props");
+        const wtProps = path.join(wt, "Source", "GamePath.props");
+        if (fs.existsSync(props) && fs.existsSync(path.dirname(wtProps))) fs.copyFileSync(props, wtProps);
+
+        const csproj = findCsproj(wt);
+        if (!csproj) return { ok: false, stage: "isolate", reason: `no Source/*.csproj in the worktree of ${repo}` };
+
+        try {
+            execSync(`dotnet build "${csproj}" -c Release --nologo`, { stdio: "pipe" });
+        } catch (e: any) {
+            const detail = (e?.stdout?.toString?.() || "") + (e?.stderr?.toString?.() || e?.message || "");
+            return { ok: false, stage: "build", build: { ok: false, isolated: true, error: detail.slice(-2000) } };
+        }
+
+        // Deploy the isolated build into the live mod location (the game loads from there).
+        const wtAsm = path.join(wt, "Assemblies");
+        const liveAsm = path.join(repoDir, "Assemblies");
+        const deployed: string[] = [];
+        if (fs.existsSync(wtAsm)) {
+            fs.mkdirSync(liveAsm, { recursive: true });
+            for (const f of fs.readdirSync(wtAsm)) {
+                fs.copyFileSync(path.join(wtAsm, f), path.join(liveAsm, f));
+                deployed.push(f);
+            }
+        }
+        return { ok: true, stage: "build", build: { ok: true, isolated: true, built: [repo], deployed } };
+    } finally {
+        try { execSync(`git -C "${repoDir}" worktree remove --force "${wt}"`, { stdio: "ignore" }); } catch { /* leave it; GC later */ }
+    }
+}
+
+/** Isolated jobs build in parallel (no collision), then hand off to the serial run lane. */
+async function isolatedBuildThenQueue(job: Job): Promise<void> {
+    job.status = "building";
+    job.startedAt = Date.now();
+    persist(job);
+    const r = await isolatedBuild(job);
+    if (r.ok) {
+        job.build = r.build;
+        job.status = "queued";
+        persist(job);
+        runQueue.push(job.id);
+        void drainRuns();
+    } else {
+        job.result = { ok: false, stage: r.stage, build: r.build, reason: r.reason };
+        job.status = "failed";
+        job.finishedAt = Date.now();
+        persist(job);
+    }
+}
+
 // --- Build lane: one build at a time (shared workspace); hands each build off to the run lane ---
 async function drainBuilds(): Promise<void> {
     if (buildWorkerRunning) return;
@@ -235,7 +322,8 @@ export const jobsTools = [
                 repo: { type: "string", description: "Build only this repo and its dependencies. Omit to build everything." },
                 mods: { type: "array", items: { type: "string" }, description: "packageIds to pin as the run's active modlist (written into the job's own ModsConfig)." },
                 savedatafolder: { type: "string", description: "Override the job's savedatafolder. Default: an isolated per-job folder under %LOCALAPPDATA%\\RimAgentic\\jobs." },
-                timeoutSec: { type: "number", description: "Max seconds to wait for the TestRunner (default 420)." }
+                timeoutSec: { type: "number", description: "Max seconds to wait for the TestRunner (default 420)." },
+                isolate: { type: "boolean", description: "Build in a git worktree of the mod repo (committed HEAD) so the build is isolated and parallel-safe. Requires 'repo' to be its own git repo; works for standalone mods. Default false." }
             }
         }
     },
@@ -280,19 +368,24 @@ export async function handleJobsTool(name: string, args: any) {
             try { writePinnedModsConfig(savedata, activeMods); } catch { /* launch verify will catch a bad folder */ }
         }
 
+        const isolate = args.isolate === true;
         const job: Job = {
             id,
             status: "pending",
-            request: { repo: args.repo, mods: args.mods, timeoutSec: args.timeoutSec },
+            request: { repo: args.repo, mods: args.mods, timeoutSec: args.timeoutSec, isolate },
             pinned: { savedatafolder: savedata, activeMods },
             submittedAt: Date.now()
         };
         jobs.set(id, job);
-        buildQueue.push(id);
         persist(job);
-        void drainBuilds();   // build lane picks it up; a game run of an earlier job may overlap
+        if (isolate) {
+            void isolatedBuildThenQueue(job);   // isolated builds run in parallel (own worktree)
+        } else {
+            buildQueue.push(id);
+            void drainBuilds();                 // shared-workspace builds serialize; overlap a game run
+        }
 
-        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "pending", savedatafolder: savedata }, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "pending", isolate, savedatafolder: savedata }, null, 2) }] };
     }
 
     if (name === "get_job") {
