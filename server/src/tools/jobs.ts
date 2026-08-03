@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
 import { buildStage, runStage } from "./rimworldDev";
 import { resolveModLoadOrder } from "./testing";
 import { loadConfig } from "../config";
@@ -36,15 +35,18 @@ interface Job {
 }
 
 const jobs = new Map<string, Job>();
-const buildQueue: string[] = [];   // waiting to build (parallel lane)
+const buildQueue: string[] = [];   // waiting to build
 const runQueue: string[] = [];     // built OK, waiting for the one game (serial lane)
-let buildingCount = 0;
+let buildWorkerRunning = false;
 let runWorkerRunning = false;
 let counter = 0;
 
-// Build lane concurrency. Builds are independent and CPU-bound; game runs are the scarce
-// serial resource, so only the run lane is capped to one.
-const MAX_BUILDS = Math.max(1, Math.min(4, os.cpus().length - 1));
+// Two independent serial workers form a PIPELINE: builds serialize (build.ps1 builds in place
+// in the shared workspace, and mods share dependencies like Core — concurrent builds would
+// corrupt each other's obj/), and game runs serialize (one RimWorld at a time). Because the
+// workers are independent, a build overlaps a game run — the real win, since the game run is
+// the long pole. True parallel *independent* builds would need per-build source isolation
+// (git worktree / copy), a future opt-in coupled to the build-in-place harness.
 
 function jobsRoot(): string {
     const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
@@ -90,47 +92,46 @@ ${active}
     fs.writeFileSync(path.join(dir, "ModsConfig.xml"), xml, "utf8");
 }
 
-// --- Build lane: run up to MAX_BUILDS builds concurrently ---
-function pumpBuilds(): void {
-    while (buildingCount < MAX_BUILDS && buildQueue.length > 0) {
-        const id = buildQueue.shift()!;
-        const job = jobs.get(id);
-        if (!job || job.status !== "pending") continue;
-        buildingCount++;
-        void buildOne(job);
-    }
-}
-
-async function buildOne(job: Job): Promise<void> {
-    job.status = "building";
-    job.startedAt = Date.now();
-    persist(job);
+// --- Build lane: one build at a time (shared workspace); hands each build off to the run lane ---
+async function drainBuilds(): Promise<void> {
+    if (buildWorkerRunning) return;
+    buildWorkerRunning = true;
     try {
-        const build = await buildStage(job.request.repo);
-        if (build && build.ok === true) {
-            job.build = build;
-            job.status = "queued";       // built; hand to the serial game lane
+        while (buildQueue.length > 0) {
+            const id = buildQueue.shift()!;
+            const job = jobs.get(id);
+            if (!job || job.status !== "pending") continue;
+
+            job.status = "building";
+            job.startedAt = Date.now();
             persist(job);
-            runQueue.push(job.id);
-            void drainRuns();
-        } else {
-            job.result = { ok: false, stage: "build", build };
-            job.status = "failed";
-            job.finishedAt = Date.now();
-            persist(job);
+            try {
+                const build = await buildStage(job.request.repo);
+                if (build && build.ok === true) {
+                    job.build = build;
+                    job.status = "queued";       // built; hand to the serial game lane (runs in parallel)
+                    persist(job);
+                    runQueue.push(job.id);
+                    void drainRuns();            // a game run may now start while the NEXT build proceeds
+                } else {
+                    job.result = { ok: false, stage: "build", build };
+                    job.status = "failed";
+                    job.finishedAt = Date.now();
+                    persist(job);
+                }
+            } catch (err: any) {
+                job.status = "failed";
+                job.error = String(err?.message || err);
+                job.finishedAt = Date.now();
+                persist(job);
+            }
         }
-    } catch (err: any) {
-        job.status = "failed";
-        job.error = String(err?.message || err);
-        job.finishedAt = Date.now();
-        persist(job);
     } finally {
-        buildingCount--;
-        pumpBuilds();
+        buildWorkerRunning = false;
     }
 }
 
-// --- Run lane: strictly one game at a time ---
+// --- Run lane: strictly one game at a time; overlaps the build lane ---
 async function drainRuns(): Promise<void> {
     if (runWorkerRunning) return;
     runWorkerRunning = true;
@@ -228,7 +229,7 @@ export async function handleJobsTool(name: string, args: any) {
         jobs.set(id, job);
         buildQueue.push(id);
         persist(job);
-        pumpBuilds();   // starts the build now if a build slot is free (up to MAX_BUILDS)
+        void drainBuilds();   // build lane picks it up; a game run of an earlier job may overlap
 
         return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "pending", savedatafolder: savedata }, null, 2) }] };
     }
