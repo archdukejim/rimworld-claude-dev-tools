@@ -79,7 +79,9 @@ double-register when this repo is opened directly.
 - **P5 — ✅ Authoring commands** `/rimagentic:new-mod` (scaffold + first content + verify)
   and `/rimagentic:fix-from-log` (triage Player.log → fix → re-verify). README install
   section + deep-link added.
-- **P6 — Parallelism** via the async job broker (#3) when multi-mod load appears.
+- **P6 — ✅ Parallelism** via the async job broker: `submit_test_job` / `get_job` /
+  `list_jobs` / `cancel_job`. Embedded in the MCP server (not a daemon); async submit,
+  serial game-run lane, per-job isolated savedatafolder. Verified.
 
 ## Open questions
 
