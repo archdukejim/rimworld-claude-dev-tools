@@ -129,17 +129,23 @@ validation/runner/result-store), 11 generic tools incl. reflection-based DebugAc
 a stripped GameComponent (tool_input channel; `RIMTOOLKIT_IPC_DIR` → mod RootDir), a
 `ToolkitMod` entry, and `ToolkitLog`. Verified: zero leaked references to any dropped dep.
 
-**Remaining in W2:**
-1. **MCP↔mod IPC wiring** — `gameIpc.ts` currently writes `tool_input.json` under
-   `<workspaceRoot>/Core`; point it at the toolkit mod's IPC dir (`RIMTOOLKIT_IPC_DIR`) so
-   `list_game_tools`/`execute_game_tool` reach *this* mod, not RimSynapse Core. **Required
-   for end-to-end.**
-2. **Port the deferred generic tools** ObjectState + Environment with local stubs
-   replacing the dropped `SynapseObjectControlManager` (locks → local `HashSet<int>`).
-3. **Cleanup** — the `NormalizeAliases` shim still maps to unregistered possess/damage
-   aliases (harmless no-op); drop it. `fire_incident` now uses vanilla threat points.
-4. **In-game verification** — deploy (symlink) + launch and confirm the bridge answers a
-   real `list_game_tools`/`execute_game_tool` round-trip.
+**W2 status:**
+1. ✅ **MCP↔mod IPC wiring** — both ends default to `%LOCALAPPDATA%\RimToolkit\ipc`
+   (override `RIMTOOLKIT_IPC_DIR`); zero-config, no install-path knowledge needed.
+2. ✅ **Deferred generic tools** — `modify_object_state` + `get_map_environment` ported
+   with local stubs replacing `SynapseObjectControlManager`.
+3. **Cleanup (minor)** — the `NormalizeAliases` shim still maps to unregistered
+   possess/damage aliases (harmless no-op); `fire_incident` uses vanilla threat points.
+4. **In-game verification (remaining)** — symlink `game-mod` into `Mods/`, launch, and
+   confirm a real `list_game_tools`/`execute_game_tool` round-trip through the bridge.
+
+## C7 — rebrand (done)
+
+Rebranded to **RimToolkit**: MCP server name `rimtoolkit`, manifest/display/description/
+keywords/author, `.mcpb` bundle name, README rewrite, env vars `RIMTOOLKIT_*` (with
+`RIMSYNAPSE_*` fallback), and removed the RimSynapse `query_wiki_database` tool. Identity
+above is now the real brand, not a placeholder. Remaining for full isolation: move to a
+dedicated repo (owner's infra step) and rename the repo folder.
 
 ## Definition of done (v1)
 
