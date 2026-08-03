@@ -10,7 +10,7 @@ into your mod's `Assemblies/` folder; RimWorld loads it at startup.
   `RimWorld/RimWorldWin64_Data/Managed/`, plus `0Harmony.dll` from the Harmony mod.
   Mark them `<Private>false</Private>` (loaded by the game, never bundled).
 - Bundle only genuinely-extra libraries (e.g. Newtonsoft) into `Assemblies/`.
-- This toolkit's `game-mod/Source/RimToolkit.csproj` is a working reference csproj.
+- This toolkit's `game-mod/Source/RimAgentic.csproj` is a working reference csproj.
 
 ## Entry points
 
