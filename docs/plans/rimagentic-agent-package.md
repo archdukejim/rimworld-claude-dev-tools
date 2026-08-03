@@ -73,7 +73,8 @@ double-register when this repo is opened directly.
   everything else is a tool it calls. **Start here.**
 - **P2 — One-step install.** A setup script: register MCP, build + symlink the game mod
   last, set env, run the Tier-1/Tier-3 verification we just did by hand.
-- **P3 — `detect_mod_conflicts` tool** + deconfliction skill.
+- **P3 — ✅ `detect_mod_conflicts` tool + `/rimagentic:deconflict` command.** Tool verified
+  on the live install (found 12 real duplicate packageIds). Command explains + resolves.
 - **P4 — Workshop-read + window-navigation** guidance/tools (roadmap #1/#2 fold in here).
 - **P5 — Authoring skills** (`/new-mod`, `/fix-from-log`) once the loop is instruction-driven.
 - **P6 — Parallelism** via the async job broker (#3) when multi-mod load appears.
