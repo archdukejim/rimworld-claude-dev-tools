@@ -161,6 +161,7 @@ namespace RimAgentic
             RegisterDefinitionTools();
             RegisterObjectStateTools();
             RegisterEnvironmentTools();
+            RegisterWindowTools();
             RegisterDynamicDebugActions();
 
             // Centralized synonym keyword registrations
