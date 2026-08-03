@@ -42,6 +42,30 @@ package so a fresh Claude Code session is immediately a RimWorld modding expert:
 - **Workshop read helper** — thin content read if the `swh_*` browser path is too heavy
   for a fresh install.
 
+## Distribution = a Claude Code **plugin** (confirmed mechanism)
+
+`.mcpb` is Claude *Desktop* only. For Claude Code, a **plugin** bundles the MCP server +
+skills + slash commands + subagents together, installable per-project or user-wide:
+
+```
+/plugin marketplace add archdukejim/rimworld-claude-dev-tools
+/plugin install rimagentic@rimworld-claude-dev-tools
+```
+
+"Per project but easily available" = install **user scope once** (available in every
+project); the per-project brain is the bundled **`/rimagentic:setup`** command that does the
+machine steps a plugin can't (build server, symlink the game mod last, write project
+`CLAUDE.md`, verify). "Click to launch" = a `claude-cli://open?repo=…&q=/plugin install …`
+deep link in the README (prefills the command; no mechanism silently auto-installs — the
+user presses enter). A plugin cannot symlink the mod / build C# / drop a `CLAUDE.md`, so
+those live in `/rimagentic:setup`.
+
+**Scaffolded (P1/P2, untested as a plugin):** `.claude-plugin/plugin.json`,
+`.claude-plugin/marketplace.json`, `.mcp.json` (server via `${CLAUDE_PLUGIN_ROOT}`),
+`commands/setup.md` (`/rimagentic:setup`). **Verify on first install:** exact `.mcp.json`
+placement + `${CLAUDE_PLUGIN_ROOT}` resolution, and that a root `.mcp.json` doesn't
+double-register when this repo is opened directly.
+
 ## Build order
 
 - **P1 — Agent-instruction layer.** The `CLAUDE.md` (modder-project template) + a core

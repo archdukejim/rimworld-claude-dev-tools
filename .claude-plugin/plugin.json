@@ -1,0 +1,7 @@
+{
+  "name": "rimagentic",
+  "version": "0.1.0",
+  "description": "Turnkey RimWorld modding agent for Claude Code: the RimAgentic MCP tools (discover/build/deploy/launch/test, in-game tool bridge), bundled modding docs, and a /rimagentic:setup command. Install once, run /rimagentic:setup in a mod folder, and the session knows how to mod RimWorld end-to-end.",
+  "author": { "name": "archdukejim" },
+  "keywords": ["rimworld", "modding", "agent", "mcp"]
+}

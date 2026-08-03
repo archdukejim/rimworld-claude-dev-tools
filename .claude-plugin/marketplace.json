@@ -1,0 +1,14 @@
+{
+  "name": "rimworld-claude-dev-tools",
+  "owner": { "name": "archdukejim" },
+  "metadata": {
+    "description": "RimAgentic — an agent-driven RimWorld modding toolkit for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "rimagentic",
+      "source": "./",
+      "description": "The RimAgentic modding agent: MCP tools + in-game bridge + modding docs + /rimagentic:setup."
+    }
+  ]
+}
