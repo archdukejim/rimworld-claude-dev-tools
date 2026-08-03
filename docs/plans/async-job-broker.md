@@ -20,10 +20,13 @@ This doc is the implementation plan; update it as we build.
 > shared-dep obj/), game runs serialize, but a build **overlaps** a game run — the real win, as
 > the game run is the long pole. **Launch-time config verification is in** (`verifyPinnedConfig`):
 > a job fails at a "verify" stage if its savedatafolder vanished (#19) or its ModsConfig no longer
-> matches the pinned modlist (#18), instead of running the wrong config. Cancel works while
-> pending/queued. **Not yet done:** git-worktree/copy isolation for *true* parallel independent
-> builds (opt-in, coupled to the build-in-place harness) and cancel-mid-run (kill the live game).
-> The daemon design below stays the reference if multi-session sharing is needed.
+> matches the pinned modlist (#18), instead of running the wrong config. **Cancel works at any
+> stage:** pending/queued (dequeue) and running (`cancel_job` kills the live game; the run worker
+> settles it to cancelled). **Worktree isolation shipped:** `submit_test_job({ isolate: true })`
+> builds in a git worktree of the mod repo (committed HEAD) — no shared-obj collision, so isolated
+> jobs build in parallel, deploy the built Assemblies to the live location, then take the serial run
+> lane; works for standalone mods with their own git repo. **Broker is feature-complete** for the
+> single-session product. The daemon design below stays the reference if multi-session sharing is needed.
 
 ---
 
