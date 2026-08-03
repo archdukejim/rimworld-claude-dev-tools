@@ -102,8 +102,12 @@
       "description": "Read the bundled RimWorld modding knowledge base (mod structure, Defs/XML, XML patches, C#/Harmony, load order, and how to drive this toolkit to launch/test/evaluate). List, read, or search the docs."
     },
     {
+      "name": "build_api_index",
+      "description": "Build the local semantic embedding index (MiniLM, no external service) over the API corpus so search_game_api can do concept/natural-language lookup. Run once after dump_game_api."
+    },
+    {
       "name": "search_game_api",
-      "description": "Search the RimWorld C# API corpus (public Verse/RimWorld types + members from the in-game dump_game_api tool) for a query and return matching types with member signatures, so the agent writes correct C#/Harmony against the real API."
+      "description": "Search the RimWorld C# API for a query, blending semantic similarity (concept matches) with keyword relevance (exact names); returns matching types with member signatures for writing C#/Harmony."
     },
     {
       "name": "launch_quicktest",
