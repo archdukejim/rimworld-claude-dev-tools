@@ -13,9 +13,12 @@ This doc is the implementation plan; update it as we build.
 > embedded in the MCP server** (one client → no cross-client shared queue needed). Delivered:
 > async `submit_test_job` (returns job_id immediately), a single serial worker draining the
 > game-run lane, per-job pinned savedatafolder, disk-persisted job.json, and `get_job` /
-> `list_jobs` / `cancel_job`. **Not yet done:** build-lane parallelism (build concurrently
-> while games queue), launch-time config verification, worktree isolation, and cancel-mid-run.
-> The daemon design below stays the reference if multi-session sharing is ever needed.
+> `list_jobs` / `cancel_job`. **Two lanes now live:** builds run concurrently (a pool of
+> `MAX_BUILDS = min(4, cpus-1)`) via `buildStage`, then each built job hands off to the single
+> serial game-run worker (`runStage`) — builds parallelize, games serialize. Cancel works while
+> pending/queued. **Not yet done:** launch-time config verification (assert the pinned
+> ModsConfig/savedatafolder before spawning), git-worktree isolation for the build lane, and
+> cancel-mid-run. The daemon design below stays the reference if multi-session sharing is needed.
 
 ---
 
