@@ -98,6 +98,10 @@
       "description": "Query the RimSynapse Wiki database. Used for accessing Mod Lore and Intelligent Referencing."
     },
     {
+      "name": "query_modding_docs",
+      "description": "Read the bundled RimWorld modding knowledge base (mod structure, Defs/XML, XML patches, C#/Harmony, load order, and how to drive this toolkit to launch/test/evaluate). List, read, or search the docs."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },

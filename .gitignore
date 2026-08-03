@@ -18,3 +18,9 @@ server/build/
 *.mcpb
 mcp-config/triage-lastseen.json
 mcp-config/.triage-currentmax.json
+
+# game-side mod build artifacts + dev-local install paths
+game-mod/Source/GamePath.props
+game-mod/Source/bin/
+game-mod/Source/obj/
+game-mod/Assemblies/

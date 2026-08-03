@@ -87,6 +87,24 @@ ticks; the whole LLM/context stack (`RimSynapseAPI`, `SynapseClient`,
 6. New minimal `Mod` entry: Harmony `PatchAll` + `SynapseToolRegistry.EnsureInitialized()`.
 7. `EnsureInitialized` — delete the narrative `Register*`/`MarkMutating` lines.
 
+## Product priorities (from the owner)
+
+1. **Leverage base game + DLC methods easily** — the game-side bridge's generic tools
+   (esp. `DebugActionTools`, which *reflects* the game's own debug actions, so
+   vanilla+DLC methods are exposed dynamically without hand-writing each). = **W2**.
+2. **Dynamically pick up what mods add** — companion mods call `RegisterTool(...)` and
+   `list_available_tools` surfaces them; the reflection scan also catches mod debug
+   actions. Already supported by the bridge design.
+3. **Ship "how to mod RimWorld" knowledge to the agent** — bundled modding docs +
+   an MCP tool to query them, so using the toolkit teaches the LLM to mod. = **W6 (new)**.
+4. **Easy launch + MCP test/eval** — largely exists (`launch_rimworld`,
+   `run_rimworld_tests`, `read_rimworld_log`); polish under W4.
+
+## Identity (working, finalize in C7)
+
+Folder `game-mod/`; packageId `archdukejim.rimtoolkit`; assembly/namespace `RimToolkit`;
+IPC dir env `RIMTOOLKIT_IPC_DIR` (mod `Content.RootDir` fallback). All placeholders.
+
 ## Workstreams & sequencing
 
 - **W1 — Decouple mod discovery (C1–C3, C6).** Foundational; makes the dev loop work
@@ -99,6 +117,18 @@ ticks; the whole LLM/context stack (`RimSynapseAPI`, `SynapseClient`,
 - **W4 — Public contract, packaging, identity (C7).** Define the stable generic tool
   surface, symlink dev-install flow, rename product, prep a Workshop listing + docs.
 - **W5 — Agent SDK app (was A1).** Now targets a config-discovered mod, not RimSynapse.
+- **W6 — Modding knowledge base.** Bundle concise RimWorld modding docs (`modding-knowledge/`)
+  + a `query_modding_docs` MCP tool so the agent is taught how to mod the game and how to
+  drive this toolkit. In progress alongside W2 (no file overlap).
+
+## W2 progress
+
+Skeleton done + compiles: `game-mod/About/About.xml`, `Source/GamePath.props(.template)`,
+SDK-style `Source/RimToolkit.csproj` (net48, RimWorld/Unity/Harmony refs, bundles
+Newtonsoft) → builds to `game-mod/Assemblies/RimToolkit.dll`. `.gitignore` updated for
+mod build artifacts + dev-local props. Bulk C# port (bridge + manager-free generic tools +
+DebugActionTools + stripped GameComponent + Mod entry) delegated to a subagent, scoped to a
+compiling MVP; ObjectState/Environment (need manager stubs) and the narrative tools deferred.
 
 ## Definition of done (v1)
 

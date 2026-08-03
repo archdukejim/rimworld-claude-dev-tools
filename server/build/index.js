@@ -50,6 +50,7 @@ const codebase_1 = require("./tools/codebase");
 const testing_1 = require("./tools/testing");
 const sync_1 = require("./tools/sync");
 const wiki_1 = require("./tools/wiki");
+const moddingDocs_1 = require("./tools/moddingDocs");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
@@ -80,6 +81,7 @@ const ALL_TOOLS = [
     ...testing_1.testingTools,
     ...sync_1.syncTools,
     ...wiki_1.wikiTools,
+    ...moddingDocs_1.moddingDocsTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
@@ -122,6 +124,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (wiki_1.wikiTools.some(t => t.name === name)) {
         return await (0, wiki_1.handleWikiTool)(name, args);
+    }
+    if (moddingDocs_1.moddingDocsTools.some(t => t.name === name)) {
+        return await (0, moddingDocs_1.handleModdingDocsTool)(name, args);
     }
     if (pcControl_1.pcControlTools.some(t => t.name === name)) {
         return await (0, pcControl_1.handlePcControlTool)(name, args);
@@ -262,6 +267,9 @@ async function main() {
                 }
                 else if (wiki_1.wikiTools.some(t => t.name === name)) {
                     result = await (0, wiki_1.handleWikiTool)(name, args);
+                }
+                else if (moddingDocs_1.moddingDocsTools.some(t => t.name === name)) {
+                    result = await (0, moddingDocs_1.handleModdingDocsTool)(name, args);
                 }
                 else if (pcControl_1.pcControlTools.some(t => t.name === name)) {
                     result = await (0, pcControl_1.handlePcControlTool)(name, args);

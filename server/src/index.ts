@@ -19,6 +19,7 @@ import { codebaseTools, handleCodebaseTool } from "./tools/codebase";
 import { testingTools, handleTestingTool } from "./tools/testing";
 import { syncTools, handleSyncTool } from "./tools/sync";
 import { wikiTools, handleWikiTool } from "./tools/wiki";
+import { moddingDocsTools, handleModdingDocsTool } from "./tools/moddingDocs";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
@@ -53,6 +54,7 @@ const ALL_TOOLS = [
     ...testingTools,
     ...syncTools,
     ...wikiTools,
+    ...moddingDocsTools,
     ...pcControlTools,
     ...rimworldDevTools,
     ...gameIpcTools,
@@ -105,6 +107,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     if (wikiTools.some(t => t.name === name)) {
         return await handleWikiTool(name, args);
+    }
+
+    if (moddingDocsTools.some(t => t.name === name)) {
+        return await handleModdingDocsTool(name, args);
     }
 
     if (pcControlTools.some(t => t.name === name)) {
@@ -259,6 +265,8 @@ async function main() {
                     result = await handleSyncTool(name, args, config.organization, token);
                 } else if (wikiTools.some(t => t.name === name)) {
                     result = await handleWikiTool(name, args);
+                } else if (moddingDocsTools.some(t => t.name === name)) {
+                    result = await handleModdingDocsTool(name, args);
                 } else if (pcControlTools.some(t => t.name === name)) {
                     result = await handlePcControlTool(name, args);
                 } else if (rimworldDevTools.some(t => t.name === name)) {
