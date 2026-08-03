@@ -135,16 +135,21 @@ namespace RimToolkit
                 if (_scriptingDir != null) return _scriptingDir;
 
                 string envDir = System.Environment.GetEnvironmentVariable("RIMTOOLKIT_IPC_DIR");
-                if (!string.IsNullOrEmpty(envDir) && System.IO.Directory.Exists(envDir))
+                if (!string.IsNullOrEmpty(envDir))
                 {
                     _scriptingDir = envDir;
                     LogResolvedDir("RIMTOOLKIT_IPC_DIR");
-                    return _scriptingDir;
+                }
+                else
+                {
+                    // Fixed shared default the game mod and the MCP server both compute the same
+                    // way: %LOCALAPPDATA%\RimToolkit\ipc. No env-var coordination required.
+                    string local = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
+                    _scriptingDir = System.IO.Path.Combine(local, "RimToolkit", "ipc");
+                    LogResolvedDir("default %LOCALAPPDATA%\\RimToolkit\\ipc");
                 }
 
-                string modRoot = ToolkitMod.Instance?.RootDir;
-                _scriptingDir = !string.IsNullOrEmpty(modRoot) ? modRoot : GenFilePaths.ConfigFolderPath;
-                LogResolvedDir(!string.IsNullOrEmpty(modRoot) ? "mod RootDir" : "ConfigFolderPath fallback");
+                try { System.IO.Directory.CreateDirectory(_scriptingDir); } catch { }
                 return _scriptingDir;
             }
         }

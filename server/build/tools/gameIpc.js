@@ -37,7 +37,6 @@ exports.gameIpcTools = void 0;
 exports.handleGameIpcTool = handleGameIpcTool;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const rimworldDev_1 = require("./rimworldDev");
 exports.gameIpcTools = [
     {
         name: "list_game_tools",
@@ -71,18 +70,27 @@ exports.gameIpcTools = [
         }
     }
 ];
-// Both ends of this channel must agree on the directory. The C# side
-// (SynapseGameComponent.PollScriptInputFile) resolves it from the Core mod's own folder, so
-// these follow the same workspace root instead of a hardcoded drive; RIMSYNAPSE_ROOT
-// overrides both.
-function coreDir() {
-    return path.join((0, rimworldDev_1.workspaceRoot)(), "Core");
+// Both ends of this channel must agree on the directory. The game-side mod
+// (SynapseGameComponent.ScriptingDir) and this server both default to the same fixed
+// location — %LOCALAPPDATA%\RimToolkit\ipc — and both honour RIMTOOLKIT_IPC_DIR, so the
+// bridge connects with zero configuration and no knowledge of where the mod is installed.
+function ipcDir() {
+    const env = process.env.RIMTOOLKIT_IPC_DIR;
+    if (env)
+        return env;
+    const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
+    const dir = path.join(local, "RimToolkit", "ipc");
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    catch { /* best effort */ }
+    return dir;
 }
 function toolInputFile() {
-    return path.join(coreDir(), "tool_input.json");
+    return path.join(ipcDir(), "tool_input.json");
 }
 function toolOutputFile() {
-    return path.join(coreDir(), "tool_output.json");
+    return path.join(ipcDir(), "tool_output.json");
 }
 async function callInGameTool(name, args) {
     const requestPayload = {
