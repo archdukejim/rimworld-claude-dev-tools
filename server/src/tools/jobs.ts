@@ -92,6 +92,37 @@ ${active}
     fs.writeFileSync(path.join(dir, "ModsConfig.xml"), xml, "utf8");
 }
 
+/**
+ * Assert a job's pinned config is intact right before launch — the verify half of the
+ * #18/#19 structural fix. Guards against the folder vanishing (#19: a bad savedatafolder
+ * launching vanilla) or the ModsConfig being changed out from under the job between submit
+ * and run (#18). A mismatch fails the job loudly instead of running the wrong modlist.
+ */
+export function verifyPinnedConfig(job: Job): { ok: boolean; reason?: string; expected?: string[]; actual?: string[] } {
+    const savedata = job.pinned.savedatafolder;
+    if (!savedata || !fs.existsSync(savedata)) {
+        return { ok: false, reason: `pinned savedatafolder does not exist: ${savedata}` };
+    }
+    if (job.pinned.activeMods && job.pinned.activeMods.length > 0) {
+        const cfg = path.join(savedata, "Config", "ModsConfig.xml");
+        if (!fs.existsSync(cfg)) return { ok: false, reason: `pinned ModsConfig.xml missing at ${cfg}` };
+        let actual: string[] = [];
+        try {
+            const content = fs.readFileSync(cfg, "utf8");
+            const m = content.match(/<activeMods>([\s\S]*?)<\/activeMods>/);
+            if (m) for (const lm of m[1].matchAll(/<li>(.*?)<\/li>/g)) actual.push(lm[1].trim());
+        } catch (e: any) {
+            return { ok: false, reason: `could not read pinned ModsConfig.xml: ${e.message}` };
+        }
+        const exp = job.pinned.activeMods.map(s => s.toLowerCase());
+        const act = actual.map(s => s.toLowerCase());
+        if (exp.length !== act.length || exp.some((v, i) => v !== act[i])) {
+            return { ok: false, reason: "ModsConfig.xml active mods do not match the pinned list", expected: job.pinned.activeMods, actual };
+        }
+    }
+    return { ok: true };
+}
+
 // --- Build lane: one build at a time (shared workspace); hands each build off to the run lane ---
 async function drainBuilds(): Promise<void> {
     if (buildWorkerRunning) return;
@@ -140,6 +171,16 @@ async function drainRuns(): Promise<void> {
             const id = runQueue.shift()!;
             const job = jobs.get(id);
             if (!job || job.status !== "queued") continue;
+
+            // Verify the pinned config still holds before spending a game launch on it.
+            const verify = verifyPinnedConfig(job);
+            if (!verify.ok) {
+                job.result = { ok: false, stage: "verify", verify, build: job.build };
+                job.status = "failed";
+                job.finishedAt = Date.now();
+                persist(job);
+                continue;
+            }
 
             job.status = "running";
             persist(job);
