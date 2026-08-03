@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { runTestCycle } from "./rimworldDev";
+import * as os from "os";
+import { buildStage, runStage } from "./rimworldDev";
 import { resolveModLoadOrder } from "./testing";
 import { loadConfig } from "../config";
 
@@ -17,24 +18,33 @@ import { loadConfig } from "../config";
  * multi-session sharing is ever required, promote this to a daemon behind the same tools.
  */
 
-type JobStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+// pending → building → (build fail ⇒ failed) → queued → running → done|failed ; cancelled from
+// pending/queued. Two lanes: builds run concurrently (a pool), game runs strictly serially.
+type JobStatus = "pending" | "building" | "queued" | "running" | "done" | "failed" | "cancelled";
 
 interface Job {
     id: string;
     status: JobStatus;
     request: { repo?: string; mods?: string[]; timeoutSec?: number };
     pinned: { savedatafolder: string; activeMods?: string[] };
+    build?: any;      // build-stage result, carried into the run stage
     result?: any;
     error?: string;
     submittedAt: number;
-    startedAt?: number;
+    startedAt?: number;   // build start
     finishedAt?: number;
 }
 
 const jobs = new Map<string, Job>();
-const queue: string[] = [];
-let workerRunning = false;
+const buildQueue: string[] = [];   // waiting to build (parallel lane)
+const runQueue: string[] = [];     // built OK, waiting for the one game (serial lane)
+let buildingCount = 0;
+let runWorkerRunning = false;
 let counter = 0;
+
+// Build lane concurrency. Builds are independent and CPU-bound; game runs are the scarce
+// serial resource, so only the run lane is capped to one.
+const MAX_BUILDS = Math.max(1, Math.min(4, os.cpus().length - 1));
 
 function jobsRoot(): string {
     const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
@@ -80,28 +90,63 @@ ${active}
     fs.writeFileSync(path.join(dir, "ModsConfig.xml"), xml, "utf8");
 }
 
-/** The single serial worker. Runs at most one game cycle at a time; keeps draining until empty. */
-async function drain(): Promise<void> {
-    if (workerRunning) return;
-    workerRunning = true;
+// --- Build lane: run up to MAX_BUILDS builds concurrently ---
+function pumpBuilds(): void {
+    while (buildingCount < MAX_BUILDS && buildQueue.length > 0) {
+        const id = buildQueue.shift()!;
+        const job = jobs.get(id);
+        if (!job || job.status !== "pending") continue;
+        buildingCount++;
+        void buildOne(job);
+    }
+}
+
+async function buildOne(job: Job): Promise<void> {
+    job.status = "building";
+    job.startedAt = Date.now();
+    persist(job);
     try {
-        while (queue.length > 0) {
-            const id = queue.shift()!;
+        const build = await buildStage(job.request.repo);
+        if (build && build.ok === true) {
+            job.build = build;
+            job.status = "queued";       // built; hand to the serial game lane
+            persist(job);
+            runQueue.push(job.id);
+            void drainRuns();
+        } else {
+            job.result = { ok: false, stage: "build", build };
+            job.status = "failed";
+            job.finishedAt = Date.now();
+            persist(job);
+        }
+    } catch (err: any) {
+        job.status = "failed";
+        job.error = String(err?.message || err);
+        job.finishedAt = Date.now();
+        persist(job);
+    } finally {
+        buildingCount--;
+        pumpBuilds();
+    }
+}
+
+// --- Run lane: strictly one game at a time ---
+async function drainRuns(): Promise<void> {
+    if (runWorkerRunning) return;
+    runWorkerRunning = true;
+    try {
+        while (runQueue.length > 0) {
+            const id = runQueue.shift()!;
             const job = jobs.get(id);
-            if (!job || job.status !== "pending") continue;
+            if (!job || job.status !== "queued") continue;
 
             job.status = "running";
-            job.startedAt = Date.now();
             persist(job);
-
             try {
-                const result = await runTestCycle({
-                    repo: job.request.repo,
-                    savedatafolder: job.pinned.savedatafolder,
-                    timeoutSec: job.request.timeoutSec
-                });
-                job.result = result;
-                job.status = result.ok ? "done" : "failed";
+                const { launch, log } = await runStage(job.pinned.savedatafolder, job.request.timeoutSec || 420);
+                const ok = job.build?.ok === true && launch?.ok === true && log?.ok === true;
+                job.result = { ok, stage: "complete", build: job.build, launch, log };
+                job.status = ok ? "done" : "failed";
             } catch (err: any) {
                 job.status = "failed";
                 job.error = String(err?.message || err);
@@ -110,7 +155,7 @@ async function drain(): Promise<void> {
             persist(job);
         }
     } finally {
-        workerRunning = false;
+        runWorkerRunning = false;
     }
 }
 
@@ -181,9 +226,9 @@ export async function handleJobsTool(name: string, args: any) {
             submittedAt: Date.now()
         };
         jobs.set(id, job);
-        queue.push(id);
+        buildQueue.push(id);
         persist(job);
-        void drain();   // fire-and-forget; runs on the event loop between tool calls
+        pumpBuilds();   // starts the build now if a build slot is free (up to MAX_BUILDS)
 
         return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "pending", savedatafolder: savedata }, null, 2) }] };
     }
@@ -208,15 +253,18 @@ export async function handleJobsTool(name: string, args: any) {
         const id = String(args.job_id || "");
         const job = jobs.get(id);
         if (!job) return { isError: true, content: [{ type: "text", text: JSON.stringify({ found: false, job_id: id }, null, 2) }] };
-        if (job.status === "pending") {
+        // Cancellable while still queued in either lane; a build/run already in flight can't be pulled back.
+        if (job.status === "pending" || job.status === "queued") {
             job.status = "cancelled";
             job.finishedAt = Date.now();
-            const qi = queue.indexOf(id);
-            if (qi !== -1) queue.splice(qi, 1);
+            for (const q of [buildQueue, runQueue]) {
+                const qi = q.indexOf(id);
+                if (qi !== -1) q.splice(qi, 1);
+            }
             persist(job);
             return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: "cancelled" }, null, 2) }] };
         }
-        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: job.status, note: "only pending jobs can be cancelled" }, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ job_id: id, status: job.status, note: "only pending/queued jobs can be cancelled (a build/run in flight cannot)" }, null, 2) }] };
     }
 
     throw new Error(`Unknown jobs tool: ${name}`);

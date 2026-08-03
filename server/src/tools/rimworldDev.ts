@@ -398,31 +398,46 @@ export interface TestCycleOptions {
     timeoutSec?: number;
 }
 
+/**
+ * The build half of the cycle. Split out so the job broker can run builds concurrently
+ * (they're independent) while keeping the game-run half serial. Returns the harness build
+ * result ({ ok, built, failed, warnings }).
+ */
+export async function buildStage(repo?: string): Promise<any> {
+    const buildArgs = ["-Repo", repo].filter(Boolean) as string[];
+    return runHarness("build.ps1", repo ? buildArgs : [], 10 * 60 * 1000);
+}
+
+/**
+ * The game-run half: launch RimWorld against a caller-pinned savedatafolder and classify the
+ * log. MUST be serialized across jobs (one RimWorld at a time). Previously launch.ps1 was
+ * called with no savedatafolder, so the game read the default config while the modlist lived
+ * in the dev folder — configuring a modlist had no effect on the run.
+ * NOTE (Phase 2): readlog.ps1 still reads the default log location; for full per-job isolation
+ * it must accept -SaveDataFolder and read the job's own Player.log.
+ */
+export async function runStage(
+    savedatafolder: string,
+    timeoutSec = 420
+): Promise<{ launch: any; log: any }> {
+    const launch = await runHarness(
+        "launch.ps1",
+        ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", savedatafolder],
+        (timeoutSec + 180) * 1000
+    );
+    // Read the log regardless of how the launch ended — a crash still leaves evidence.
+    const log = await runHarness("readlog.ps1", [], 60 * 1000);
+    return { launch, log };
+}
+
 export async function runTestCycle(
     opts: TestCycleOptions
 ): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any }> {
-    const timeoutSec = opts.timeoutSec || 420;
-
-    const buildArgs = ["-Repo", opts.repo].filter(Boolean) as string[];
-    const build = await runHarness("build.ps1", opts.repo ? buildArgs : [], 10 * 60 * 1000);
+    const build = await buildStage(opts.repo);
     if (!build || build.ok !== true) {
         return { ok: false, stage: "build", build };
     }
-
-    // Launch against the caller-pinned config. Previously launch.ps1 was called with no
-    // savedatafolder, so RimWorld read the default AppData\LocalLow config while the modlist
-    // had been written to the dev folder — configuring a modlist had no effect on the run.
-    const launch = await runHarness(
-        "launch.ps1",
-        ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", opts.savedatafolder],
-        (timeoutSec + 180) * 1000
-    );
-
-    // Read the log regardless of how the launch ended — a crash still leaves evidence.
-    // NOTE (Phase 2): readlog.ps1 currently reads the default log location; for per-job
-    // isolation it must accept -SaveDataFolder and read the job's own Player.log.
-    const log = await runHarness("readlog.ps1", [], 60 * 1000);
-
+    const { launch, log } = await runStage(opts.savedatafolder, opts.timeoutSec || 420);
     // All three stages have to agree: the build produced binaries, the game got far enough to
     // finish the suite, and the log carries no blocking entries and no shortfall in case count.
     const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
