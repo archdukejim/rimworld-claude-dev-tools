@@ -1,3 +1,7 @@
+> **SUPERSEDED** by `rimagentic-agent-package.md`. This predated the pivot and framed a
+> separate SDK app for RimSynapse CI. The agent is now Claude Code itself; RimAgentic is
+> a turnkey package + instruction layer. Kept for the determinism-split reasoning (§1).
+
 # Build Plan — Orchestrator Agent (Claude Agent SDK app)
 
 An autonomous agent that drives the RimSynapse dev→test→merge loop, leveraging
