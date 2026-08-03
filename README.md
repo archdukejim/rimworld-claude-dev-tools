@@ -1,19 +1,49 @@
-# Repo-MCP
+# RimToolkit
 
-Welcome to the **Repo-MCP** repository for the **RimSynapse** ecosystem.
+**An agent-driven RimWorld modding toolkit.** RimToolkit gives a frontier-model
+agent (e.g. Claude) everything it needs to build, deploy, run, and evaluate a
+RimWorld mod — plus a live bridge into the running game and a bundled "how to mod
+RimWorld" knowledge base. Point it at your mod and let the agent do the loop.
 
-This repository serves as the central hub for our organizational scripting and **Model Context Protocol (MCP)** configurations. It enables local AI agents to dynamically interact with all RimSynapse repositories, seamlessly syncing GitHub Issues, Projects, and codebase changes.
+> Forked from the RimSynapse Core tool bridge and generalized: no narrative content,
+> no local-LLM assumptions — just the modding-dev surface, for any mod.
 
-## Directory Structure
+## Two halves
 
-*   `mcp-config/` - Contains configurations for our local GitHub MCP server. Agents use these settings to interface with GitHub APIs dynamically without needing hardcoded scripts.
-*   `scripts/` - Legacy and auxiliary PowerShell scripts for organization management.
-    *   `sync_wikis.ps1`: Script to push localized `/Learning` folder Markdown files from all repositories to their respective GitHub Wikis.
-*   `artwork/` - Assorted organizational artwork and assets.
+- **MCP server** (`server/`) — the tools an agent calls: discover mods, resolve load
+  order, build/deploy, launch an isolated dev instance, run the in-game TestRunner,
+  triage `Player.log`, query the modding docs, and drive the in-game tool bridge.
+- **Game-side mod** (`game-mod/`) — a standalone RimWorld mod (`RimToolkit`) that
+  exposes the base game + DLC surface over a file bridge: discover and invoke in-game
+  dev/inspection tools (defs, incidents, reflected debug actions, pawn/object/map
+  state). Other mods can register their own tools at runtime, so the surface grows
+  dynamically.
 
-## Setting up MCP
+## What an agent can do with it
 
-*Note: More detailed instructions for spinning up the MCP server will be provided as the configuration is finalized.*
+Read `modding-knowledge/` (via the `query_modding_docs` tool) to learn how to mod,
+then run the loop: `resolve_mod_load_order` → `configure_active_mods` →
+`deploy_rimworld_mods` → `run_rimworld_tests` → `read_rimworld_log` → inspect with
+`execute_game_tool` → fix → repeat. See `modding-knowledge/06-using-this-toolkit.md`.
+
+## Layout
+
+- `server/` — the MCP server (TypeScript). `npm run build`, entry `build/index.js`.
+- `game-mod/` — the RimToolkit game mod (C#, net48). Build `Source/RimToolkit.csproj`;
+  symlink `game-mod` into `RimWorld/Mods/` for development.
+- `harness/` — PowerShell build/launch/log scripts the MCP server drives.
+- `modding-knowledge/` — bundled RimWorld modding docs served to the agent.
+- `manifest.json` — `.mcpb` bundle manifest (tool list + config).
+
+## Configuration
+
+- **Mod workspace** — `RIMTOOLKIT_ROOT` (a folder of mods, or a single mod repo).
+- **Dev save folder** — `RIMTOOLKIT_SAVEDATA` (isolated `-savedatafolder`).
+- **Game↔MCP bridge dir** — both default to `%LOCALAPPDATA%\RimToolkit\ipc`; override
+  with `RIMTOOLKIT_IPC_DIR`. No coordination needed otherwise.
+- **GitHub token** — only for the optional GitHub/project tools.
+
+Legacy `RIMSYNAPSE_*` env vars are still read as a fallback.
 
 ---
-*For updates, please review the [Changelog](Changelog.md).*
+*See the [Changelog](Changelog.md) and `docs/plans/` for the design docs.*

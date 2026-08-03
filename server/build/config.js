@@ -50,7 +50,7 @@ const child_process_1 = require("child_process");
  * RIMSYNAPSE_ROOT and RIMSYNAPSE_HARNESS.
  */
 function getSaveDataFolder() {
-    return process.env.RIMSYNAPSE_SAVEDATA?.trim() || "C:\\RimWorldDevData";
+    return (process.env.RIMTOOLKIT_SAVEDATA || process.env.RIMSYNAPSE_SAVEDATA)?.trim() || "C:\\RimWorldDevData";
 }
 const DEFAULT_CONFIG = {
     defaultProjectId: "PVT_kwDOEfI01s4Bdlhx",

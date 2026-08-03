@@ -24,7 +24,7 @@ export interface MCPConfig {
  * RIMSYNAPSE_ROOT and RIMSYNAPSE_HARNESS.
  */
 export function getSaveDataFolder(): string {
-    return process.env.RIMSYNAPSE_SAVEDATA?.trim() || "C:\\RimWorldDevData";
+    return (process.env.RIMTOOLKIT_SAVEDATA || process.env.RIMSYNAPSE_SAVEDATA)?.trim() || "C:\\RimWorldDevData";
 }
 
 const DEFAULT_CONFIG: MCPConfig = {

@@ -18,7 +18,6 @@ import { projectTools, handleProjectTool } from "./tools/projects";
 import { codebaseTools, handleCodebaseTool } from "./tools/codebase";
 import { testingTools, handleTestingTool } from "./tools/testing";
 import { syncTools, handleSyncTool } from "./tools/sync";
-import { wikiTools, handleWikiTool } from "./tools/wiki";
 import { moddingDocsTools, handleModdingDocsTool } from "./tools/moddingDocs";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
@@ -39,7 +38,7 @@ let bridge: Bridge | null = null;
 
 // 2. Setup MCP Server
 const server = new Server({
-    name: "rimworld-claude-dev-tools",
+    name: "rimtoolkit",
     version: "1.0.0"
 }, {
     capabilities: {
@@ -53,7 +52,6 @@ const ALL_TOOLS = [
     ...codebaseTools,
     ...testingTools,
     ...syncTools,
-    ...wikiTools,
     ...moddingDocsTools,
     ...pcControlTools,
     ...rimworldDevTools,
@@ -105,10 +103,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleSyncTool(name, args, config.organization, token);
     }
     
-    if (wikiTools.some(t => t.name === name)) {
-        return await handleWikiTool(name, args);
-    }
-
     if (moddingDocsTools.some(t => t.name === name)) {
         return await handleModdingDocsTool(name, args);
     }
@@ -263,8 +257,6 @@ async function main() {
                     result = await handleTestingTool(name, args, octokit, config.organization, token, config.defaultProjectId);
                 } else if (syncTools.some(t => t.name === name)) {
                     result = await handleSyncTool(name, args, config.organization, token);
-                } else if (wikiTools.some(t => t.name === name)) {
-                    result = await handleWikiTool(name, args);
                 } else if (moddingDocsTools.some(t => t.name === name)) {
                     result = await handleModdingDocsTool(name, args);
                 } else if (pcControlTools.some(t => t.name === name)) {

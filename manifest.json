@@ -1,12 +1,12 @@
 {
   "manifest_version": "0.3",
-  "name": "rimsynapse-mcp",
-  "display_name": "RimSynapse MCP",
+  "name": "rimtoolkit",
+  "display_name": "RimToolkit",
   "version": "1.2.0",
-  "description": "GitHub project management plus a local RimWorld build/launch/log harness for the RimSynapse mod ecosystem.",
-  "long_description": "GitHub tools manage issues, project boards, wikis and testing plans across the RimSynapse organization; these are the only tools that need a token, and every other family works without one. RimWorld tools deploy the mods into the game's Mods folder, launch RimWorld for automated smoke or TestRunner runs, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and [SYNAPSE-TEST] results. Game IPC tools call into a running game. Faction and psychology tools read live world and colonist state. Desktop control tools drive the mouse, keyboard, clipboard, screen capture and UI automation for driving RimWorld itself; these depend on native modules, and if those fail to load on a given machine only that family goes unavailable rather than the whole server.",
+  "description": "An agent-driven RimWorld modding toolkit: discover, build, deploy, launch and test any RimWorld mod, with a live in-game tool bridge and bundled modding docs.",
+  "long_description": "RimToolkit lets a frontier-model agent develop RimWorld mods. Mod tools discover the mods in a workspace, resolve load order from About.xml, build C# in dependency order, deploy into the game's Mods folder, launch an isolated dev instance, run the in-game TestRunner, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and test results. A bundled modding knowledge base teaches the agent how to mod (Defs, XML patches, C#/Harmony, load order). Game IPC tools call into a running game via the companion RimToolkit game mod, which exposes the base game + DLC surface (defs, incidents, reflected debug actions, pawn/object/map state) and lets other mods register their own tools dynamically. GitHub tools (the only family needing a token) manage issues, boards and wikis; desktop-control tools drive mouse/keyboard/screen for cases with no data path. A failure in any one family disables only that family, not the whole server.",
   "author": {
-    "name": "RimSynapse"
+    "name": "archdukejim"
   },
   "server": {
     "type": "node",
@@ -18,9 +18,9 @@
       ],
       "env": {
         "GITHUB_TOKEN": "${user_config.github_token}",
-        "RIMSYNAPSE_ROOT": "${user_config.rimsynapse_root}",
-        "RIMSYNAPSE_SAVEDATA": "${user_config.rimworld_savedata}",
-        "RIMSYNAPSE_HARNESS": "${__dirname}/harness"
+        "RIMTOOLKIT_ROOT": "${user_config.rimtoolkit_root}",
+        "RIMTOOLKIT_SAVEDATA": "${user_config.rimworld_savedata}",
+        "RIMTOOLKIT_HARNESS": "${__dirname}/harness"
       }
     }
   },
@@ -92,10 +92,6 @@
     {
       "name": "sync_repo_wiki",
       "description": "Syncs a local Learning folder to its GitHub Wiki repository"
-    },
-    {
-      "name": "query_wiki_database",
-      "description": "Query the RimSynapse Wiki database. Used for accessing Mod Lore and Intelligent Referencing."
     },
     {
       "name": "query_modding_docs",
@@ -232,9 +228,9 @@
   ],
   "keywords": [
     "rimworld",
-    "rimsynapse",
-    "github",
     "modding",
+    "agent",
+    "toolkit",
     "testing"
   ],
   "license": "MIT",
@@ -246,10 +242,10 @@
       "required": false,
       "sensitive": true
     },
-    "rimsynapse_root": {
+    "rimtoolkit_root": {
       "type": "directory",
-      "title": "RimSynapse Workspace",
-      "description": "Folder containing the RimSynapse mod repo checkouts - the one with Core/, Factions/ and Regions-and-Territories/ inside it. Validated by looking for Core/About/About.xml. The PowerShell harness ships inside this extension and is not looked for here.",
+      "title": "Mod Workspace",
+      "description": "Folder holding the RimWorld mod(s) you are developing — either a workspace whose child folders are mods, or a single mod repo. A mod is any folder with About/About.xml. The PowerShell harness ships inside this extension and is not looked for here.",
       "required": false,
       "default": "C:\\github\\rimsynapse"
     },

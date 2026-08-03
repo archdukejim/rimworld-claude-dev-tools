@@ -160,7 +160,7 @@ exports.rimworldDevTools = [
  * hardcoded to a d:\ drive, which silently broke every mod operation elsewhere.
  */
 function workspaceRoot() {
-    const fromEnv = process.env.RIMSYNAPSE_ROOT;
+    const fromEnv = process.env.RIMTOOLKIT_ROOT || process.env.RIMSYNAPSE_ROOT;
     if (fromEnv && fs.existsSync(path.join(fromEnv, "Core", "About", "About.xml")))
         return fromEnv;
     // Fall back to walking up from this file: <root>/Repo-MCP/server/build/tools -> <root>
@@ -345,6 +345,7 @@ function classifyLog(lines, maxPerCategory) {
  */
 function harnessScript(scriptName) {
     const candidates = [
+        process.env.RIMTOOLKIT_HARNESS,
         process.env.RIMSYNAPSE_HARNESS,
         path.join(__dirname, "..", "..", "..", "harness"),
         path.join(__dirname, "..", "..", "harness"),
