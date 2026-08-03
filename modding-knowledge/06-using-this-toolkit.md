@@ -74,8 +74,10 @@ berserk": `search_game_definitions("berserk")` → `MentalStateDef Berserk`; `se
 Neither source alone gives the whole answer; you reason across both.
 
 **Setup (once):** `dump_game_api` (in-game, dumps ~9k types) → `enrich_api_corpus` (a frontier
-model writes a one-line description per type, so search matches on concept not just identifier —
-needs an Anthropic key) → `build_api_index` (embeds it). The enrich step is what makes concept
+model writes a one-line description per type, so search matches on concept not just identifier) →
+`build_api_index` (embeds it). The enrich step needs an Anthropic key — run `set_anthropic_key`
+once (it opens a small window to paste the key into; stored locally, no restart, never shown in
+chat), or set `ANTHROPIC_API_KEY` in the server env. The enrich step is what makes concept
 queries like "rampage" find `MentalStateHandler`; skip it and search falls back to keyword-ish
 matching on bare names. Re-run the trio when the mod set (and thus the API surface) changes.
 

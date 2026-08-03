@@ -1,6 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
+import { execFileSync } from "child_process";
 import { embed, embedBatch, cosine, EMBED_DIM } from "../embeddings";
+
+function localAppData(): string {
+    return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
+}
+const rimAgenticDir = () => path.join(localAppData(), "RimAgentic");
 
 /**
  * API corpus (from the in-game dump_game_api tool) + a local semantic index (built by
@@ -10,8 +16,7 @@ import { embed, embedBatch, cosine, EMBED_DIM } from "../embeddings";
  */
 function apiDir(): string {
     if (process.env.RIMAGENTIC_API_DIR) return process.env.RIMAGENTIC_API_DIR;
-    const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
-    return path.join(local, "RimAgentic", "api");
+    return path.join(rimAgenticDir(), "api");
 }
 const corpusPath = () => process.env.RIMAGENTIC_API || path.join(apiDir(), "api-corpus.jsonl");
 const indexBinPath = () => path.join(apiDir(), "api-index.f32");
@@ -73,6 +78,21 @@ export const apiSearchTools = [
             "MiniLM model (no external service). Run once after dump_game_api; takes a minute or two " +
             "for ~9k types. Returns { ok, indexed, path }.",
         inputSchema: { type: "object", properties: {} }
+    },
+    {
+        name: "set_anthropic_key",
+        description:
+            "Store your Anthropic API key so enrich_api_corpus can call a frontier model. With no argument this " +
+            "opens a small window to paste your key into (get one from console.anthropic.com → API keys). The key " +
+            "is saved locally, used immediately (no restart), and never shown in chat or committed to git. Pass " +
+            "key:\"sk-ant-...\" to set it without the window — but that puts the key in the chat transcript, so " +
+            "prefer the window. ANTHROPIC_API_KEY in the environment still takes precedence if set.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                key: { type: "string", description: "Optional. If given, store this key directly instead of opening the paste window." }
+            }
+        }
     },
     {
         name: "enrich_api_corpus",
@@ -140,6 +160,7 @@ export async function handleApiSearchTool(name: string, args: any) {
         }
     }
 
+    if (name === "set_anthropic_key") return await setAnthropicKey(args);
     if (name === "enrich_api_corpus") return await enrichCorpus(args);
 
     if (name !== "search_game_api") throw new Error(`Unknown api-search tool: ${name}`);
@@ -224,15 +245,52 @@ export async function handleApiSearchTool(name: string, args: any) {
 
 // --- Frontier-model corpus enrichment ---
 
-/**
- * Lazily construct an Anthropic client. Zero-arg — the SDK resolves ANTHROPIC_API_KEY, then
- * ANTHROPIC_AUTH_TOKEN, then an `ant auth login` profile. We don't ask for or handle a raw key.
- */
+const keyFilePath = () => path.join(rimAgenticDir(), "anthropic.key");
+
+/** ANTHROPIC_API_KEY (env) wins; otherwise the key stored by set_anthropic_key. Null if neither. */
+function resolveAnthropicKey(): string | null {
+    if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim()) return process.env.ANTHROPIC_API_KEY.trim();
+    try { const k = fs.readFileSync(keyFilePath(), "utf8").trim(); if (k) return k; } catch { /* not stored */ }
+    return null;
+}
+
+/** Lazily construct an Anthropic client using the resolved key (env or stored file). */
 function getAnthropic(): any {
+    const apiKey = resolveAnthropicKey();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require("@anthropic-ai/sdk");
     const Ctor = Anthropic.default || Anthropic;
-    return new Ctor();
+    return apiKey ? new Ctor({ apiKey }) : new Ctor();
+}
+
+/** Open a native paste window (or store a directly-supplied key), then save it locally. */
+async function setAnthropicKey(args: any) {
+    let key = args.key ? String(args.key).trim() : "";
+    let source = key ? "argument" : "window";
+    if (!key) {
+        try { key = promptForKeyWindow(); }
+        catch (e: any) { return errText(`Couldn't open the paste window: ${e?.message || e}. Pass key:"sk-ant-..." instead, or set ANTHROPIC_API_KEY in the server env.`); }
+    }
+    if (!key) return okText({ ok: false, note: "No key entered (window cancelled). Nothing was saved." });
+    if (!/^sk-ant-/.test(key)) return errText(`That doesn't look like an Anthropic key — it should start with "sk-ant-". Nothing was saved.`);
+    try {
+        fs.mkdirSync(rimAgenticDir(), { recursive: true });
+        fs.writeFileSync(keyFilePath(), key, { mode: 0o600 });
+    } catch (e: any) { return errText(`Failed to save the key: ${e?.message || e}`); }
+    const masked = `${key.slice(0, 7)}…${key.slice(-4)}`;
+    return okText({ ok: true, source, saved: keyFilePath(), key: masked, note: "Stored. enrich_api_corpus will use it right away — no restart needed." });
+}
+
+/** Show a Windows input box and return the pasted text (empty string if cancelled). */
+function promptForKeyWindow(): string {
+    const ps =
+        "Add-Type -AssemblyName Microsoft.VisualBasic; " +
+        "$k=[Microsoft.VisualBasic.Interaction]::InputBox(" +
+        "'Paste your Anthropic API key (console.anthropic.com -> API keys). It is saved locally and never shown in chat.'," +
+        "'RimAgentic - Anthropic API key',''); " +
+        "[Console]::Out.Write($k)";
+    const out = execFileSync("powershell", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", ps], { encoding: "utf8" });
+    return String(out).trim();
 }
 
 /** Compact one-line descriptor of a type, fed to the model so it can say what the type is for. */
@@ -299,9 +357,12 @@ async function enrichCorpus(args: any) {
     const concurrency = Math.max(1, Math.min(16, Number(args.concurrency) || 6));
     const force = !!args.force;
 
+    if (!resolveAnthropicKey())
+        return errText("No Anthropic API key found. Run set_anthropic_key first (it opens a window to paste your key), or set ANTHROPIC_API_KEY in the server env.");
+
     let client: any;
     try { client = getAnthropic(); }
-    catch (e: any) { return errText(`Anthropic SDK/credentials unavailable: ${e?.message || e}. Set ANTHROPIC_API_KEY or run \`ant auth login\`.`); }
+    catch (e: any) { return errText(`Anthropic SDK unavailable: ${e?.message || e}.`); }
 
     // Pick the rows to enrich (keep original index so we can write desc back).
     let targets = records.map((r, i) => ({ r, i })).filter(({ r }) => force || !r.desc);
