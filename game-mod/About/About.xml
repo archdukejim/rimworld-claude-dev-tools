@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <!-- WORKING IDENTITY — placeholder, finalized in the pivot's C7 (rename) step. -->
+  <packageId>archdukejim.rimtoolkit</packageId>
+  <name>RimWorld AI Modding Toolkit</name>
+  <author>archdukejim</author>
+  <supportedVersions>
+    <li>1.5</li>
+    <li>1.6</li>
+  </supportedVersions>
+  <description>A generic, agent-driven RimWorld modding toolkit. Exposes the base game and DLC surface to an external AI agent over a simple file-based tool bridge: discover and invoke in-game dev/inspection tools (defs, incidents, debug actions, pawn/object/map state) and let other mods register their own tools dynamically. Forked from the RimSynapse Core tool bridge, stripped of narrative content and local-LLM assumptions. Requires Harmony.</description>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+    <li>Ludeon.RimWorld</li>
+    <li>Ludeon.RimWorld.Royalty</li>
+    <li>Ludeon.RimWorld.Ideology</li>
+    <li>Ludeon.RimWorld.Biotech</li>
+    <li>Ludeon.RimWorld.Anomaly</li>
+  </loadAfter>
+</ModMetaData>
