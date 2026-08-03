@@ -29,7 +29,7 @@ package so a fresh Claude Code session is immediately a RimWorld modding expert:
 | **Read Steam Workshop content** (descriptions, deps, comments) | partial | `swh_*` tools (browser bridge) + `list_installed_mods` (Workshop folder scan). Needs: agent guidance + maybe a lighter read path. |
 | **Bug-log analysis** | ✅ | `read_rimworld_log` (classified triage). |
 | **In-game testing** | ✅ proven | `launch_rimworld`/`run_rimworld_tests` + the game bridge (`execute_game_tool`). |
-| **Check window mapping in-game** | partial | `pcControl` `get_ui_element_info`/`capture_screen` + `inspect_csharp_field`. Needs: a window-navigation lookup (roadmap #1) + agent guidance. |
+| **Check window mapping in-game** | ✅ (structural) | `get_open_windows` game tool reads `Find.WindowStack` → open windows' type/id/layer/rect. Verified live. `pcControl` `capture_screen`/`get_ui_element_info` remain for pixel-level fallback. |
 | **Deconflict mod package features** | partial | `resolve_mod_load_order` (cycles/ambiguous), `get_mod_metadata` (`incompatibleWith`). **New: `detect_mod_conflicts`** — duplicate packageIds (the Biotech collision we hit), incompatible pairs, patch-target overlaps. |
 
 ## New MCP tools implied (build as gaps hit)
@@ -75,7 +75,8 @@ double-register when this repo is opened directly.
   last, set env, run the Tier-1/Tier-3 verification we just did by hand.
 - **P3 — ✅ `detect_mod_conflicts` tool + `/rimagentic:deconflict` command.** Tool verified
   on the live install (found 12 real duplicate packageIds). Command explains + resolves.
-- **P4 — Workshop-read + window-navigation** guidance/tools (roadmap #1/#2 fold in here).
+- **P4 — window mapping ✅** (`get_open_windows`, verified live). Remaining: Workshop
+  content read + pixel-level window *navigation* (drive UI to a named window, roadmap #1/#2).
 - **P5 — ✅ Authoring commands** `/rimagentic:new-mod` (scaffold + first content + verify)
   and `/rimagentic:fix-from-log` (triage Player.log → fix → re-verify). README install
   section + deep-link added.
