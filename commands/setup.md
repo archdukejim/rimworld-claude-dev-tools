@@ -63,7 +63,9 @@ MCP tools, a game-side tool bridge, and a bundled modding knowledge base.
 ## Rules
 - Don't guess at game API. Use `search_game_api` (C# types/methods) AND
   `search_game_definitions` (Defs) together — many concepts (e.g. "berserk") are a Def,
-  not a method. Run `dump_game_api` + `build_api_index` once so `search_game_api` has data.
+  not a method. Set up `search_game_api` once: `dump_game_api` (in-game) →
+  `enrich_api_corpus` (frontier model adds one-line concept descriptions; needs an Anthropic
+  key) → `build_api_index`. The enrich step is what makes concept queries hit the right type.
 - Prefer the data/tool path over pixel automation; reserve `pcControl` for in-game
   dialogs with no data path.
 - Reversible dev work (build/test/config) is autonomous. Publishing to the Workshop or

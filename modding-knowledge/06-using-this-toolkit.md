@@ -71,8 +71,13 @@ When you need a C# type/method (for a Harmony patch or custom behavior) or the r
 berserk": `search_game_definitions("berserk")` → `MentalStateDef Berserk`; `search_game_api
 ("MentalState")` → `Pawn_MindState`/`MentalStateHandler.TryStartMentalState(def)`. Combine:
 `pawn.mindState.mentalStateHandler.TryStartMentalState(MentalStateDefOf.Berserk, ...)`.
-Neither source alone gives the whole answer; you reason across both. (First run `dump_game_api`
-+ `build_api_index` once so `search_game_api` has data.)
+Neither source alone gives the whole answer; you reason across both.
+
+**Setup (once):** `dump_game_api` (in-game, dumps ~9k types) → `enrich_api_corpus` (a frontier
+model writes a one-line description per type, so search matches on concept not just identifier —
+needs an Anthropic key) → `build_api_index` (embeds it). The enrich step is what makes concept
+queries like "rampage" find `MentalStateHandler`; skip it and search falls back to keyword-ish
+matching on bare names. Re-run the trio when the mod set (and thus the API surface) changes.
 
 ## The golden loop
 
