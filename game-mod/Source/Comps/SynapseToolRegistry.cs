@@ -159,6 +159,8 @@ namespace RimToolkit
             RegisterPawnStateTools();
             RegisterSearchTools();
             RegisterDefinitionTools();
+            RegisterObjectStateTools();
+            RegisterEnvironmentTools();
             RegisterDynamicDebugActions();
 
             // Centralized synonym keyword registrations
