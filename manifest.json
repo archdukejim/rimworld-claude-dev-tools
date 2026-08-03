@@ -222,6 +222,22 @@
       "description": "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any [SYNAPSE-TEST] PASS/FAIL results from the TestRunner mod. Pass raw:true for an unfiltered tail instead."
     },
     {
+      "name": "submit_test_job",
+      "description": "Submit a RimWorld test-cycle job; returns a job_id immediately (non-blocking). Jobs run serially in isolated per-job savedatafolders. Optionally pin an exact modlist."
+    },
+    {
+      "name": "get_job",
+      "description": "Get a submitted job's status and result by job_id. Persisted, survives a server restart."
+    },
+    {
+      "name": "list_jobs",
+      "description": "List submitted jobs with their status; optional status filter."
+    },
+    {
+      "name": "cancel_job",
+      "description": "Cancel a pending job (removes it from the queue). Running jobs cannot be cancelled mid-cycle."
+    },
+    {
       "name": "list_game_tools",
       "description": "Retrieves the directory of all active gameplay tools exposed by RimSynapse Core inside the running RimWorld instance. Can optionally filter by a search query."
     },

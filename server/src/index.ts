@@ -22,6 +22,7 @@ import { moddingDocsTools, handleModdingDocsTool } from "./tools/moddingDocs";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
+import { jobsTools, handleJobsTool } from "./tools/jobs";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
@@ -56,6 +57,7 @@ const ALL_TOOLS = [
     ...pcControlTools,
     ...rimworldDevTools,
     ...gameIpcTools,
+    ...jobsTools,
     ...swhTools,
     ...swhGithubTools
 ];
@@ -117,6 +119,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     if (gameIpcTools.some(t => t.name === name)) {
         return await handleGameIpcTool(name, args);
+    }
+
+    if (jobsTools.some(t => t.name === name)) {
+        return await handleJobsTool(name, args);
     }
 
     // Steam Workshop GitHub issue tools (repo-map based; API direct, no bridge).
@@ -265,6 +271,8 @@ async function main() {
                     result = await handleRimworldDevTool(name, args);
                 } else if (gameIpcTools.some(t => t.name === name)) {
                     result = await handleGameIpcTool(name, args);
+                } else if (jobsTools.some(t => t.name === name)) {
+                    result = await handleJobsTool(name, args);
                 } else if (swhGithubTools.some(t => t.name === name)) {
                     result = await handleSwhGithubTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {

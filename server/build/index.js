@@ -53,6 +53,7 @@ const moddingDocs_1 = require("./tools/moddingDocs");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
+const jobs_1 = require("./tools/jobs");
 const config_1 = require("./config");
 // Steam Workshop families (merged in from steam-workshop-helper)
 const bridge_1 = require("./bridge");
@@ -83,6 +84,7 @@ const ALL_TOOLS = [
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
+    ...jobs_1.jobsTools,
     ...workshop_1.swhTools,
     ...github_1.githubTools
 ];
@@ -131,6 +133,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (gameIpc_1.gameIpcTools.some(t => t.name === name)) {
         return await (0, gameIpc_1.handleGameIpcTool)(name, args);
+    }
+    if (jobs_1.jobsTools.some(t => t.name === name)) {
+        return await (0, jobs_1.handleJobsTool)(name, args);
     }
     // Steam Workshop GitHub issue tools (repo-map based; API direct, no bridge).
     if (github_1.githubTools.some(t => t.name === name)) {
@@ -271,6 +276,9 @@ async function main() {
                 }
                 else if (gameIpc_1.gameIpcTools.some(t => t.name === name)) {
                     result = await (0, gameIpc_1.handleGameIpcTool)(name, args);
+                }
+                else if (jobs_1.jobsTools.some(t => t.name === name)) {
+                    result = await (0, jobs_1.handleJobsTool)(name, args);
                 }
                 else if (github_1.githubTools.some(t => t.name === name)) {
                     result = await (0, github_1.handleGithubTool)(name, args);
