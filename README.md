@@ -8,6 +8,36 @@ RimWorld" knowledge base. Point it at your mod and let the agent do the loop.
 > Forked from the RimSynapse Core tool bridge and generalized: no narrative content,
 > no local-LLM assumptions — just the modding-dev surface, for any mod.
 
+## Install (Claude Code plugin)
+
+RimAgentic ships as a Claude Code **plugin** — installing it brings the MCP tools,
+skills, and commands together. In any Claude Code session:
+
+```
+/plugin marketplace add archdukejim/rimworld-claude-dev-tools
+/plugin install rimagentic@rimworld-claude-dev-tools
+```
+
+Then, inside your mod's folder, run once:
+
+```
+/rimagentic:setup
+```
+
+That builds the tools, installs the game-side mod into RimWorld (loaded last), writes
+project instructions, and verifies the bridge. After that, every session in that project
+already knows the workflow.
+
+**One-click launch** (optional): a deep link opens Claude Code in a folder with the install
+command pre-filled — you just press enter (nothing installs silently):
+
+```
+claude-cli://open?q=%2Fplugin%20install%20rimagentic%40rimworld-claude-dev-tools
+```
+
+**Commands:** `/rimagentic:setup`, `/rimagentic:new-mod`, `/rimagentic:fix-from-log`,
+`/rimagentic:deconflict`.
+
 ## Two halves
 
 - **MCP server** (`server/`) — the tools an agent calls: discover mods, resolve load

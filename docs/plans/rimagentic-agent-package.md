@@ -76,7 +76,9 @@ double-register when this repo is opened directly.
 - **P3 — ✅ `detect_mod_conflicts` tool + `/rimagentic:deconflict` command.** Tool verified
   on the live install (found 12 real duplicate packageIds). Command explains + resolves.
 - **P4 — Workshop-read + window-navigation** guidance/tools (roadmap #1/#2 fold in here).
-- **P5 — Authoring skills** (`/new-mod`, `/fix-from-log`) once the loop is instruction-driven.
+- **P5 — ✅ Authoring commands** `/rimagentic:new-mod` (scaffold + first content + verify)
+  and `/rimagentic:fix-from-log` (triage Player.log → fix → re-verify). README install
+  section + deep-link added.
 - **P6 — Parallelism** via the async job broker (#3) when multi-mod load appears.
 
 ## Open questions
