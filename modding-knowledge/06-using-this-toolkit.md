@@ -56,6 +56,24 @@ The game-side toolkit mod exposes in-game dev tools over a file bridge:
 Prefer this data bridge over screen automation: query the game for facts, decide, and
 call a tool — don't drive menus by pixel unless there is no data/tool path.
 
+## Finding the right game API (don't guess — look it up)
+
+When you need a C# type/method (for a Harmony patch or custom behavior) or the right defName,
+**use both sources and combine them** — one covers code, the other covers data:
+
+- `search_game_api { query }` — the C# API corpus (types, methods, fields). Great when the
+  concept is in the naming ("weather" → `WeatherManager`, "raid" → `IncidentWorker_Raid`).
+- `search_game_definitions` (in-game, via `execute_game_tool`) — the **Def** database. Many
+  concepts live here, not in the API: e.g. "berserk" is a `MentalStateDef` named `Berserk`,
+  not a method.
+
+**Always pair them for "how do I make X happen" questions.** Example — "make a pawn go
+berserk": `search_game_definitions("berserk")` → `MentalStateDef Berserk`; `search_game_api
+("MentalState")` → `Pawn_MindState`/`MentalStateHandler.TryStartMentalState(def)`. Combine:
+`pawn.mindState.mentalStateHandler.TryStartMentalState(MentalStateDefOf.Berserk, ...)`.
+Neither source alone gives the whole answer; you reason across both. (First run `dump_game_api`
++ `build_api_index` once so `search_game_api` has data.)
+
 ## The golden loop
 
 `query_modding_docs` (how) → edit Defs/patches/C# → `deploy_rimworld_mods` →
