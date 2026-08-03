@@ -15,10 +15,15 @@ This doc is the implementation plan; update it as we build.
 > game-run lane, per-job pinned savedatafolder, disk-persisted job.json, and `get_job` /
 > `list_jobs` / `cancel_job`. **Two lanes now live:** builds run concurrently (a pool of
 > `MAX_BUILDS = min(4, cpus-1)`) via `buildStage`, then each built job hands off to the single
-> serial game-run worker (`runStage`) — builds parallelize, games serialize. Cancel works while
-> pending/queued. **Not yet done:** launch-time config verification (assert the pinned
-> ModsConfig/savedatafolder before spawning), git-worktree isolation for the build lane, and
-> cancel-mid-run. The daemon design below stays the reference if multi-session sharing is needed.
+> serial game-run worker (`runStage`). Corrected to a **pipeline of two serial workers**: builds
+> serialize (build.ps1 builds in place in the shared workspace; concurrent builds would corrupt
+> shared-dep obj/), game runs serialize, but a build **overlaps** a game run — the real win, as
+> the game run is the long pole. **Launch-time config verification is in** (`verifyPinnedConfig`):
+> a job fails at a "verify" stage if its savedatafolder vanished (#19) or its ModsConfig no longer
+> matches the pinned modlist (#18), instead of running the wrong config. Cancel works while
+> pending/queued. **Not yet done:** git-worktree/copy isolation for *true* parallel independent
+> builds (opt-in, coupled to the build-in-place harness) and cancel-mid-run (kill the live game).
+> The daemon design below stays the reference if multi-session sharing is needed.
 
 ---
 
