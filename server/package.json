@@ -13,6 +13,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@octokit/graphql": "^9.0.3",
