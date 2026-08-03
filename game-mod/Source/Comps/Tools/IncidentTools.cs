@@ -5,7 +5,7 @@ using RimWorld;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Tool handlers: get_available_incidents, fire_incident, send_notification_letter.

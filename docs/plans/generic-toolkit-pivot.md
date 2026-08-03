@@ -102,8 +102,8 @@ ticks; the whole LLM/context stack (`RimSynapseAPI`, `SynapseClient`,
 
 ## Identity (working, finalize in C7)
 
-Folder `game-mod/`; packageId `archdukejim.rimtoolkit`; assembly/namespace `RimToolkit`;
-IPC dir env `RIMTOOLKIT_IPC_DIR` (mod `Content.RootDir` fallback). All placeholders.
+Folder `game-mod/`; packageId `archdukejim.rimagentic`; assembly/namespace `RimAgentic`;
+IPC dir env `RIMAGENTIC_IPC_DIR` (mod `Content.RootDir` fallback). All placeholders.
 
 ## Workstreams & sequencing
 
@@ -124,14 +124,14 @@ IPC dir env `RIMTOOLKIT_IPC_DIR` (mod `Content.RootDir` fallback). All placehold
 ## W2 progress
 
 **MVP forked and committed (`84f16a1`).** `game-mod/` is a standalone, narrative-free mod
-that compiles clean (net48 → `Assemblies/RimToolkit.dll`): the bridge (registry/index/
+that compiles clean (net48 → `Assemblies/RimAgentic.dll`): the bridge (registry/index/
 validation/runner/result-store), 11 generic tools incl. reflection-based DebugActionTools,
-a stripped GameComponent (tool_input channel; `RIMTOOLKIT_IPC_DIR` → mod RootDir), a
+a stripped GameComponent (tool_input channel; `RIMAGENTIC_IPC_DIR` → mod RootDir), a
 `ToolkitMod` entry, and `ToolkitLog`. Verified: zero leaked references to any dropped dep.
 
 **W2 status:**
-1. ✅ **MCP↔mod IPC wiring** — both ends default to `%LOCALAPPDATA%\RimToolkit\ipc`
-   (override `RIMTOOLKIT_IPC_DIR`); zero-config, no install-path knowledge needed.
+1. ✅ **MCP↔mod IPC wiring** — both ends default to `%LOCALAPPDATA%\RimAgentic\ipc`
+   (override `RIMAGENTIC_IPC_DIR`); zero-config, no install-path knowledge needed.
 2. ✅ **Deferred generic tools** — `modify_object_state` + `get_map_environment` ported
    with local stubs replacing `SynapseObjectControlManager`.
 3. **Cleanup (minor)** — the `NormalizeAliases` shim still maps to unregistered
@@ -141,8 +141,8 @@ a stripped GameComponent (tool_input channel; `RIMTOOLKIT_IPC_DIR` → mod RootD
 
 ## C7 — rebrand (done)
 
-Rebranded to **RimToolkit**: MCP server name `rimtoolkit`, manifest/display/description/
-keywords/author, `.mcpb` bundle name, README rewrite, env vars `RIMTOOLKIT_*` (with
+Rebranded to **RimAgentic**: MCP server name `rimagentic`, manifest/display/description/
+keywords/author, `.mcpb` bundle name, README rewrite, env vars `RIMAGENTIC_*` (with
 `RIMSYNAPSE_*` fallback), and removed the RimSynapse `query_wiki_database` tool. Identity
 above is now the real brand, not a placeholder. Remaining for full isolation: move to a
 dedicated repo (owner's infra step) and rename the repo folder.

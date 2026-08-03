@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using Verse;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// GameComponent that bridges async background work back to Unity's main thread and
@@ -122,7 +122,7 @@ namespace RimToolkit
         /// <summary>
         /// Directory backing the developer file-drop channel.
         ///
-        /// Resolved from the RIMTOOLKIT_IPC_DIR environment variable when it is set and the
+        /// Resolved from the RIMAGENTIC_IPC_DIR environment variable when it is set and the
         /// directory exists; otherwise falls back to the mod's own content folder. Both ends
         /// of the channel (game + MCP server) must agree on this path or it silently does
         /// nothing, so the resolved path is logged once.
@@ -134,19 +134,19 @@ namespace RimToolkit
             {
                 if (_scriptingDir != null) return _scriptingDir;
 
-                string envDir = System.Environment.GetEnvironmentVariable("RIMTOOLKIT_IPC_DIR");
+                string envDir = System.Environment.GetEnvironmentVariable("RIMAGENTIC_IPC_DIR");
                 if (!string.IsNullOrEmpty(envDir))
                 {
                     _scriptingDir = envDir;
-                    LogResolvedDir("RIMTOOLKIT_IPC_DIR");
+                    LogResolvedDir("RIMAGENTIC_IPC_DIR");
                 }
                 else
                 {
                     // Fixed shared default the game mod and the MCP server both compute the same
-                    // way: %LOCALAPPDATA%\RimToolkit\ipc. No env-var coordination required.
+                    // way: %LOCALAPPDATA%\RimAgentic\ipc. No env-var coordination required.
                     string local = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
-                    _scriptingDir = System.IO.Path.Combine(local, "RimToolkit", "ipc");
-                    LogResolvedDir("default %LOCALAPPDATA%\\RimToolkit\\ipc");
+                    _scriptingDir = System.IO.Path.Combine(local, "RimAgentic", "ipc");
+                    LogResolvedDir("default %LOCALAPPDATA%\\RimAgentic\\ipc");
                 }
 
                 try { System.IO.Directory.CreateDirectory(_scriptingDir); } catch { }
@@ -216,7 +216,7 @@ namespace RimToolkit
             }
             catch (Exception ex)
             {
-                Log.Warning($"[RimToolkit] Failed to poll tool files: {ex.Message}");
+                Log.Warning($"[RimAgentic] Failed to poll tool files: {ex.Message}");
             }
         }
     }

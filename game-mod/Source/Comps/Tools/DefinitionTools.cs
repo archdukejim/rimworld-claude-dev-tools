@@ -5,7 +5,7 @@ using Verse;
 using RimWorld;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     public static partial class SynapseToolRegistry
     {

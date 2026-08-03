@@ -22,7 +22,7 @@ function Resolve-WorkspaceRoot {
     # checkout failed that test, fell through to the upward walk, found the dev machine's
     # full workspace, and inspected ten unrelated mods while reporting success. A root that
     # cannot be used is a configuration error, not an invitation to scan something else.
-    $explicit = if ($Root) { $Root } elseif ($env:RIMTOOLKIT_ROOT) { $env:RIMTOOLKIT_ROOT } else { $env:RIMSYNAPSE_ROOT }
+    $explicit = if ($Root) { $Root } elseif ($env:RIMAGENTIC_ROOT) { $env:RIMAGENTIC_ROOT } else { $env:RIMSYNAPSE_ROOT }
     if ($explicit) {
         if (-not (Test-Path $explicit)) {
             throw "Root '$explicit' does not exist (from $(if($Root){'-Root'}else{'RIMSYNAPSE_ROOT'}))."

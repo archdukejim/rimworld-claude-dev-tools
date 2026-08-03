@@ -124,7 +124,7 @@ export const rimworldDevTools = [
  * hardcoded to a d:\ drive, which silently broke every mod operation elsewhere.
  */
 export function workspaceRoot(): string {
-    const fromEnv = process.env.RIMTOOLKIT_ROOT || process.env.RIMSYNAPSE_ROOT;
+    const fromEnv = process.env.RIMAGENTIC_ROOT || process.env.RIMSYNAPSE_ROOT;
     if (fromEnv && fs.existsSync(path.join(fromEnv, "Core", "About", "About.xml"))) return fromEnv;
 
     // Fall back to walking up from this file: <root>/Repo-MCP/server/build/tools -> <root>
@@ -311,7 +311,7 @@ export function classifyLog(lines: string[], maxPerCategory: number) {
  */
 function harnessScript(scriptName: string): string {
     const candidates = [
-        process.env.RIMTOOLKIT_HARNESS,
+        process.env.RIMAGENTIC_HARNESS,
         process.env.RIMSYNAPSE_HARNESS,
         path.join(__dirname, "..", "..", "..", "harness"),
         path.join(__dirname, "..", "..", "harness"),

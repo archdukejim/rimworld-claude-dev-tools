@@ -66,7 +66,7 @@ const octokit = new rest_1.Octokit({ auth: token });
 let bridge = null;
 // 2. Setup MCP Server
 const server = new index_js_1.Server({
-    name: "rimtoolkit",
+    name: "rimagentic",
     version: "1.0.0"
 }, {
     capabilities: {

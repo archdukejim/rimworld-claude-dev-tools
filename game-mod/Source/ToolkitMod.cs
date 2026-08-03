@@ -1,7 +1,7 @@
 using HarmonyLib;
 using Verse;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// RimWorld mod entry point for the standalone agent tool bridge.
@@ -11,7 +11,7 @@ namespace RimToolkit
     {
         public static ToolkitMod Instance { get; private set; }
 
-        private const string HarmonyId = "archdukejim.rimtoolkit";
+        private const string HarmonyId = "archdukejim.rimagentic";
 
         public ToolkitMod(ModContentPack content) : base(content)
         {

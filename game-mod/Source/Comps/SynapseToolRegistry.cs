@@ -5,7 +5,7 @@ using RimWorld;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Describes a single game tool an agent can invoke.

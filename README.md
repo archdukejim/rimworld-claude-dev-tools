@@ -1,6 +1,6 @@
-# RimToolkit
+# RimAgentic
 
-**An agent-driven RimWorld modding toolkit.** RimToolkit gives a frontier-model
+**An agent-driven RimWorld modding toolkit.** RimAgentic gives a frontier-model
 agent (e.g. Claude) everything it needs to build, deploy, run, and evaluate a
 RimWorld mod — plus a live bridge into the running game and a bundled "how to mod
 RimWorld" knowledge base. Point it at your mod and let the agent do the loop.
@@ -13,7 +13,7 @@ RimWorld" knowledge base. Point it at your mod and let the agent do the loop.
 - **MCP server** (`server/`) — the tools an agent calls: discover mods, resolve load
   order, build/deploy, launch an isolated dev instance, run the in-game TestRunner,
   triage `Player.log`, query the modding docs, and drive the in-game tool bridge.
-- **Game-side mod** (`game-mod/`) — a standalone RimWorld mod (`RimToolkit`) that
+- **Game-side mod** (`game-mod/`) — a standalone RimWorld mod (`RimAgentic`) that
   exposes the base game + DLC surface over a file bridge: discover and invoke in-game
   dev/inspection tools (defs, incidents, reflected debug actions, pawn/object/map
   state). Other mods can register their own tools at runtime, so the surface grows
@@ -29,7 +29,7 @@ then run the loop: `resolve_mod_load_order` → `configure_active_mods` →
 ## Layout
 
 - `server/` — the MCP server (TypeScript). `npm run build`, entry `build/index.js`.
-- `game-mod/` — the RimToolkit game mod (C#, net48). Build `Source/RimToolkit.csproj`;
+- `game-mod/` — the RimAgentic game mod (C#, net48). Build `Source/RimAgentic.csproj`;
   symlink `game-mod` into `RimWorld/Mods/` for development.
 - `harness/` — PowerShell build/launch/log scripts the MCP server drives.
 - `modding-knowledge/` — bundled RimWorld modding docs served to the agent.
@@ -37,10 +37,10 @@ then run the loop: `resolve_mod_load_order` → `configure_active_mods` →
 
 ## Configuration
 
-- **Mod workspace** — `RIMTOOLKIT_ROOT` (a folder of mods, or a single mod repo).
-- **Dev save folder** — `RIMTOOLKIT_SAVEDATA` (isolated `-savedatafolder`).
-- **Game↔MCP bridge dir** — both default to `%LOCALAPPDATA%\RimToolkit\ipc`; override
-  with `RIMTOOLKIT_IPC_DIR`. No coordination needed otherwise.
+- **Mod workspace** — `RIMAGENTIC_ROOT` (a folder of mods, or a single mod repo).
+- **Dev save folder** — `RIMAGENTIC_SAVEDATA` (isolated `-savedatafolder`).
+- **Game↔MCP bridge dir** — both default to `%LOCALAPPDATA%\RimAgentic\ipc`; override
+  with `RIMAGENTIC_IPC_DIR`. No coordination needed otherwise.
 - **GitHub token** — only for the optional GitHub/project tools.
 
 Legacy `RIMSYNAPSE_*` env vars are still read as a fallback.

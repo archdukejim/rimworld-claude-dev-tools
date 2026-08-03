@@ -5,7 +5,7 @@ using RimWorld;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Tool handlers: get_stockpile_details and find_items_on_map.

@@ -4,7 +4,7 @@ using RimWorld;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Tool handler: get_active_threats

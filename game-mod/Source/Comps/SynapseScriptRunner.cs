@@ -5,7 +5,7 @@ using Verse;
 using RimWorld;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     public class SynapseScript
     {
@@ -515,7 +515,7 @@ namespace RimToolkit
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"[RimToolkit] Exception in custom script condition '{condition}': {ex.Message}");
+                    Log.Error($"[RimAgentic] Exception in custom script condition '{condition}': {ex.Message}");
                     return false;
                 }
             }

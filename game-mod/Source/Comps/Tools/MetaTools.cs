@@ -5,7 +5,7 @@ using System.Reflection;
 using Newtonsoft.Json;
 using Verse;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Meta-tools: list_available_tools and execute_game_tool.

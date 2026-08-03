@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Declares the shape of script steps and checks scripts against it before they run.

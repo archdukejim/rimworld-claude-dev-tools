@@ -1,5 +1,5 @@
 <#
-.SYNOPSIS  Package the RimToolkit MCP server as a .mcpb bundle.
+.SYNOPSIS  Package the RimAgentic MCP server as a .mcpb bundle.
 .DESCRIPTION
     Compiles the TypeScript server, stages a bundle directory containing the manifest,
     the compiled JS, production node_modules and mcp-config, then zips it to .mcpb.
@@ -18,7 +18,7 @@
 .EXAMPLE   .\pack-mcpb.ps1 -SkipVerify   # pack without the gates (not recommended)
 #>
 param(
-    [string]$OutFile = "$PSScriptRoot\rimtoolkit.mcpb",
+    [string]$OutFile = "$PSScriptRoot\rimagentic.mcpb",
     [switch]$SkipVerify
 )
 $ErrorActionPreference = 'Stop'
@@ -73,7 +73,7 @@ if (Test-Path (Join-Path $PSScriptRoot 'harness')) {
 Write-Host "[pack] Installing production dependencies into bundle..."
 $pkg = Get-Content (Join-Path $server 'package.json') -Raw | ConvertFrom-Json
 $bundlePkg = [ordered]@{
-    name         = 'rimtoolkit'
+    name         = 'rimagentic'
     version      = $pkg.version
     private      = $true
     type         = $pkg.type

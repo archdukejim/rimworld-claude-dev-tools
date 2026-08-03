@@ -2,13 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 
 /**
- * Locate the bundled modding-knowledge folder. Overridable with RIMTOOLKIT_DOCS so a
+ * Locate the bundled modding-knowledge folder. Overridable with RIMAGENTIC_DOCS so a
  * developer can point the agent at their own extended docs. Compiles to build/tools/, so
  * the repo root is three levels up; also try a couple of fallbacks for packaged layouts.
  */
 function docsDir(): string {
     const candidates = [
-        process.env.RIMTOOLKIT_DOCS,
+        process.env.RIMAGENTIC_DOCS,
         path.resolve(__dirname, "../../../modding-knowledge"),
         path.resolve(__dirname, "../../modding-knowledge"),
         path.resolve(process.cwd(), "modding-knowledge")
@@ -49,7 +49,7 @@ export async function handleModdingDocsTool(name: string, args: any) {
 
     const dir = docsDir();
     if (!fs.existsSync(dir)) {
-        return { content: [{ type: "text", text: `Modding docs folder not found at ${dir}. Set RIMTOOLKIT_DOCS to override.` }] };
+        return { content: [{ type: "text", text: `Modding docs folder not found at ${dir}. Set RIMAGENTIC_DOCS to override.` }] };
     }
 
     const files = fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith(".md")).sort();

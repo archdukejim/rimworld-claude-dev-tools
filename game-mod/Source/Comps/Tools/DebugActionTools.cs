@@ -5,7 +5,7 @@ using System.Linq;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Dynamically discovers and registers RimWorld's built-in debug actions
@@ -102,7 +102,7 @@ namespace RimToolkit
             }
             catch (Exception ex)
             {
-                Log.Warning($"[RimToolkit] Failed to dynamically register debug actions: {ex.Message}");
+                Log.Warning($"[RimAgentic] Failed to dynamically register debug actions: {ex.Message}");
             }
         }
     }

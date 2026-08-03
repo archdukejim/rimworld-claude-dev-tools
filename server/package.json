@@ -1,5 +1,5 @@
 {
-  "name": "rimtoolkit",
+  "name": "rimagentic",
   "version": "1.0.0",
   "description": "Merged MCP server: RimWorld/GitHub dev harness + Steam Workshop management (comments, descriptions, comment triage).",
   "main": "index.js",

@@ -37,13 +37,13 @@ export const gameIpcTools = [
 
 // Both ends of this channel must agree on the directory. The game-side mod
 // (SynapseGameComponent.ScriptingDir) and this server both default to the same fixed
-// location — %LOCALAPPDATA%\RimToolkit\ipc — and both honour RIMTOOLKIT_IPC_DIR, so the
+// location — %LOCALAPPDATA%\RimAgentic\ipc — and both honour RIMAGENTIC_IPC_DIR, so the
 // bridge connects with zero configuration and no knowledge of where the mod is installed.
 function ipcDir(): string {
-    const env = process.env.RIMTOOLKIT_IPC_DIR;
+    const env = process.env.RIMAGENTIC_IPC_DIR;
     if (env) return env;
     const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
-    const dir = path.join(local, "RimToolkit", "ipc");
+    const dir = path.join(local, "RimAgentic", "ipc");
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best effort */ }
     return dir;
 }

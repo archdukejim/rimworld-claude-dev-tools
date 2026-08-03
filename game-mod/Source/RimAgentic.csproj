@@ -4,8 +4,8 @@
 
     <PropertyGroup>
         <TargetFramework>net48</TargetFramework>
-        <AssemblyName>RimToolkit</AssemblyName>
-        <RootNamespace>RimToolkit</RootNamespace>
+        <AssemblyName>RimAgentic</AssemblyName>
+        <RootNamespace>RimAgentic</RootNamespace>
         <LangVersion>9.0</LangVersion>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

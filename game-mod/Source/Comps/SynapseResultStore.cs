@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Short-lived store for large tool results, so the caller receives an excerpt plus a

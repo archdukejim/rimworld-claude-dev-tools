@@ -217,6 +217,9 @@ const OFFICIAL_ORDER = [
     "ludeon.rimworld.anomaly",
     "ludeon.rimworld.odyssey"
 ];
+// The RimAgentic game mod is forced to the very end of the load order (see
+// resolveModLoadOrder) so its reflection scan observes every other mod. Legacy id kept.
+const TOOLKIT_PACKAGE_IDS = new Set(["archdukejim.rimagentic", "archdukejim.rimtoolkit"]);
 /**
  * Resolve a set of active mods into RimWorld load order — the single source of
  * truth shared by the `configure_active_mods` writer and the read-only
@@ -242,6 +245,11 @@ function resolveModLoadOrder(activeMods, config) {
     const tailInput = deduped.filter(m => OFFICIAL_ORDER.indexOf(m.toLowerCase()) === -1);
     const { order: sortedTail, cycles } = orderByDeclaredDependencies(tailInput, index);
     const resolved = [...officials, ...sortedTail];
+    // The RimAgentic game mod must load DEAD LAST: its startup reflection scan should observe
+    // every other mod's defs and debug actions, so it goes after everything else in the list.
+    const toolkitAt = resolved.findIndex(m => TOOLKIT_PACKAGE_IDS.has(m.toLowerCase()));
+    if (toolkitAt !== -1)
+        resolved.push(resolved.splice(toolkitAt, 1)[0]);
     // A mod is "placed" iff it declares ordering or another present mod names it.
     // Everything installed and left out of that set is genuinely unplaced.
     const present = new Set(tailInput.map(m => m.toLowerCase()));

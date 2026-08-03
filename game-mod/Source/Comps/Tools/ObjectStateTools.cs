@@ -5,7 +5,7 @@ using RimWorld;
 using Verse;
 using Newtonsoft.Json;
 
-namespace RimToolkit
+namespace RimAgentic
 {
     /// <summary>
     /// Tool handler: modify_object_state

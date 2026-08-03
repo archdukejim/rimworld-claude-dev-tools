@@ -38,7 +38,7 @@ let bridge: Bridge | null = null;
 
 // 2. Setup MCP Server
 const server = new Server({
-    name: "rimtoolkit",
+    name: "rimagentic",
     version: "1.0.0"
 }, {
     capabilities: {
