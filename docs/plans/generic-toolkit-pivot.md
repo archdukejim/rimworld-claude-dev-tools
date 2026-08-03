@@ -123,12 +123,23 @@ IPC dir env `RIMTOOLKIT_IPC_DIR` (mod `Content.RootDir` fallback). All placehold
 
 ## W2 progress
 
-Skeleton done + compiles: `game-mod/About/About.xml`, `Source/GamePath.props(.template)`,
-SDK-style `Source/RimToolkit.csproj` (net48, RimWorld/Unity/Harmony refs, bundles
-Newtonsoft) → builds to `game-mod/Assemblies/RimToolkit.dll`. `.gitignore` updated for
-mod build artifacts + dev-local props. Bulk C# port (bridge + manager-free generic tools +
-DebugActionTools + stripped GameComponent + Mod entry) delegated to a subagent, scoped to a
-compiling MVP; ObjectState/Environment (need manager stubs) and the narrative tools deferred.
+**MVP forked and committed (`84f16a1`).** `game-mod/` is a standalone, narrative-free mod
+that compiles clean (net48 → `Assemblies/RimToolkit.dll`): the bridge (registry/index/
+validation/runner/result-store), 11 generic tools incl. reflection-based DebugActionTools,
+a stripped GameComponent (tool_input channel; `RIMTOOLKIT_IPC_DIR` → mod RootDir), a
+`ToolkitMod` entry, and `ToolkitLog`. Verified: zero leaked references to any dropped dep.
+
+**Remaining in W2:**
+1. **MCP↔mod IPC wiring** — `gameIpc.ts` currently writes `tool_input.json` under
+   `<workspaceRoot>/Core`; point it at the toolkit mod's IPC dir (`RIMTOOLKIT_IPC_DIR`) so
+   `list_game_tools`/`execute_game_tool` reach *this* mod, not RimSynapse Core. **Required
+   for end-to-end.**
+2. **Port the deferred generic tools** ObjectState + Environment with local stubs
+   replacing the dropped `SynapseObjectControlManager` (locks → local `HashSet<int>`).
+3. **Cleanup** — the `NormalizeAliases` shim still maps to unregistered possess/damage
+   aliases (harmless no-op); drop it. `fire_incident` now uses vanilla threat points.
+4. **In-game verification** — deploy (symlink) + launch and confirm the bridge answers a
+   real `list_game_tools`/`execute_game_tool` round-trip.
 
 ## Definition of done (v1)
 
