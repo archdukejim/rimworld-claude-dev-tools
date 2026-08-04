@@ -329,7 +329,7 @@ const ENRICH_SYSTEM =
     "behavior you can't infer from the name and members. Echo each type's exact `name` from the input.";
 
 /** Ask the model to describe one batch of types; returns a name→desc map (lowercased keys). */
-async function enrichBatch(client: any, model: string, batch: any[]): Promise<Map<string, string>> {
+async function enrichBatch(client: any, model: string, batch: any[]): Promise<{ map: Map<string, string>; inTok: number; outTok: number }> {
     const list = batch.map((r, i) => `${i + 1}. ${recDescriptor(r)}`).join("\n");
     const resp = await client.messages.create({
         model,
@@ -341,15 +341,24 @@ async function enrichBatch(client: any, model: string, batch: any[]): Promise<Ma
         output_config: { effort: "low", format: { type: "json_schema", schema: ENRICH_SCHEMA } },
         messages: [{ role: "user", content: `Describe each of these ${batch.length} types:\n\n${list}` }]
     });
-    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const u = resp.usage || {};
+    const inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    const outTok = u.output_tokens || 0;
     const out = new Map<string, string>();
+    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     let parsed: any;
-    try { parsed = JSON.parse(text); } catch { return out; }
+    try { parsed = JSON.parse(text); } catch { return { map: out, inTok, outTok }; }
     for (const d of parsed?.descriptions || []) {
         if (d?.name && d?.desc) out.set(String(d.name).toLowerCase(), String(d.desc).trim());
     }
-    return out;
+    return { map: out, inTok, outTok };
 }
+
+// First-party per-1M-token prices, for an actual (not estimated) cost readout.
+const MODEL_PRICES: Record<string, { in: number; out: number }> = {
+    "claude-opus-5": { in: 5, out: 25 }, "claude-opus-4-8": { in: 5, out: 25 },
+    "claude-sonnet-5": { in: 3, out: 15 }, "claude-haiku-4-5": { in: 1, out: 5 }
+};
 
 async function enrichCorpus(args: any) {
     const records = loadCorpus();
@@ -391,12 +400,15 @@ async function enrichCorpus(args: any) {
     let failed = 0;
     let next = 0;
     let done = 0;
+    let inTok = 0;
+    let outTok = 0;
     const worker = async () => {
         while (true) {
             const b = next < batches.length ? batches[next++] : null;
             if (!b) break;
             try {
-                const map = await enrichBatch(client, model, b.map(x => x.r));
+                const { map, inTok: bi, outTok: bo } = await enrichBatch(client, model, b.map(x => x.r));
+                inTok += bi; outTok += bo;
                 for (const { r, i } of b) {
                     const desc = map.get(String(r.full).toLowerCase()) || map.get(String(r.name).toLowerCase());
                     if (desc) { records[i].desc = desc; enriched++; } else { failed++; }
@@ -429,11 +441,14 @@ async function enrichCorpus(args: any) {
     try { writeCorpus(); }
     catch (e: any) { return errText(`Enriched ${enriched} types but failed to write the corpus: ${e?.message || e}`); }
 
+    const price = MODEL_PRICES[model];
+    const cost = price ? { inputTokens: inTok, outputTokens: outTok, spentUsd: Number(((inTok / 1e6) * price.in + (outTok / 1e6) * price.out).toFixed(2)) } : { inputTokens: inTok, outputTokens: outTok };
+
     if (aborted)
-        return errText(`Enrichment stopped early: ${aborted}. ${enriched} type(s) were enriched and saved — re-run to resume the rest.`);
+        return errText(`Enrichment stopped early: ${aborted}. ${enriched} type(s) were enriched and saved — re-run to resume the rest. Spend this run: ${JSON.stringify(cost)}.`);
 
     return okText({
-        ok: true, enriched, skipped, failed, requests: batches.length, model,
+        ok: true, enriched, skipped, failed, requests: batches.length, model, ...cost,
         corpus: corpusPath(),
         note: "Descriptions written to the corpus. Run build_api_index to re-embed the enriched text."
     });
