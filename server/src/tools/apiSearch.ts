@@ -403,8 +403,14 @@ async function enrichCorpus(args: any) {
                 }
             } catch (e: any) {
                 failed += b.length;
-                if (String(e?.status) === "401" || /credential|api[_ ]?key|authentication/i.test(String(e?.message)))
-                    throw e; // auth errors won't fix themselves — abort the whole run
+                const status = String(e?.status);
+                const msg = String(e?.message);
+                // Errors that won't fix themselves within this run — stop instead of firing (and
+                // instantly failing) every remaining batch: bad/missing credentials, or a hit spend
+                // cap / exhausted balance.
+                if (status === "401" || status === "403" ||
+                    /credential|api[_ ]?key|authentication|usage limit|billing|credit balance|quota|insufficient/i.test(msg))
+                    throw new Error(msg || `HTTP ${status}`);
             }
             // Checkpoint periodically. Node is single-threaded, so this synchronous write can't
             // interleave with another worker's write.
