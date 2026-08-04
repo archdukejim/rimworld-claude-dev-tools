@@ -335,6 +335,9 @@ async function enrichBatch(client: any, model: string, batch: any[]): Promise<Ma
         model,
         max_tokens: 8000,
         system: ENRICH_SYSTEM,
+        // Mechanical one-liners: skip thinking (allowed at effort <= high) so each request is fast;
+        // structured output keeps the response constrained to the schema.
+        thinking: { type: "disabled" },
         output_config: { effort: "low", format: { type: "json_schema", schema: ENRICH_SCHEMA } },
         messages: [{ role: "user", content: `Describe each of these ${batch.length} types:\n\n${list}` }]
     });
@@ -374,9 +377,20 @@ async function enrichCorpus(args: any) {
     const batches: Array<{ r: any; i: number }[]> = [];
     for (let i = 0; i < targets.length; i += batchSize) batches.push(targets.slice(i, i + batchSize));
 
+    // Persist the whole corpus (with any new `desc` fields) and invalidate caches. Called as a
+    // checkpoint during the run and once at the end, so an interrupted run is never wasted — a
+    // re-run skips the records that already have a description and continues.
+    const writeCorpus = () => {
+        fs.writeFileSync(corpusPath(), records.map(r => JSON.stringify(r)).join("\n") + "\n");
+        corpusCache = null;
+        indexCache = null;
+    };
+    const CHECKPOINT_EVERY = 5;
+
     let enriched = 0;
     let failed = 0;
     let next = 0;
+    let done = 0;
     const worker = async () => {
         while (true) {
             const b = next < batches.length ? batches[next++] : null;
@@ -392,25 +406,25 @@ async function enrichCorpus(args: any) {
                 if (String(e?.status) === "401" || /credential|api[_ ]?key|authentication/i.test(String(e?.message)))
                     throw e; // auth errors won't fix themselves — abort the whole run
             }
+            // Checkpoint periodically. Node is single-threaded, so this synchronous write can't
+            // interleave with another worker's write.
+            if (++done % CHECKPOINT_EVERY === 0) { try { writeCorpus(); } catch { /* keep going */ } }
         }
     };
 
+    let aborted: string | null = null;
     try {
         await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, () => worker()));
     } catch (e: any) {
-        return errText(`Enrichment aborted: ${e?.message || e}. ${enriched} type(s) were enriched before the failure — the corpus was not saved.`);
+        aborted = e?.message || String(e);
     }
 
-    // Rewrite the corpus in place with the new `desc` fields, then invalidate caches so the next
-    // build_api_index / search picks them up.
-    try {
-        const out = records.map(r => JSON.stringify(r)).join("\n") + "\n";
-        fs.writeFileSync(corpusPath(), out);
-        corpusCache = null;
-        indexCache = null;
-    } catch (e: any) {
-        return errText(`Enriched ${enriched} types but failed to write the corpus: ${e?.message || e}`);
-    }
+    // Final write captures whatever completed (including partial progress before an abort).
+    try { writeCorpus(); }
+    catch (e: any) { return errText(`Enriched ${enriched} types but failed to write the corpus: ${e?.message || e}`); }
+
+    if (aborted)
+        return errText(`Enrichment stopped early: ${aborted}. ${enriched} type(s) were enriched and saved — re-run to resume the rest.`);
 
     return okText({
         ok: true, enriched, skipped, failed, requests: batches.length, model,
