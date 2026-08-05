@@ -55,11 +55,13 @@ namespace RimAgentic
         /// <summary>Record one game tick's wall-clock duration (raw stopwatch ticks). Called from the DoSingleTick patch.</summary>
         public static void RecordTick(long stopwatchTicks)
         {
-            _tickMs[_tickHead] = stopwatchTicks * MsPerStopwatchTick;
+            double ms = stopwatchTicks * MsPerStopwatchTick;
+            _tickMs[_tickHead] = ms;
             _tickAtSec[_tickHead] = NowSec();
             _tickHead = (_tickHead + 1) % TickRing;
             if (_tickCount < TickRing) _tickCount++;
             _ticksObserved++;
+            PerfBenchmark.OnTick(ms);
         }
 
         /// <summary>Record one rendered frame's duration (seconds, e.g. Time.deltaTime). Called every frame.</summary>
@@ -329,10 +331,195 @@ namespace RimAgentic
         public static void Postfix(long __state) { PerfProfiler.RecordTick(Stopwatch.GetTimestamp() - __state); }
     }
 
+    /// <summary>
+    /// Runs a controlled benchmark window on the current map: warm up K ticks (let JIT/caches settle),
+    /// then measure M ticks at a fixed speed, producing a standardized tick-cost result. Driven by the
+    /// DoSingleTick patch via PerfProfiler.RecordTick -> OnTick, so it advances only while the game is
+    /// ticking. Async: perf_benchmark_start kicks it off; perf_benchmark_status polls until phase "done".
+    /// </summary>
+    public static class PerfBenchmark
+    {
+        public enum Phase { Idle, Warmup, Measure, Done, Error }
+
+        private static readonly double SecPerStamp = 1.0 / Stopwatch.Frequency;
+        private static double NowSec() { return Stopwatch.GetTimestamp() * SecPerStamp; }
+
+        private static Phase _phase = Phase.Idle;
+        private static string _error;
+        private static int _warmupTarget, _measureTarget, _warmupDone, _measureDone;
+        private static readonly List<double> _samples = new List<double>();
+        private static double _measureStartSec;
+        private static int _gc0, _gc1, _gc2;
+        private static TimeSpeed _priorSpeed;
+        private static object _result;
+
+        public static object Start(int warmup, int measure, string speed)
+        {
+            var map = Find.CurrentMap;
+            var tm = Find.TickManager;
+            if (map == null) { _phase = Phase.Error; _error = "No active map — load or generate one first."; _result = null; return Status(); }
+            if (tm == null) { _phase = Phase.Error; _error = "No TickManager available."; _result = null; return Status(); }
+
+            _warmupTarget = Math.Max(0, warmup);
+            _measureTarget = Math.Max(1, measure);
+            _warmupDone = 0; _measureDone = 0;
+            _samples.Clear();
+            _error = null; _result = null;
+            _priorSpeed = tm.CurTimeSpeed;
+            _phase = Phase.Warmup;          // set before unpausing so the first tick already counts
+            tm.CurTimeSpeed = ParseSpeed(speed); // a non-Paused speed also unpauses the game
+            return Status();
+        }
+
+        private static TimeSpeed ParseSpeed(string s)
+        {
+            switch ((s ?? "").Trim().ToLowerInvariant())
+            {
+                case "normal": return TimeSpeed.Normal;
+                case "fast": return TimeSpeed.Fast;
+                case "ultra":
+                case "ultrafast": return TimeSpeed.Ultrafast;
+                default: return TimeSpeed.Superfast;
+            }
+        }
+
+        /// <summary>Called once per game tick from the DoSingleTick patch; drives the warmup/measure phases.</summary>
+        public static void OnTick(double ms)
+        {
+            if (_phase == Phase.Warmup)
+            {
+                if (++_warmupDone >= _warmupTarget)
+                {
+                    _phase = Phase.Measure;
+                    _samples.Clear();
+                    _measureStartSec = NowSec();
+                    _gc0 = GC.CollectionCount(0); _gc1 = GC.CollectionCount(1); _gc2 = GC.CollectionCount(2);
+                }
+            }
+            else if (_phase == Phase.Measure)
+            {
+                _samples.Add(ms);
+                if (++_measureDone >= _measureTarget) Finish();
+            }
+        }
+
+        private static void Finish()
+        {
+            double wall = Math.Max(1e-6, NowSec() - _measureStartSec);
+            var arr = _samples.ToArray();
+            Array.Sort(arr);
+            int n = arr.Length;
+            double sum = 0; foreach (var v in arr) sum += v;
+            double avg = n > 0 ? sum / n : 0;
+            double p95 = n > 0 ? arr[Math.Min(n - 1, (int)Math.Ceiling(n * 0.95) - 1)] : 0;
+            double p99 = n > 0 ? arr[Math.Min(n - 1, (int)Math.Ceiling(n * 0.99) - 1)] : 0;
+
+            object mapInfo = null;
+            try
+            {
+                var map = Find.CurrentMap;
+                if (map != null)
+                    mapInfo = new
+                    {
+                        biome = map.Biome != null ? map.Biome.defName : null,
+                        mapCells = map.Size.x * map.Size.z,
+                        colonists = map.mapPawns != null ? map.mapPawns.FreeColonistsCount : 0,
+                        pawns = map.mapPawns != null ? map.mapPawns.AllPawnsSpawned.Count : 0,
+                        things = map.listerThings != null ? map.listerThings.AllThings.Count : 0
+                    };
+            }
+            catch { }
+
+            _result = new
+            {
+                ok = true,
+                measuredTicks = n,
+                wallSeconds = Math.Round(wall, 2),
+                tps = Math.Round(n / wall, 1),
+                tickMs = new
+                {
+                    avg = Math.Round(avg, 3),
+                    p95 = Math.Round(p95, 3),
+                    p99 = Math.Round(p99, 3),
+                    max = Math.Round(n > 0 ? arr[n - 1] : 0, 3),
+                    min = Math.Round(n > 0 ? arr[0] : 0, 3)
+                },
+                gc = new
+                {
+                    gen0 = GC.CollectionCount(0) - _gc0,
+                    gen1 = GC.CollectionCount(1) - _gc1,
+                    gen2 = GC.CollectionCount(2) - _gc2,
+                    heapMb = Math.Round(GC.GetTotalMemory(false) / 1048576.0, 1)
+                },
+                map = mapInfo
+            };
+
+            _phase = Phase.Done;
+            var tmr = Find.TickManager;
+            if (tmr != null) { try { tmr.CurTimeSpeed = _priorSpeed; } catch { } } // restore the pre-benchmark speed
+        }
+
+        public static object Status()
+        {
+            return new
+            {
+                phase = _phase.ToString().ToLowerInvariant(),
+                error = _error,
+                progress = new { warmup = _warmupDone + "/" + _warmupTarget, measure = _measureDone + "/" + _measureTarget },
+                result = _phase == Phase.Done ? _result : null
+            };
+        }
+    }
+
     public static partial class SynapseToolRegistry
     {
         private static void RegisterPerfTools()
         {
+            RegisterTool(
+                "perf_benchmark_start",
+                "Begin a controlled tick-rate benchmark on the CURRENT map: unpause, run at the given speed, warm " +
+                "up warmupTicks (let JIT/caches settle), then measure measureTicks and record a standardized result " +
+                "(avg/p95/p99/max ms per tick, TPS, GC deltas, and a map summary). Async — returns immediately in " +
+                "phase 'warmup'; poll perf_benchmark_status until phase 'done'. Requires a live map. This is the " +
+                "measurement step of a performance playtest: compare the result to a stored baseline for impact.",
+                new Dictionary<string, object>
+                {
+                    ["type"] = "object",
+                    ["properties"] = new Dictionary<string, object>
+                    {
+                        ["warmupTicks"] = new Dictionary<string, object> { ["type"] = "number", ["description"] = "Ticks to run before measuring (default 300)." },
+                        ["measureTicks"] = new Dictionary<string, object> { ["type"] = "number", ["description"] = "Ticks to measure (default 2000)." },
+                        ["speed"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "normal | fast | superfast (default) | ultra." }
+                    }
+                },
+                args =>
+                {
+                    try
+                    {
+                        var a = JsonConvert.DeserializeObject<Dictionary<string, object>>(string.IsNullOrEmpty(args) ? "{}" : args) ?? new Dictionary<string, object>();
+                        int warm = 300, meas = 2000;
+                        if (a.TryGetValue("warmupTicks", out var wv) && int.TryParse(wv?.ToString(), out int w)) warm = w;
+                        if (a.TryGetValue("measureTicks", out var mv) && int.TryParse(mv?.ToString(), out int m)) meas = m;
+                        string speed = a.TryGetValue("speed", out var sv) ? sv?.ToString() : null;
+                        return JsonConvert.SerializeObject(PerfBenchmark.Start(warm, meas, speed));
+                    }
+                    catch (Exception ex) { return JsonConvert.SerializeObject(new { error = ex.Message }); }
+                }
+            );
+
+            RegisterTool(
+                "perf_benchmark_status",
+                "Poll the benchmark started by perf_benchmark_start. Returns phase (idle|warmup|measure|done|error), " +
+                "progress counts, and — once phase is 'done' — the full standardized result. The benchmark advances " +
+                "only while the game is ticking, so if it stays in warmup/measure, make sure the game isn't paused.",
+                new Dictionary<string, object> { ["type"] = "object", ["properties"] = new Dictionary<string, object>() },
+                args =>
+                {
+                    try { return JsonConvert.SerializeObject(PerfBenchmark.Status()); }
+                    catch (Exception ex) { return JsonConvert.SerializeObject(new { error = ex.Message }); }
+                }
+            );
+
             RegisterTool(
                 "perf_tick_stats",
                 "Read the current performance snapshot: game-tick time (avg/p95/max ms), TPS actual-vs-" +
