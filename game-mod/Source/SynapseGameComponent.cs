@@ -86,6 +86,9 @@ namespace RimAgentic
         {
             ProcessMainThreadQueue();
 
+            // Frame-time sample for the performance profiler (main thread, every frame).
+            PerfProfiler.RecordFrame(UnityEngine.Time.deltaTime);
+
             _fileCheckCooldown++;
             if (_fileCheckCooldown >= 60)
             {

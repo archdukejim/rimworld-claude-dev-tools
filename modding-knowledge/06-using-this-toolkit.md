@@ -56,6 +56,26 @@ The game-side toolkit mod exposes in-game dev tools over a file bridge:
 Prefer this data bridge over screen automation: query the game for facts, decide, and
 call a tool — don't drive menus by pixel unless there is no data/tool path.
 
+## Measuring performance (built-in profiler)
+
+The toolkit ships its own profiler (no Dubs Performance Analyzer dependency), exposed as game
+tools via `execute_game_tool`:
+
+- `perf_tick_stats` — always-on snapshot: game-tick time (avg/p95/max ms), TPS actual-vs-target
+  with a `keepingUp` flag (is the sim keeping up with the chosen speed?), frame time/FPS, and GC
+  pressure (heap MB + gen0/1/2 collections). Read-only, no setup. First stop for "is it lagging,
+  and is it the sim or the renderer?".
+- `perf_watch { methods, type? }` — profile specific methods. Each spec is `Namespace.Type:Method`
+  (all overloads) or `Namespace.Type` (all declared methods). Point it at the mod-under-
+  development's `ThingComp`/`HediffComp`/`GameComponent` tick methods or any suspect method.
+- `perf_report { top?, reset? }` — hottest methods since watching: calls, totalMs, avgUs, maxUs, and
+  **msPerTick** (how much of each game tick the method eats — the number that matters).
+- `perf_clear` — stop profiling and remove the per-call overhead.
+
+Loop: `perf_watch` your mod's hot methods → let the game run (fire a raid / raise speed to stress
+it) → `perf_report` → optimize → `perf_report { reset: true }` to compare. Profiling adds per-call
+overhead, so watch a focused set and `perf_clear` when done.
+
 ## Finding the right game API (don't guess — look it up)
 
 When you need a C# type/method (for a Harmony patch or custom behavior) or the right defName,
