@@ -118,6 +118,18 @@
       "description": "Search the RimWorld C# API for a query, blending semantic similarity (concept matches) with keyword relevance (exact names); returns matching types with member signatures for writing C#/Harmony."
     },
     {
+      "name": "perf_baseline_save",
+      "description": "Store an in-game benchmark result as the performance baseline for a scenario (captured once with the mod-under-test off), keyed by scenarioId + a fingerprint (game version + other active mods), so baselines are reused across playtests instead of recaptured."
+    },
+    {
+      "name": "perf_baseline_list",
+      "description": "List stored performance baselines (scenarioId, fingerprint, avg ms/tick, capture time). Read-only."
+    },
+    {
+      "name": "perf_impact",
+      "description": "Compare a fresh mod-on benchmark result to the stored baseline for the same scenario and return the performance impact: tick-time delta (ms/tick + percent) and a plain verdict (none/negligible/minor/moderate/heavy). Answers 'how much does my mod cost the game'."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },

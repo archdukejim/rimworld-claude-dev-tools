@@ -20,6 +20,7 @@ import { testingTools, handleTestingTool } from "./tools/testing";
 import { syncTools, handleSyncTool } from "./tools/sync";
 import { moddingDocsTools, handleModdingDocsTool } from "./tools/moddingDocs";
 import { apiSearchTools, handleApiSearchTool } from "./tools/apiSearch";
+import { perfTools, handlePerfTool } from "./tools/perf";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
@@ -56,6 +57,7 @@ const ALL_TOOLS = [
     ...syncTools,
     ...moddingDocsTools,
     ...apiSearchTools,
+    ...perfTools,
     ...pcControlTools,
     ...rimworldDevTools,
     ...gameIpcTools,
@@ -113,6 +115,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (apiSearchTools.some(t => t.name === name)) {
         return await handleApiSearchTool(name, args);
+    }
+
+    if (perfTools.some(t => t.name === name)) {
+        return await handlePerfTool(name, args);
     }
 
     if (pcControlTools.some(t => t.name === name)) {
@@ -273,6 +279,8 @@ async function main() {
                     result = await handleModdingDocsTool(name, args);
                 } else if (apiSearchTools.some(t => t.name === name)) {
                     result = await handleApiSearchTool(name, args);
+                } else if (perfTools.some(t => t.name === name)) {
+                    result = await handlePerfTool(name, args);
                 } else if (pcControlTools.some(t => t.name === name)) {
                     result = await handlePcControlTool(name, args);
                 } else if (rimworldDevTools.some(t => t.name === name)) {

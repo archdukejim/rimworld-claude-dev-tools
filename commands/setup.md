@@ -58,7 +58,12 @@ MCP tools, a game-side tool bridge, and a bundled modding knowledge base.
 6. Read results: `read_rimworld_log` (classified triage) after every run.
 7. Inspect the running game: `list_game_tools` then `execute_game_tool` (e.g.
    `search_game_definitions`, `get_map_environment`, `inspect_csharp_field`).
-8. Fix and repeat.
+8. **Performance gate (every playtest):** measure tick impact. `perf_scenario_build` a
+   standardized scenario (biome × early/late), place the mod's new objects, run
+   `perf_benchmark_start`/`perf_benchmark_status`, and `perf_impact` against the stored baseline
+   (captured once with the mod off). Report the verdict (+X ms/tick, Y% slower). A playtest isn't
+   complete without it.
+9. Fix and repeat.
 
 ## Rules
 - Don't guess at game API. Use `search_game_api` (C# types/methods) AND
@@ -67,6 +72,9 @@ MCP tools, a game-side tool bridge, and a bundled modding knowledge base.
   `enrich_api_corpus` (frontier model adds one-line concept descriptions) → `build_api_index`.
   The enrich step is what makes concept queries hit the right type; it needs an Anthropic key —
   `set_anthropic_key` opens a window to paste one (or set `ANTHROPIC_API_KEY`).
+- Performance is a gate, not an afterthought: every in-game playtest ends with a `perf_impact`
+  report vs. a stored baseline (see step 8). Reuse baselines across runs; only recapture when the
+  game version or the other active mods change.
 - Prefer the data/tool path over pixel automation; reserve `pcControl` for in-game
   dialogs with no data path.
 - Reversible dev work (build/test/config) is autonomous. Publishing to the Workshop or

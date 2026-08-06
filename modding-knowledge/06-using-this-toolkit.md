@@ -56,25 +56,59 @@ The game-side toolkit mod exposes in-game dev tools over a file bridge:
 Prefer this data bridge over screen automation: query the game for facts, decide, and
 call a tool — don't drive menus by pixel unless there is no data/tool path.
 
-## Measuring performance (built-in profiler)
+## Performance is a GATE — measure impact on every playtest
 
-The toolkit ships its own profiler (no Dubs Performance Analyzer dependency), exposed as game
-tools via `execute_game_tool`:
+"How much does my mod slow the game" is one of the first things players judge, so **every in-game
+playtest must end with a performance pass**: measure tick rate on standardized scenarios and report
+the impact vs. a baseline. Don't skip it, and don't eyeball it from a screenshot — report the number.
 
-- `perf_tick_stats` — always-on snapshot: game-tick time (avg/p95/max ms), TPS actual-vs-target
-  with a `keepingUp` flag (is the sim keeping up with the chosen speed?), frame time/FPS, and GC
-  pressure (heap MB + gen0/1/2 collections). Read-only, no setup. First stop for "is it lagging,
-  and is it the sim or the renderer?".
-- `perf_watch { methods, type? }` — profile specific methods. Each spec is `Namespace.Type:Method`
-  (all overloads) or `Namespace.Type` (all declared methods). Point it at the mod-under-
-  development's `ThingComp`/`HediffComp`/`GameComponent` tick methods or any suspect method.
-- `perf_report { top?, reset? }` — hottest methods since watching: calls, totalMs, avgUs, maxUs, and
-  **msPerTick** (how much of each game tick the method eats — the number that matters).
-- `perf_clear` — stop profiling and remove the per-call overhead.
+The toolkit ships its own profiler + benchmark harness (no Dubs Performance Analyzer dependency),
+exposed as game tools via `execute_game_tool` plus host-side baseline tools:
 
-Loop: `perf_watch` your mod's hot methods → let the game run (fire a raid / raise speed to stress
-it) → `perf_report` → optimize → `perf_report { reset: true }` to compare. Profiling adds per-call
-overhead, so watch a focused set and `perf_clear` when done.
+**Snapshot / method profiling**
+- `perf_tick_stats` — always-on snapshot: game-tick time (avg/p95/max ms), TPS actual-vs-target with
+  a `keepingUp` flag, frame time/FPS, GC pressure. Read-only. First stop for "is it lagging, and is
+  it the sim or the renderer?".
+- `perf_watch { methods, type? }` → `perf_report { top?, reset? }` → `perf_clear` — profile specific
+  methods (`Namespace.Type:Method` or a whole `Namespace.Type`). `perf_report` ranks by **msPerTick**
+  (how much of each tick a method eats). Use this to find *which* of your methods is hot.
+
+**Standardized benchmark (the gate)**
+- `perf_scenario_build { biome, maturity, newMap?, seed? }` — build a reproducible scenario: a live
+  map with a deterministic, seeded colony load. `maturity` is `early` or `late`; `newMap:true`
+  force-generates the biome (e.g. `TropicalRainforest`, `Tundra`), else it populates the current map.
+- `perf_benchmark_start { warmupTicks?, measureTicks? }` → poll `perf_benchmark_status` until
+  `phase:"done"` → standardized result (avg/p95/p99 ms/tick, TPS, GC, map summary).
+- `perf_baseline_save { scenarioId, result, fingerprint }` / `perf_baseline_list` — store a baseline
+  **once** (captured with your mod OFF), keyed by scenario + fingerprint (game version + other mods).
+- `perf_impact { scenarioId, result, fingerprint }` — compare a mod-ON result to the baseline →
+  tick-time delta + verdict (none/negligible/minor/moderate/heavy). This is the impact number.
+
+### The performance gate procedure (run it every playtest)
+
+1. Pick scenarios: the standard matrix is `{TemperateForest, TropicalRainforest} × {early, late}`.
+   Add a biome/maturity that best stresses whatever the mod does (heavy tick logic → `late`).
+2. **Baseline (once per scenario+fingerprint):** with the mod-under-test OFF (`configure_active_mods`
+   without it, relaunch), `perf_scenario_build` → `perf_benchmark_start`/`status` → `perf_baseline_save`.
+   Reuse it forever after — `perf_baseline_list` shows what you already have; only recapture when the
+   game version or the other active mods change (`perf_impact` flags a stale fingerprint).
+3. **Test:** with the mod ON, build the SAME scenario (same biome+maturity+seed), **place the mod's
+   new objects on the map in quantity** (spawn many of them so their tick cost shows), then
+   `perf_benchmark_start`/`status`.
+4. `perf_impact` → report: "Impact on <scenario>: <verdict> (+X ms/tick, Y% slower)." Do this for each
+   scenario. A `moderate`/`heavy` verdict is a finding — use `perf_watch`/`perf_report` to locate the
+   hot method and optimize.
+
+### Designing maps to exercise NEW objects
+
+When the mod adds new content, design the test to actually run it:
+- **Which biome:** pick the one the object interacts with (a jungle-plant mod → `TropicalRainforest`;
+  a cold-weather mechanic → `Tundra`). Use the control (`TemperateForest`) plus that one.
+- **Which maturity:** `late` for anything with per-tick logic (comps, hediffs, map components) — a
+  big colony surfaces cost that an early colony hides.
+- **Place the objects:** after `perf_scenario_build`, spawn many instances of the new thing/pawn/comp
+  (use the spawn/`execute_game_tool` tools) so the benchmark measures them, not an empty map. The
+  impact = benchmark with your objects placed − the baseline scenario without them.
 
 ## Finding the right game API (don't guess — look it up)
 
@@ -105,4 +139,6 @@ matching on bare names. Re-run the trio when the mod set (and thus the API surfa
 
 `query_modding_docs` (how) → edit Defs/patches/C# → `deploy_rimworld_mods` →
 `run_rimworld_tests` → `read_rimworld_log` → inspect with `execute_game_tool` →
-fix → repeat. Load order via `resolve_mod_load_order` whenever the mod set changes.
+**performance gate** (`perf_scenario_build` → `perf_benchmark` → `perf_impact` vs baseline) →
+fix → repeat. Load order via `resolve_mod_load_order` whenever the mod set changes. The performance
+gate runs on every playtest — a functional pass isn't a full pass until you've reported tick impact.
