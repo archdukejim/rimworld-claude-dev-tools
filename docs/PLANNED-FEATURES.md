@@ -1,78 +1,92 @@
 # Planned Features
 
-A human-readable roadmap for `rimworld-claude-dev-tools`. The **GitHub issue
-tracker is the live source of truth**; this file is a snapshot overview. Newest
-first.
+A human-readable roadmap for **RimAgentic** (`rimworld-claude-dev-tools`). The
+GitHub issue tracker is the live source of truth; this file is a snapshot.
+Newest first.
 
 ---
 
-## Agent / orchestration  ← current priority
+## Shipped
 
-### Orchestrator agent (Claude Agent SDK app)
-_not yet a tracked issue_ · `enhancement` · **proposed, prioritized**
+Things that are built and in the toolkit today.
 
-An autonomous agent that drives the dev→test→merge loop, using the MCP server as
-its toolset. Split by determinism: deterministic MCP tools own config/launch/data
-pulls; the agent owns judgment (what to test/merge, resolving mod-order gaps).
-Runtime: standalone TypeScript Agent SDK app in `agent/`. **Agent-first** — the
-async job broker (#3) becomes its parallel execution backend, added later.
-Plan: `docs/plans/orchestrator-agent.md`.
+### Generic modding-toolkit pivot → RimAgentic
+The repo is a distributable, agent-driven RimWorld modding toolkit: a plugin +
+MCP server + game-side tool bridge + bundled modding knowledge base, installable
+by any modder and driven by Claude Code. Plan: `docs/plans/generic-toolkit-pivot.md`,
+`docs/plans/rimagentic-agent-package.md`.
 
-### Mod-introspection connectors (read-only) — **shipped**
-_not yet a tracked issue_ · `enhancement` · **done** (first pieces of the agent)
+### Mod-introspection connectors (read-only)
+`resolve_mod_load_order` (topo-sorts declared `loadAfter`/`loadBefore`/
+`modDependencies`, shares the resolver with `configure_active_mods`),
+`list_installed_mods`, `get_mod_metadata`, and `detect_mod_conflicts`
+(duplicate packageIds, incompatible pairs, load-order cycles).
 
-The "MCP pulls data, agent decides" data layer:
-- `resolve_mod_load_order` — topo-sorts declared `loadAfter`/`loadBefore`/
-  `modDependencies` and returns `{ resolved, ambiguous, cycles, uninstalled }`.
-  Shares one resolver with the `configure_active_mods` writer, so what the agent
-  resolves is what actually loads.
-- `list_installed_mods` — inventory across local Mods, Steam Workshop, and Data.
-- `get_mod_metadata` — full `About.xml` by packageId, for evaluating a new/
-  ambiguous mod before placing it.
+### Async job broker (was #3)
+The test harness is an async job broker: `submit_test_job` returns a `job_id`
+immediately; runs execute serially on one worker (build worker + run worker
+overlap), with per-job pinned config (own mod list + savedatafolder + rotated
+log, verified at launch), git-worktree build isolation, and cancel-mid-run.
+Plan: `docs/plans/async-job-broker.md`.
 
----
+### In-game window mapping
+`get_open_windows` reads `Find.WindowStack` and returns each open window's C#
+type, id, layer, and on-screen rect — structural UI mapping through the game
+itself instead of screenshot-and-guess. (Also the prerequisite for the Workshop
+image pipeline below.)
 
-## Steam Workshop
+### Content helpers — game-API semantic search (local RAG)
+`dump_game_api` (in-game reflection dump of ~9k Assembly-CSharp types) →
+`enrich_api_corpus` (a frontier model writes a one-line concept description per
+type; key entered via `set_anthropic_key`'s paste window) → `build_api_index`
+(local MiniLM embeddings) → `search_game_api` (hybrid semantic + keyword). Lets
+the agent find the right C# API by concept, not just identifier.
 
-### 1. Window navigation + screenshot → JPEG for description embedding
-[#1](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/1) · `enhancement` · proposed
-
-Drive RimWorld's UI to a named window/menu via a **lookup table**, capture a
-screenshot, inspect it, and **save it as a JPEG** for upload to the Steam
-Workshop. Purpose: **beat the ~8,000-character description cap** by embedding
-"pages" of content as images — packing far more into an item description.
-Builds on `pcControl`/`pc`, `rimworldDev`, `gameIpc`, and `sharp`.
-
-### 2. Steam Workshop image scaling + embedding polish
-[#2](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/2) · `enhancement` · proposed (depends on #1)
-
-Fine-tune photo scaling and how generated images embed in a Workshop description
-so they render cleanly (right dimensions, crisp, well-placed).
-
----
-
-## Harness / testing
-
-### 3. Async job broker: parallel dev + serial execution
-[#3](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/3) · `enhancement` · proposed
-
-Turn the RimWorld test harness into an **async job broker**: submit returns
-`pending` + a `job_id` immediately (parallel authoring), while game runs execute
-**serially** on one worker (can't run two RimWorld instances on one box). Two
-lanes — a **parallel build pool** (worktree-isolated) and a **serial game-run
-lane** with **per-job pinned config** (own mod list + savedatafolder + rotated
-log, verified at launch). Structural fix for the shared-mutable-global bugs
-RimSynapse/Repo-MCP#18 and #19. Watch the local LLM (LM Studio @ 192.168.4.106)
-as a third shared resource.
+### Performance-regression harness
+Built-in profiler + benchmark + baseline gate (no Dubs Performance Analyzer
+dependency): `perf_tick_stats`, `perf_watch`/`report`/`clear`,
+`perf_benchmark_start`/`status`, `perf_scenario_build` (reproducible
+{biome}×{early|late} scenarios), and host-side `perf_baseline_save`/`list` +
+`perf_impact`. Wired into the playtest procedure as a mandatory gate — every
+playtest reports the mod's tick impact vs. a reused baseline.
 
 ---
 
-## In progress / fixes (not yet a tracked issue)
+## Open
+
+### Steam Workshop: window → screenshot → JPEG for description embedding  ← building now
+[#1](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/1) · `enhancement`
+
+Capture RimWorld content as Steam-Workshop-ready JPEGs so an author can embed
+"pages" of visual content and **beat the ~8,000-character description cap**. The
+window-mapping prerequisite (`get_open_windows`) now exists; this adds the
+capture → scale → JPEG pipeline on top of `pcControl` + `sharp`.
+
+### Steam Workshop: image scaling + embedding polish
+[#2](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/2) · `enhancement` · depends on #1
+
+Fine-tune scaling and how generated images embed in a Workshop description so
+they render cleanly (right dimensions, crisp, well-placed), including driving the
+Steam upload/embed step via the loopback browser bridge.
+
+### Orchestrator agent (standalone Claude Agent SDK app)
+`enhancement` · **decision pending** · Plan: `docs/plans/orchestrator-agent.md`
+
+An autonomous agent in `agent/` that drives the dev→test→merge loop headlessly.
+Largely superseded in practice by the plugin + MCP + docs approach (Claude Code
+is the agent today); revisit only if unattended/scheduled runs are wanted.
 
 ### Bridge isolation — per-profile "connect to MCP bridge" toggle
-Surfaced during the scheduled-triage test: the dedicated headless Chrome and a
-normal Chrome both run the extension and poll the same loopback bridge port
-(8766), so the wrong instance can grab a command. Plan: a per-profile toggle
-(reusing `swhBridgeEnabled`) — **off** in the normal Chrome, **on** in the
-dedicated profile — so exactly one extension serves the bridge. Alternative: a
-dedicated bridge port for the scheduled flow.
+`fix` · minor
+
+The headless and normal Chrome both run the extension and poll the loopback
+bridge port (8766), so the wrong instance can grab a command. Add a per-profile
+toggle (reusing `swhBridgeEnabled`) — off in normal Chrome, on in the dedicated
+profile — or a dedicated bridge port for the scheduled flow.
+
+### Auto-orchestrate the performance matrix (follow-on to the perf harness)
+`enhancement` · minor
+
+Turn the two-launch perf sequence (mod-off baseline → mod-on test → `perf_impact`)
+into a single async job through the broker, instead of the agent driving both
+launches by hand.
