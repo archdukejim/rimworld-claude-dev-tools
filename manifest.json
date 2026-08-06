@@ -130,6 +130,18 @@
       "description": "Compare a fresh mod-on benchmark result to the stored baseline for the same scenario and return the performance impact: tick-time delta (ms/tick + percent) and a plain verdict (none/negligible/minor/moderate/heavy). Answers 'how much does my mod cost the game'."
     },
     {
+      "name": "capture_workshop_image",
+      "description": "Capture the screen (or a region) and save it as a Steam-Workshop-ready JPEG (scaled + re-encoded) for embedding 'pages' of visual content in an item description, past the ~8,000-character cap."
+    },
+    {
+      "name": "make_workshop_image",
+      "description": "Process an existing image file into a Steam-Workshop-ready JPEG: optional crop, scale to a max width, re-encode at a quality, save to the workshop-images folder."
+    },
+    {
+      "name": "list_workshop_images",
+      "description": "List the Workshop JPEGs produced so far (name, path, dimensions, byte size). Read-only."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },
