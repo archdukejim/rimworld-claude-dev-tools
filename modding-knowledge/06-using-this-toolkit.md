@@ -99,6 +99,21 @@ exposed as game tools via `execute_game_tool` plus host-side baseline tools:
    scenario. A `moderate`/`heavy` verdict is a finding — use `perf_watch`/`perf_report` to locate the
    hot method and optimize.
 
+> **You execute this — it is a two-launch sequence, not one call.** Loading or unloading a mod
+> requires a RimWorld restart, so measuring impact means running the game **twice** and you drive
+> both runs yourself; there is no single tool that does the whole matrix. Explicitly:
+>
+> **Baseline run (only if `perf_baseline_list` has no fresh entry for this scenario+fingerprint):**
+> `configure_active_mods` with a list that EXCLUDES the mod-under-test → `launch_rimworld` (or
+> `run_rimworld_tests`) → `perf_scenario_build` → `perf_benchmark_start`/`status` → `perf_baseline_save`.
+>
+> **Test run (every playtest):** `configure_active_mods` INCLUDING the mod-under-test (kept last) →
+> `launch_rimworld` → `perf_scenario_build` (same biome+maturity+seed) → place the mod's new objects →
+> `perf_benchmark_start`/`status` → `perf_impact`.
+>
+> Do not report a playtest as complete until you have run the test leg and produced a `perf_impact`
+> verdict. If a fresh baseline already exists, skip the baseline run and reuse it.
+
 ### Designing maps to exercise NEW objects
 
 When the mod adds new content, design the test to actually run it:
