@@ -58,31 +58,94 @@ function isSteamRunning() {
         return false;
     }
 }
+// Junctions this tool mirrors into the local Mods folder are named with this prefix and recorded in
+// the manifest below, so they can be told apart from real mods and cleaned up. The trailing name is
+// the sanitized packageId (identity comes from the target's About.xml, so the folder name is cosmetic).
+const MANAGED_LINK_PREFIX = "_RimAgentic_ws_";
+const MANAGED_LINK_MANIFEST = ".rimagentic-managed-links.json";
+/** True only when p exists AND resolves to a different real path — i.e. it is a junction/symlink, never
+ *  a real directory. Removal is gated on this so a real mod folder can never be deleted by mistake. */
+function isReparsePoint(p) {
+    try {
+        const real = fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p);
+        return path.resolve(real) !== path.resolve(p);
+    }
+    catch {
+        return false;
+    }
+}
+/** Remove a managed junction (link only, never its target), but only if it really is a reparse point. */
+function removeManagedLink(modsDir, name) {
+    const p = path.join(modsDir, name);
+    if (!fs.existsSync(p) || !isReparsePoint(p))
+        return false;
+    try {
+        (0, child_process_1.execSync)(`cmd /c rmdir "${p}"`, { stdio: "ignore" });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/** Create a directory junction (no admin needed) at linkPath -> target; verify the mod is visible. */
+function makeJunction(linkPath, target) {
+    try {
+        if (fs.existsSync(linkPath))
+            removeManagedLink(path.dirname(linkPath), path.basename(linkPath));
+        (0, child_process_1.execSync)(`cmd /c mklink /J "${linkPath}" "${target}"`, { stdio: "ignore" });
+        return fs.existsSync(path.join(linkPath, "About", "About.xml"));
+    }
+    catch {
+        return false;
+    }
+}
 /**
- * Pre-launch guard for the "Workshop mod dropped because Steam wasn't signed in" failure.
+ * Make every active Workshop mod loadable by an isolated (Steam-bypassed) launch, and clean up after
+ * itself.
  *
- * When an isolated launch's active list contains a mod that lives ONLY in the Steam Workshop and Steam
- * isn't running, RimWorld drops it without an error of its own — and anything depending on it (Harmony
- * above all) then dies deep in mod init with a cryptic "Could not resolve type 'HarmonyLib.Harmony'".
- * Uses the corrected resolver to spot exactly which active mods are Workshop-only and returns a loud,
- * specific warning naming them, so the real cause is visible up front instead of buried in the log.
+ * An isolated launch fails SteamAPI.Init, so RimWorld enumerates only Data/ and local Mods/ — every
+ * Workshop-only mod is silently dropped, and anything depending on it (Harmony above all) then dies
+ * with a cryptic "Could not resolve type 'HarmonyLib.Harmony'". Using the corrected resolver:
+ *   - Steam signed in  -> Workshop loads natively; tear down any junctions we previously created so no
+ *                         duplicate packageId is ever presented to RimWorld.
+ *   - Steam signed out -> mirror each active Workshop mod into local Mods/ as a junction so the local
+ *                         scan finds it, and drop managed junctions that are no longer needed.
+ * Every junction we create is tracked in a manifest and reconciled on the next launch, so the Mods
+ * folder never accumulates stale links.
  */
-function checkWorkshopModsLoadable(modsDir, savedata) {
-    if (!modsDir)
+function ensureActiveWorkshopModsLoadable(modsDir, savedata) {
+    if (!modsDir || !fs.existsSync(modsDir))
         return "";
-    const cfg = path.join(savedata, "Config", "ModsConfig.xml");
+    const manifestPath = path.join(modsDir, MANAGED_LINK_MANIFEST);
+    const readManifest = () => {
+        try {
+            return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        }
+        catch {
+            return {};
+        }
+    };
+    const writeManifest = (m) => {
+        try {
+            if (Object.keys(m).length)
+                fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2));
+            else if (fs.existsSync(manifestPath))
+                fs.unlinkSync(manifestPath);
+        }
+        catch { /* manifest is a convenience, not correctness-critical */ }
+    };
+    const manifest = readManifest();
+    // Which active mods live only in the Workshop?
     let active = [];
     try {
-        const xml = fs.readFileSync(cfg, "utf8");
+        const xml = fs.readFileSync(path.join(savedata, "Config", "ModsConfig.xml"), "utf8");
         const block = /<activeMods>([\s\S]*?)<\/activeMods>/i.exec(xml)?.[1] ?? "";
         active = Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim().toLowerCase());
     }
     catch {
         return "";
     }
-    if (!active.length)
-        return "";
-    let byId;
+    let byId = new Map();
     try {
         byId = new Map((0, testing_1.resolveInstalledMods)({ rimworldModsDir: modsDir }).map(m => [m.packageId, m]));
     }
@@ -91,16 +154,47 @@ function checkWorkshopModsLoadable(modsDir, savedata) {
     }
     const workshopActive = active
         .map(id => ({ id, m: byId.get(id) }))
-        .filter(x => x.m && x.m.source === "workshop");
-    if (!workshopActive.length)
-        return "";
+        .filter((x) => !!x.m && x.m.source === "workshop");
+    // Steam signed in: native Workshop load — remove any managed junctions we made and we're done.
     if (isSteamRunning()) {
-        return `Steam is running: ${workshopActive.length} active Workshop mod(s) will load natively.\n`;
+        let removed = 0;
+        for (const name of Object.keys(manifest))
+            if (removeManagedLink(modsDir, name))
+                removed++;
+        writeManifest({});
+        let log = "";
+        if (removed)
+            log += `Steam is running — removed ${removed} managed Workshop junction(s); those mods load natively now.\n`;
+        if (workshopActive.length)
+            log += `Steam signed in: ${workshopActive.length} active Workshop mod(s) will load natively.\n`;
+        return log;
     }
-    const names = workshopActive.map(x => x.id).join(", ");
-    return `WARNING: Steam is not running/signed in, but ${workshopActive.length} active mod(s) live only in the Steam Workshop: ${names}. ` +
-        `An isolated launch can't enumerate the Workshop, so RimWorld will DROP them — and any mod that depends on them (e.g. Harmony) ` +
-        `will fail to load. Sign into Steam before launching, or make these mods available under the local Mods folder.\n`;
+    // Steam signed out: mirror each active Workshop mod into local Mods/ so the isolated launch sees it.
+    const needed = {};
+    const mirrored = [];
+    for (const { id, m } of workshopActive) {
+        const name = MANAGED_LINK_PREFIX + id.replace(/[^a-z0-9._-]/gi, "_");
+        needed[name] = m.folder;
+        const linkPath = path.join(modsDir, name);
+        if (fs.existsSync(path.join(linkPath, "About", "About.xml")) || makeJunction(linkPath, m.folder)) {
+            mirrored.push(id);
+        }
+    }
+    // Drop managed junctions that are no longer for an active Workshop mod.
+    let removed = 0;
+    for (const name of Object.keys(manifest))
+        if (!needed[name] && removeManagedLink(modsDir, name))
+            removed++;
+    writeManifest(needed);
+    let log = "";
+    if (workshopActive.length) {
+        log += `WARNING: Steam is not running/signed in — ${workshopActive.length} active mod(s) live only in the Steam Workshop `;
+        log += `(${workshopActive.map(x => x.id).join(", ")}). Mirrored ${mirrored.length} into local Mods as junctions so they load; `;
+        log += `sign into Steam to load the Workshop natively instead.\n`;
+    }
+    if (removed)
+        log += `Cleaned up ${removed} stale managed Workshop junction(s).\n`;
+    return log;
 }
 exports.rimworldDevTools = [
     {
@@ -696,9 +790,10 @@ async function handleRimworldDevTool(name, args) {
             }
             catch (e) { }
         }
-        // Bug guard: surface the "Workshop mod dropped because Steam isn't signed in" case up front,
-        // naming the exact mods (Harmony above all) that will silently fail to load in an isolated launch.
-        logs += checkWorkshopModsLoadable(config.rimworldModsDir, savedata);
+        // Bug guard + fallback: when Steam is signed out, an isolated launch can't enumerate the Workshop,
+        // so mirror each active Workshop mod (Harmony above all) into local Mods as a junction; when Steam
+        // is signed in, tear those junctions back down. Self-cleaning via a tracked manifest.
+        logs += ensureActiveWorkshopModsLoadable(config.rimworldModsDir, savedata);
         const params = [
             `-savedatafolder=${savedata}`,
             "-developer"
