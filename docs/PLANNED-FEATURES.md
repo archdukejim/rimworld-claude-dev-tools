@@ -72,12 +72,14 @@ Capture RimWorld content as Steam-Workshop-ready JPEGs so an author can embed
 window-mapping prerequisite (`get_open_windows`) now exists; this adds the
 capture → scale → JPEG pipeline on top of `pcControl` + `sharp`.
 
-### Steam Workshop: image scaling + embedding polish
-[#2](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/2) · `enhancement` · depends on #1
+### Steam Workshop: image scaling + embedding polish — **shipped**
+[#2](https://github.com/archdukejim/rimworld-claude-dev-tools/issues/2) · `enhancement`
 
-Fine-tune scaling and how generated images embed in a Workshop description so
-they render cleanly (right dimensions, crisp, well-placed), including driving the
-Steam upload/embed step via the loopback browser bridge.
+`compose_workshop_bbcode` builds the `[img]` description body from Steam-hosted
+image URLs (intro + captions + existing text); the `/rimagentic:workshop-images`
+command documents the end-to-end workflow. The upload itself is a Claude-in-Chrome
+`file_upload` action (browsers block scripted file inputs; Steam only renders
+`[img]` from Steam-hosted URLs), then `swh_update_description` sets the body.
 
 ### Orchestrator agent (standalone Claude Agent SDK app)
 `enhancement` · **decision pending** · Plan: `docs/plans/orchestrator-agent.md`

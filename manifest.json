@@ -150,6 +150,10 @@
       "description": "List the Workshop JPEGs produced so far (name, path, dimensions, byte size). Read-only."
     },
     {
+      "name": "compose_workshop_bbcode",
+      "description": "Compose Steam Workshop description BBCode embedding a set of Steam-hosted image URLs (with optional captions), combined with an intro and/or existing description — ready to pass to swh_update_description."
+    },
+    {
       "name": "validate_mod_defs",
       "description": "Pre-launch Def check: reports malformed XML (file + line) and C# class references (Class=\"...\" / <*Class>) that don't resolve to a real type, validated against the api-corpus plus the mod's own C# — catches typos before a wasted launch cycle."
     },

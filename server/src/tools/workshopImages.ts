@@ -119,6 +119,29 @@ export const workshopImageTools = [
         name: "list_workshop_images",
         description: "List the Workshop JPEGs produced so far (name, path, dimensions, byte size) from the workshop-images folder. Read-only.",
         inputSchema: { type: "object", properties: {} }
+    },
+    {
+        name: "compose_workshop_bbcode",
+        description:
+            "Compose Steam Workshop description BBCode that embeds a set of images ('pages') with optional captions " +
+            "— the text you then pass to swh_update_description. The images must ALREADY be uploaded to Steam " +
+            "(Steam-hosted URLs); Steam strips [img] from non-Steam hosts. See the workshop-images workflow for " +
+            "uploading via Claude in Chrome. Combines an optional intro, the image blocks, and optionally your " +
+            "existing description (mode: append | prepend | replace).",
+        inputSchema: {
+            type: "object",
+            properties: {
+                images: {
+                    type: "array",
+                    description: "Images to embed, in order.",
+                    items: { type: "object", properties: { url: { type: "string" }, caption: { type: "string" } }, required: ["url"] }
+                },
+                intro: { type: "string", description: "Optional text/BBCode placed before the images." },
+                existing: { type: "string", description: "Your current description, to keep alongside the images." },
+                mode: { type: "string", description: "append (images after existing, default when existing given) | prepend | replace." }
+            },
+            required: ["images"]
+        }
     }
 ];
 
@@ -174,6 +197,33 @@ export async function handleWorkshopImageTool(name: string, args: any) {
         } catch (e: any) {
             return errText(`Failed to list Workshop images: ${e?.message || e}`);
         }
+    }
+
+    if (name === "compose_workshop_bbcode") {
+        const images = Array.isArray(args?.images) ? args.images : [];
+        if (images.length === 0) return errText("Provide 'images': [{ url, caption? }].");
+        const blocks: string[] = [];
+        for (const im of images) {
+            const url = String(im?.url || "").trim();
+            if (!url) continue;
+            let block = `[img]${url}[/img]`;
+            const caption = im?.caption ? String(im.caption).trim() : "";
+            if (caption) block += `\n[i]${caption}[/i]`;
+            blocks.push(block);
+        }
+        if (blocks.length === 0) return errText("No valid image URLs supplied.");
+        const imagesBlock = blocks.join("\n\n");
+        const intro = args?.intro ? String(args.intro).trim() : "";
+        const existing = args?.existing ? String(args.existing) : "";
+        const mode = String(args?.mode || (existing ? "append" : "replace")).toLowerCase();
+
+        const parts: string[] = [];
+        if (intro) parts.push(intro);
+        if (mode === "prepend") { parts.push(imagesBlock); if (existing) parts.push(existing); }
+        else if (mode === "append") { if (existing) parts.push(existing); parts.push(imagesBlock); }
+        else { parts.push(imagesBlock); } // replace
+        const bbcode = parts.join("\n\n");
+        return okText({ ok: true, images: blocks.length, mode, chars: bbcode.length, bbcode, note: "Pass 'bbcode' to swh_update_description { fileId, description }." });
     }
 
     throw new Error(`Unknown workshop-image tool: ${name}`);
