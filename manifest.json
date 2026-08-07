@@ -162,6 +162,30 @@
       "description": "Search the offline Def corpus by concept/keyword across defName/label/description, optionally filtered by defType. Pair with search_game_api (the C# behind the def). Requires build_def_corpus."
     },
     {
+      "name": "register_corpus",
+      "description": "Register any structured records as a named corpus (from inline objects or a JSONL/JSON file) so the agent can search and graph it like the built-in API/Def corpora. Auto-detects idField and textFields."
+    },
+    {
+      "name": "list_corpora",
+      "description": "List registered corpora with record count, idField, textFields, and whether each is indexed (semantic) or graphed. Read-only."
+    },
+    {
+      "name": "index_corpus",
+      "description": "Build a local semantic embedding index (MiniLM, no API key) over a registered corpus so search_corpus matches by concept, not just keyword."
+    },
+    {
+      "name": "search_corpus",
+      "description": "Search a registered corpus by keyword, blended with semantic similarity when indexed; optional exact-field filter. Returns matching records."
+    },
+    {
+      "name": "graph_corpus",
+      "description": "Build a relationship graph over a registered corpus from edge rules ({relation, field, split?}) where a field's value references other records' ids; forward+reverse edges stored."
+    },
+    {
+      "name": "query_corpus_graph",
+      "description": "Traverse a corpus graph: given a node id and relation, return neighbors forward or reverse, optionally transitively (e.g. ancestors/descendants)."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },

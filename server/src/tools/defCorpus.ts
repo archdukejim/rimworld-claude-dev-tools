@@ -147,6 +147,7 @@ function buildDefCorpus(args: any) {
                     if (!defName && !nameAttr) continue; // not a real def entry
                     const rec: any = {
                         defType,
+                        id: defName || nameAttr, // stable key (concrete defName or an abstract base's Name) for the corpus registry
                         defName: defName || undefined,
                         name: nameAttr || undefined,
                         abstract: String(el["@_Abstract"] || "").toLowerCase() === "true" || undefined,

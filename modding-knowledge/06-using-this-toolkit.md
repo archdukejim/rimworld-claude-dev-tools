@@ -165,6 +165,24 @@ a small window to paste the key into; stored locally, no restart, never shown in
 find `MentalStateHandler`; skip it and search falls back to keyword-ish matching on bare names.
 Re-run the chain when the mod set (and thus the API surface) changes.
 
+## Building your own knowledge (the corpus registry)
+
+Beyond the built-in API and Def corpora, you can turn ANY structured knowledge into a searchable,
+graphable corpus with the same machinery — so you're not limited to what ships:
+
+- `register_corpus { name, records | recordsPath, idField?, textFields? }` — register records (inline
+  or a JSONL/JSON file). idField (the unique key) and textFields (searched/embedded text) auto-detect.
+- `index_corpus { name }` — local MiniLM embeddings (free, no key) → semantic `search_corpus`.
+- `search_corpus { name, query }` — keyword, blended with semantic when indexed.
+- `graph_corpus { name, edges }` — edges from fields that reference other records' ids
+  (`edges:[{relation:"extends", field:"parent"}]`); `query_corpus_graph { name, node, relation,
+  direction?, transitive? }` traverses forward/reverse.
+
+Use it to give yourself durable, queryable knowledge: a specific mod's defs, a curated mechanics
+writeup, an enum/DefOf dump, cross-references you build while investigating — anything you'd rather
+look up than re-derive. (The Def corpus registers cleanly with `idField:"id"` and a `parent`-edge
+inheritance graph.)
+
 ## The golden loop
 
 `query_modding_docs` (how) → edit Defs/patches/C# → `validate_mod_defs` (pre-launch lint:

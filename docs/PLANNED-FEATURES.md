@@ -47,7 +47,10 @@ navigation text search can't do. `build_def_corpus` + `search_defs` add the
 **content** half: an offline catalog of every game + DLC def (parsed from the
 `Data/` folders, no launch), so the agent knows the whole content database before
 launching. `validate_mod_defs` lints a mod's Def XML (well-formedness + C# class
-refs) pre-launch.
+refs) pre-launch. A generic **corpus registry** (`register_corpus`, `index_corpus`,
+`search_corpus`, `graph_corpus`, `query_corpus_graph`, `list_corpora`) generalizes
+this machinery so the agent can turn any structured records into a searchable +
+graphable corpus (local embeddings, no key) — mod defs, curated notes, dumps.
 
 ### Performance-regression harness
 Built-in profiler + benchmark + baseline gate (no Dubs Performance Analyzer
