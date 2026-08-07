@@ -46,6 +46,13 @@ Two ways to drive it:
   tools over a `127.0.0.1` loopback bridge, so any MCP client can use it. See
   [mcp/README.md](mcp/README.md).
 
+> **One profile serves the bridge.** The loopback bridge is a single port
+> (`127.0.0.1:8766`); if the extension is installed in more than one Chrome
+> profile, each one polls it and they race for commands. The popup has a
+> **"Serve the MCP bridge from this profile"** toggle (stored per profile) —
+> leave it **on** in your dedicated/automation profile and turn it **off** in
+> your everyday browser so exactly one profile answers MCP calls.
+
 ## Install (unpacked)
 
 1. Open `chrome://extensions`.

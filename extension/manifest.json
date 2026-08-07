@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Steam Workshop Helper",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Programmatic API for managing Steam Workshop item descriptions, titles, and comments. Driven by Claude in Chrome or the local MCP server over a loopback bridge.",
   "homepage_url": "https://github.com/archdukejim/steam-workshop-helper",
   "permissions": ["storage", "cookies", "alarms", "tabs"],

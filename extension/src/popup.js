@@ -133,6 +133,32 @@ async function copySnippet() {
   }
 }
 
+// --- MCP bridge per-profile toggle ------------------------------------------
+// Exactly one browser profile should serve the loopback bridge (127.0.0.1:8766);
+// if two do, they race for each command. This toggle (persisted per profile in
+// chrome.storage.local as `swhBridgeEnabled`) lets you turn it off in your
+// everyday browser and on in the dedicated one.
+const bridgeToggle = $("#bridge-toggle");
+const bridgeHint = $("#bridge-hint");
+
+async function renderBridge() {
+  const { swhBridgeEnabled } = await chrome.storage.local.get("swhBridgeEnabled");
+  const enabled = swhBridgeEnabled !== false; // default on
+  bridgeToggle.checked = enabled;
+  bridgeHint.textContent = enabled
+    ? "This profile answers MCP tool calls on 127.0.0.1:8766. Keep exactly ONE profile enabled — turn it OFF in your everyday browser so the two don't race for commands."
+    : "Off here — this profile won't answer MCP calls. Enable it in exactly one dedicated profile.";
+}
+
+bridgeToggle.addEventListener("change", async () => {
+  const enabled = bridgeToggle.checked;
+  await chrome.storage.local.set({ swhBridgeEnabled: enabled });
+  // Nudge the background worker to (re)start the poll loop immediately when enabled;
+  // when disabled, the loop exits on its next iteration by itself.
+  chrome.runtime.sendMessage({ type: "SWH_BRIDGE_SET", enabled }, () => void chrome.runtime.lastError);
+  renderBridge();
+});
+
 $("#btn-refresh").addEventListener("click", detect);
 $("#btn-comments").addEventListener("click", listComments);
 $("#btn-snippet").addEventListener("click", copySnippet);
@@ -140,4 +166,5 @@ $("#btn-snippet").addEventListener("click", copySnippet);
 // initial
 $("#version").textContent = "v" + chrome.runtime.getManifest().version;
 renderAuth();
+renderBridge();
 detect();

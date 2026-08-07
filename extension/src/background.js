@@ -126,6 +126,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
     return true;
   }
+  if (msg.type === "SWH_BRIDGE_SET") {
+    // Re-enabling: kick the poll loop now. Disabling: the loop's while-check exits it.
+    if (msg.enabled) bridgeLoop();
+    sendResponse({ ok: true, enabled: !!msg.enabled });
+    return true;
+  }
   return false;
 });
 
@@ -252,6 +258,14 @@ async function bridgeLoop() {
 chrome.alarms.create("swhBridge", { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "swhBridge") bridgeLoop();
+});
+
+// Restart the poll loop the instant this profile is (re)enabled — covers the popup
+// toggle setting storage directly, even if the SWH_BRIDGE_SET message is missed.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.swhBridgeEnabled && changes.swhBridgeEnabled.newValue !== false) {
+    bridgeLoop();
+  }
 });
 chrome.runtime.onStartup.addListener(bridgeLoop);
 chrome.runtime.onInstalled.addListener(bridgeLoop);
