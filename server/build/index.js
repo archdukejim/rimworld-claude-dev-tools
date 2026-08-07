@@ -51,6 +51,10 @@ const testing_1 = require("./tools/testing");
 const sync_1 = require("./tools/sync");
 const moddingDocs_1 = require("./tools/moddingDocs");
 const apiSearch_1 = require("./tools/apiSearch");
+const perf_1 = require("./tools/perf");
+const workshopImages_1 = require("./tools/workshopImages");
+const defValidate_1 = require("./tools/defValidate");
+const defCorpus_1 = require("./tools/defCorpus");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
@@ -83,6 +87,10 @@ const ALL_TOOLS = [
     ...sync_1.syncTools,
     ...moddingDocs_1.moddingDocsTools,
     ...apiSearch_1.apiSearchTools,
+    ...perf_1.perfTools,
+    ...workshopImages_1.workshopImageTools,
+    ...defValidate_1.defValidateTools,
+    ...defCorpus_1.defCorpusTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
@@ -129,6 +137,18 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (apiSearch_1.apiSearchTools.some(t => t.name === name)) {
         return await (0, apiSearch_1.handleApiSearchTool)(name, args);
+    }
+    if (perf_1.perfTools.some(t => t.name === name)) {
+        return await (0, perf_1.handlePerfTool)(name, args);
+    }
+    if (workshopImages_1.workshopImageTools.some(t => t.name === name)) {
+        return await (0, workshopImages_1.handleWorkshopImageTool)(name, args);
+    }
+    if (defValidate_1.defValidateTools.some(t => t.name === name)) {
+        return await (0, defValidate_1.handleDefValidateTool)(name, args);
+    }
+    if (defCorpus_1.defCorpusTools.some(t => t.name === name)) {
+        return await (0, defCorpus_1.handleDefCorpusTool)(name, args);
     }
     if (pcControl_1.pcControlTools.some(t => t.name === name)) {
         return await (0, pcControl_1.handlePcControlTool)(name, args);
@@ -275,6 +295,18 @@ async function main() {
                 }
                 else if (apiSearch_1.apiSearchTools.some(t => t.name === name)) {
                     result = await (0, apiSearch_1.handleApiSearchTool)(name, args);
+                }
+                else if (perf_1.perfTools.some(t => t.name === name)) {
+                    result = await (0, perf_1.handlePerfTool)(name, args);
+                }
+                else if (workshopImages_1.workshopImageTools.some(t => t.name === name)) {
+                    result = await (0, workshopImages_1.handleWorkshopImageTool)(name, args);
+                }
+                else if (defValidate_1.defValidateTools.some(t => t.name === name)) {
+                    result = await (0, defValidate_1.handleDefValidateTool)(name, args);
+                }
+                else if (defCorpus_1.defCorpusTools.some(t => t.name === name)) {
+                    result = await (0, defCorpus_1.handleDefCorpusTool)(name, args);
                 }
                 else if (pcControl_1.pcControlTools.some(t => t.name === name)) {
                     result = await (0, pcControl_1.handlePcControlTool)(name, args);
