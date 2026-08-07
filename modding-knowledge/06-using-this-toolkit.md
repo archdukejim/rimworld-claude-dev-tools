@@ -132,9 +132,13 @@ When you need a C# type/method (for a Harmony patch or custom behavior) or the r
 
 - `search_game_api { query }` — the C# API corpus (types, methods, fields). Great when the
   concept is in the naming ("weather" → `WeatherManager`, "raid" → `IncidentWorker_Raid`).
-- `search_game_definitions` (in-game, via `execute_game_tool`) — the **Def** database. Many
-  concepts live here, not in the API: e.g. "berserk" is a `MentalStateDef` named `Berserk`,
-  not a method.
+- `search_defs { query, defType? }` — the **Def** database (game + DLC content) **offline**: every
+  ThingDef/HediffDef/IncidentDef/MentalStateDef/… with its label + description. Run
+  `build_def_corpus` once (parses the game's `Data/` folders — no launch). "berserk" → `MentalStateDef
+  Berserk`. This is the content half of mechanics, available before you ever launch.
+- `search_game_definitions` (in-game, via `execute_game_tool`) — the same Def database **live** from a
+  running game (includes any active mods' defs + runtime state). Use `search_defs` offline while
+  authoring; `search_game_definitions` when a game is up and you need the live/modded set.
 
 **Always pair them for "how do I make X happen" questions.** Example — "make a pawn go
 berserk": `search_game_definitions("berserk")` → `MentalStateDef Berserk`; `search_game_api
@@ -153,7 +157,9 @@ the method that hands you the object you need.
 **Setup (once):** `dump_game_api` (in-game, dumps ~9k types) → `enrich_api_corpus` (a frontier
 model writes a one-line description per type, so search matches on concept not just identifier) →
 `build_api_index` (embeds it) → `build_api_graph` (extracts inheritance + member-type edges for
-`query_api_graph`). The enrich step needs an Anthropic key — run `set_anthropic_key` once (it opens
+`query_api_graph`). Also run `build_def_corpus` once for the offline content database
+(`search_defs`) — parsed from the game's `Data/` folders, no key needed. The enrich step needs an
+Anthropic key — run `set_anthropic_key` once (it opens
 a small window to paste the key into; stored locally, no restart, never shown in chat), or set
 `ANTHROPIC_API_KEY` in the server env. The enrich step is what makes concept queries like "rampage"
 find `MentalStateHandler`; skip it and search falls back to keyword-ish matching on bare names.

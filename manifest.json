@@ -154,6 +154,14 @@
       "description": "Pre-launch Def check: reports malformed XML (file + line) and C# class references (Class=\"...\" / <*Class>) that don't resolve to a real type, validated against the api-corpus plus the mod's own C# — catches typos before a wasted launch cycle."
     },
     {
+      "name": "build_def_corpus",
+      "description": "Parse the game's and DLCs' Def XML into an offline searchable catalog of every def (defType, defName, label, description, inheritance, module). The content half of mechanics, available without launching. Run once."
+    },
+    {
+      "name": "search_defs",
+      "description": "Search the offline Def corpus by concept/keyword across defName/label/description, optionally filtered by defType. Pair with search_game_api (the C# behind the def). Requires build_def_corpus."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },

@@ -23,6 +23,7 @@ import { apiSearchTools, handleApiSearchTool } from "./tools/apiSearch";
 import { perfTools, handlePerfTool } from "./tools/perf";
 import { workshopImageTools, handleWorkshopImageTool } from "./tools/workshopImages";
 import { defValidateTools, handleDefValidateTool } from "./tools/defValidate";
+import { defCorpusTools, handleDefCorpusTool } from "./tools/defCorpus";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
@@ -62,6 +63,7 @@ const ALL_TOOLS = [
     ...perfTools,
     ...workshopImageTools,
     ...defValidateTools,
+    ...defCorpusTools,
     ...pcControlTools,
     ...rimworldDevTools,
     ...gameIpcTools,
@@ -131,6 +133,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (defValidateTools.some(t => t.name === name)) {
         return await handleDefValidateTool(name, args);
+    }
+
+    if (defCorpusTools.some(t => t.name === name)) {
+        return await handleDefCorpusTool(name, args);
     }
 
     if (pcControlTools.some(t => t.name === name)) {
@@ -297,6 +303,8 @@ async function main() {
                     result = await handleWorkshopImageTool(name, args);
                 } else if (defValidateTools.some(t => t.name === name)) {
                     result = await handleDefValidateTool(name, args);
+                } else if (defCorpusTools.some(t => t.name === name)) {
+                    result = await handleDefCorpusTool(name, args);
                 } else if (pcControlTools.some(t => t.name === name)) {
                     result = await handlePcControlTool(name, args);
                 } else if (rimworldDevTools.some(t => t.name === name)) {

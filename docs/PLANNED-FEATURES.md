@@ -43,7 +43,11 @@ type; key entered via `set_anthropic_key`'s paste window) → `build_api_index`
 the agent find the right C# API by concept, not just identifier. `build_api_graph`
 + `query_api_graph` add a structural layer over the same corpus — inheritance
 chains, subclasses, and "what returns/exposes type X" — for relationship
-navigation text search can't do.
+navigation text search can't do. `build_def_corpus` + `search_defs` add the
+**content** half: an offline catalog of every game + DLC def (parsed from the
+`Data/` folders, no launch), so the agent knows the whole content database before
+launching. `validate_mod_defs` lints a mod's Def XML (well-formedness + C# class
+refs) pre-launch.
 
 ### Performance-regression harness
 Built-in profiler + benchmark + baseline gate (no Dubs Performance Analyzer
