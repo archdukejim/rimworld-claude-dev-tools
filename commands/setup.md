@@ -69,7 +69,8 @@ MCP tools, a game-side tool bridge, and a bundled modding knowledge base.
 - Don't guess at game API. Use `search_game_api` (C# types/methods) AND
   `search_game_definitions` (Defs) together — many concepts (e.g. "berserk") are a Def,
   not a method. Set up `search_game_api` once: `dump_game_api` (in-game) →
-  `enrich_api_corpus` (frontier model adds one-line concept descriptions) → `build_api_index`.
+  `enrich_api_corpus` (frontier model adds one-line concept descriptions) → `build_api_index` →
+  `build_api_graph` (structural relationships for `query_api_graph`: ancestors/subclasses/returns).
   The enrich step is what makes concept queries hit the right type; it needs an Anthropic key —
   `set_anthropic_key` opens a window to paste one (or set `ANTHROPIC_API_KEY`).
 - Performance is a gate, not an afterthought: every in-game playtest ends with a `perf_impact`

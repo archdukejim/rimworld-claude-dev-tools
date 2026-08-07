@@ -142,13 +142,22 @@ berserk": `search_game_definitions("berserk")` → `MentalStateDef Berserk`; `se
 `pawn.mindState.mentalStateHandler.TryStartMentalState(MentalStateDefOf.Berserk, ...)`.
 Neither source alone gives the whole answer; you reason across both.
 
+**Navigating type relationships (`query_api_graph`).** `search_game_api` finds types by text; the
+graph answers structural questions it can't: `query_api_graph { type, relation }` gives a type's
+`ancestors` (inheritance chain — `Pawn` → `ThingWithComps` → `Thing`), `subclasses` (what extends
+it — `Verb` → `Verb_LaunchProjectile`, …), `returns` (what yields/exposes this type — `Hediff` →
+`HediffMaker.MakeHediff`, `HediffSet.GetFirstHediffOfDef`), plus `uses`/`usedby`. Use it after a
+search to find the right base class's inherited members, enumerate what you can subclass, or locate
+the method that hands you the object you need.
+
 **Setup (once):** `dump_game_api` (in-game, dumps ~9k types) → `enrich_api_corpus` (a frontier
 model writes a one-line description per type, so search matches on concept not just identifier) →
-`build_api_index` (embeds it). The enrich step needs an Anthropic key — run `set_anthropic_key`
-once (it opens a small window to paste the key into; stored locally, no restart, never shown in
-chat), or set `ANTHROPIC_API_KEY` in the server env. The enrich step is what makes concept
-queries like "rampage" find `MentalStateHandler`; skip it and search falls back to keyword-ish
-matching on bare names. Re-run the trio when the mod set (and thus the API surface) changes.
+`build_api_index` (embeds it) → `build_api_graph` (extracts inheritance + member-type edges for
+`query_api_graph`). The enrich step needs an Anthropic key — run `set_anthropic_key` once (it opens
+a small window to paste the key into; stored locally, no restart, never shown in chat), or set
+`ANTHROPIC_API_KEY` in the server env. The enrich step is what makes concept queries like "rampage"
+find `MentalStateHandler`; skip it and search falls back to keyword-ish matching on bare names.
+Re-run the chain when the mod set (and thus the API surface) changes.
 
 ## The golden loop
 

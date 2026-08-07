@@ -118,6 +118,14 @@
       "description": "Search the RimWorld C# API for a query, blending semantic similarity (concept matches) with keyword relevance (exact names); returns matching types with member signatures for writing C#/Harmony."
     },
     {
+      "name": "build_api_graph",
+      "description": "Build a structural graph over the API corpus (inheritance edges + which types each member yields/references) so query_api_graph can navigate type relationships. Run once after dump_game_api."
+    },
+    {
+      "name": "query_api_graph",
+      "description": "Query the API graph for a type's relationships text search can't answer: ancestors (inheritance chain), subclasses (what extends it), returns (what yields/exposes this type), uses, and usedby."
+    },
+    {
       "name": "perf_baseline_save",
       "description": "Store an in-game benchmark result as the performance baseline for a scenario (captured once with the mod-under-test off), keyed by scenarioId + a fingerprint (game version + other active mods), so baselines are reused across playtests instead of recaptured."
     },

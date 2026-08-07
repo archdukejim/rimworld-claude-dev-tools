@@ -133,6 +133,32 @@ export const apiSearchTools = [
             },
             required: ["query"]
         }
+    },
+    {
+        name: "build_api_graph",
+        description:
+            "Build a structural graph over the API corpus so you can navigate type RELATIONSHIPS, not just find " +
+            "types by text. Extracts inheritance edges (from baseType) and, from each member signature, which " +
+            "types a member yields (return/field/property type) and which types a type references. Run once after " +
+            "dump_game_api (re-run if the corpus changes). Enables query_api_graph. Returns edge counts + path.",
+        inputSchema: { type: "object", properties: {} }
+    },
+    {
+        name: "query_api_graph",
+        description:
+            "Query the structural API graph (build_api_graph first) for a type's relationships — the graph answers " +
+            "questions text search can't: 'what extends Verb' (subclasses), the inheritance chain of a type " +
+            "(ancestors), 'what returns/exposes a Hediff' (returns), what a type uses, and what uses it. Pass a " +
+            "type (full name like 'Verse.Pawn' or a unique short name like 'Pawn') and a relation.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                type: { type: "string", description: "Type to query: full name (Verse.Pawn) or a unique short name (Pawn)." },
+                relation: { type: "string", description: "summary (default) | ancestors | subclasses | returns | uses | usedby." },
+                limit: { type: "number", description: "Max rows for list relations (default 50)." }
+            },
+            required: ["type"]
+        }
     }
 ];
 
@@ -162,6 +188,8 @@ export async function handleApiSearchTool(name: string, args: any) {
 
     if (name === "set_anthropic_key") return await setAnthropicKey(args);
     if (name === "enrich_api_corpus") return await enrichCorpus(args);
+    if (name === "build_api_graph") return buildApiGraph();
+    if (name === "query_api_graph") return queryApiGraph(args);
 
     if (name !== "search_game_api") throw new Error(`Unknown api-search tool: ${name}`);
 
@@ -451,6 +479,181 @@ async function enrichCorpus(args: any) {
         ok: true, enriched, skipped, failed, requests: batches.length, model, ...cost,
         corpus: corpusPath(),
         note: "Descriptions written to the corpus. Run build_api_index to re-embed the enriched text."
+    });
+}
+
+// --- Structural API graph (inheritance + member type references) ---
+
+const graphPath = () => path.join(apiDir(), "api-graph.json");
+let graphCache: { mtime: number; graph: any } | null = null;
+
+// C#/system primitives and keywords that never resolve to a corpus type; skip them as edge targets.
+const GRAPH_PRIM = new Set(["int", "uint", "long", "ulong", "short", "ushort", "byte", "sbyte", "float",
+    "double", "decimal", "bool", "char", "string", "object", "void", "this"]);
+
+function tokensOf(s: string): string[] {
+    return String(s || "").match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+}
+
+/** The type portion of a member sig — the return/field/property type, i.e. everything before the member name. */
+function typePortion(member: any): string {
+    const sig = String(member?.sig || "");
+    const name = String(member?.name || "");
+    const beforeParen = sig.split("(")[0];
+    const idx = name ? beforeParen.lastIndexOf(name) : -1;
+    return (idx >= 0 ? beforeParen.slice(0, idx) : beforeParen).trim();
+}
+
+function buildApiGraph() {
+    const records = loadCorpus();
+    if (!records) return errText(`API corpus not found at ${corpusPath()}. Run the in-game 'dump_game_api' tool first.`);
+
+    // short name -> full names (for resolving baseType/sig tokens, which are stored unqualified).
+    const byShort = new Map<string, string[]>();
+    for (const r of records) {
+        const arr = byShort.get(r.name); if (arr) arr.push(r.full); else byShort.set(r.name, [r.full]);
+    }
+    // Resolve a short token to a corpus full name only when unambiguous, so edges stay correct.
+    const resolve = (short: string): string | null => {
+        if (!short || GRAPH_PRIM.has(short)) return null;
+        const c = byShort.get(short);
+        return c && c.length === 1 ? c[0] : null;
+    };
+
+    const extendsMap: Record<string, string> = {};
+    const extendedBy: Record<string, string[]> = {};
+    const yields: Record<string, any[]> = {};
+    const references: Record<string, string[]> = {};
+    const referencedBy: Record<string, string[]> = {};
+    const refSets: Array<[string, Set<string>]> = [];
+
+    for (const r of records) {
+        const full = r.full;
+        if (r.baseType) {
+            const b = resolve(r.baseType);
+            if (b && b !== full) { extendsMap[full] = b; (extendedBy[b] || (extendedBy[b] = [])).push(full); }
+        }
+        const refSet = new Set<string>();
+        for (const m of r.members || []) {
+            // yields: every corpus type named in the return/field/property type (so List<Hediff> yields Hediff).
+            for (const tok of new Set(tokensOf(typePortion(m)))) {
+                const rf = resolve(tok);
+                if (rf && rf !== full) { (yields[rf] || (yields[rf] = [])).push([full, m.name, m.kind]); refSet.add(rf); }
+            }
+            // references: every corpus type named anywhere in the signature (params included).
+            for (const tok of tokensOf(m.sig || "")) {
+                const rf = resolve(tok);
+                if (rf && rf !== full) refSet.add(rf);
+            }
+        }
+        if (refSet.size) { references[full] = Array.from(refSet); refSets.push([full, refSet]); }
+    }
+    for (const [full, set] of refSets) {
+        for (const rf of set) (referencedBy[rf] || (referencedBy[rf] = [])).push(full);
+    }
+
+    const graph = {
+        builtAt: new Date().toISOString(),
+        corpusMtime: fs.statSync(corpusPath()).mtimeMs,
+        typeCount: records.length,
+        extends: extendsMap, extendedBy, yields, references, referencedBy
+    };
+    try {
+        fs.mkdirSync(apiDir(), { recursive: true });
+        fs.writeFileSync(graphPath(), JSON.stringify(graph));
+        graphCache = { mtime: graph.corpusMtime, graph };
+    } catch (e: any) { return errText(`Failed to write graph: ${e?.message || e}`); }
+
+    return okText({
+        ok: true, typeCount: records.length,
+        inheritanceEdges: Object.keys(extendsMap).length,
+        typesWithSubclasses: Object.keys(extendedBy).length,
+        yieldedTypes: Object.keys(yields).length,
+        referencingTypes: Object.keys(references).length,
+        path: graphPath()
+    });
+}
+
+function loadGraph(): any | null {
+    if (!fs.existsSync(graphPath())) return null;
+    const cMtime = fs.existsSync(corpusPath()) ? fs.statSync(corpusPath()).mtimeMs : 0;
+    if (graphCache && graphCache.mtime === graphCache.graph.corpusMtime && graphCache.graph.corpusMtime === cMtime) return graphCache.graph;
+    try {
+        const g = JSON.parse(fs.readFileSync(graphPath(), "utf8"));
+        graphCache = { mtime: g.corpusMtime, graph: g };
+        return g;
+    } catch { return null; }
+}
+
+function queryApiGraph(args: any) {
+    const g = loadGraph();
+    if (!g) return errText("No API graph found. Run build_api_graph first.");
+    const records = loadCorpus() || [];
+    const input = String(args?.type || "").trim();
+    if (!input) return errText("Provide 'type' — a full name (Verse.Pawn) or a unique short name (Pawn).");
+
+    // Resolve the queried type to a full corpus name.
+    let full: string | null = null;
+    if (records.some((r: any) => r.full === input)) full = input;
+    else {
+        const cands = records.filter((r: any) => r.name === input).map((r: any) => r.full);
+        if (cands.length === 1) full = cands[0];
+        else if (cands.length > 1) return okText({ ambiguous: cands, note: "Multiple types share that short name — pass one of these full names as 'type'." });
+    }
+    if (!full) return errText(`Type '${input}' not found in the corpus.`);
+
+    const relation = String(args?.relation || "summary").toLowerCase();
+    const limit = Math.max(1, Math.min(500, Number(args?.limit) || 50));
+    const stale = g.corpusMtime !== (fs.existsSync(corpusPath()) ? fs.statSync(corpusPath()).mtimeMs : g.corpusMtime);
+    const staleNote = stale ? "Graph is older than the corpus — re-run build_api_graph." : undefined;
+
+    const ancestors = (t: string): string[] => {
+        const chain: string[] = []; const seen = new Set<string>(); let cur = t;
+        while (g.extends[cur] && !seen.has(cur)) { seen.add(cur); chain.push(g.extends[cur]); cur = g.extends[cur]; }
+        return chain;
+    };
+    const descendants = (t: string, cap: number): { direct: string[]; all: string[]; truncated: boolean } => {
+        const direct: string[] = g.extendedBy[t] || [];
+        const all: string[] = []; const seen = new Set<string>(); const queue = [...direct];
+        let truncated = false;
+        while (queue.length) {
+            if (all.length >= cap) { truncated = true; break; }
+            const x = queue.shift() as string;
+            if (seen.has(x)) continue; seen.add(x); all.push(x);
+            for (const c of (g.extendedBy[x] || [])) queue.push(c);
+        }
+        return { direct, all, truncated };
+    };
+    const fmtYields = (rows: any[]) => rows.slice(0, limit).map((e: any) => ({ owner: e[0], member: e[1], kind: e[2] }));
+
+    if (relation === "ancestors")
+        return okText({ type: full, relation, ancestors: ancestors(full), note: staleNote });
+    if (relation === "subclasses") {
+        const d = descendants(full, limit);
+        return okText({ type: full, relation, directSubclasses: d.direct, descendants: d.all, truncated: d.truncated, note: staleNote });
+    }
+    if (relation === "returns" || relation === "yields") {
+        const rows = g.yields[full] || [];
+        return okText({ type: full, relation: "returns", count: rows.length, members: fmtYields(rows), note: staleNote });
+    }
+    if (relation === "uses") {
+        const u = g.references[full] || [];
+        return okText({ type: full, relation, count: u.length, uses: u.slice(0, limit), truncated: u.length > limit, note: staleNote });
+    }
+    if (relation === "usedby") {
+        const u = g.referencedBy[full] || [];
+        return okText({ type: full, relation, count: u.length, usedBy: u.slice(0, limit), truncated: u.length > limit, note: staleNote });
+    }
+    // summary
+    return okText({
+        type: full, relation: "summary",
+        ancestors: ancestors(full),
+        directSubclasses: (g.extendedBy[full] || []).length,
+        returnedByMembers: (g.yields[full] || []).length,
+        uses: (g.references[full] || []).length,
+        usedBy: (g.referencedBy[full] || []).length,
+        hint: "Pass relation: ancestors | subclasses | returns | uses | usedby for details.",
+        note: staleNote
     });
 }
 

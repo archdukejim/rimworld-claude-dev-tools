@@ -40,7 +40,10 @@ image pipeline below.)
 `enrich_api_corpus` (a frontier model writes a one-line concept description per
 type; key entered via `set_anthropic_key`'s paste window) → `build_api_index`
 (local MiniLM embeddings) → `search_game_api` (hybrid semantic + keyword). Lets
-the agent find the right C# API by concept, not just identifier.
+the agent find the right C# API by concept, not just identifier. `build_api_graph`
++ `query_api_graph` add a structural layer over the same corpus — inheritance
+chains, subclasses, and "what returns/exposes type X" — for relationship
+navigation text search can't do.
 
 ### Performance-regression harness
 Built-in profiler + benchmark + baseline gate (no Dubs Performance Analyzer
@@ -76,13 +79,13 @@ An autonomous agent in `agent/` that drives the dev→test→merge loop headless
 Largely superseded in practice by the plugin + MCP + docs approach (Claude Code
 is the agent today); revisit only if unattended/scheduled runs are wanted.
 
-### Bridge isolation — per-profile "connect to MCP bridge" toggle
-`fix` · minor
+### Bridge isolation — per-profile "connect to MCP bridge" toggle — **shipped**
+`fix`
 
-The headless and normal Chrome both run the extension and poll the loopback
-bridge port (8766), so the wrong instance can grab a command. Add a per-profile
-toggle (reusing `swhBridgeEnabled`) — off in normal Chrome, on in the dedicated
-profile — or a dedicated bridge port for the scheduled flow.
+The extension popup now has a "Serve the MCP bridge from this profile" toggle
+(per-profile `swhBridgeEnabled`): off in the everyday browser, on in the
+dedicated profile, so exactly one extension polls the loopback bridge (8766) and
+they no longer race for commands.
 
 ### Auto-orchestrate the performance matrix (follow-on to the perf harness)
 `enhancement` · minor
