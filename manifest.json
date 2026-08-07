@@ -150,6 +150,10 @@
       "description": "List the Workshop JPEGs produced so far (name, path, dimensions, byte size). Read-only."
     },
     {
+      "name": "validate_mod_defs",
+      "description": "Pre-launch Def check: reports malformed XML (file + line) and C# class references (Class=\"...\" / <*Class>) that don't resolve to a real type, validated against the api-corpus plus the mod's own C# — catches typos before a wasted launch cycle."
+    },
+    {
       "name": "launch_quicktest",
       "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
     },

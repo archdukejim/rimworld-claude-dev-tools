@@ -161,7 +161,8 @@ Re-run the chain when the mod set (and thus the API surface) changes.
 
 ## The golden loop
 
-`query_modding_docs` (how) → edit Defs/patches/C# → `deploy_rimworld_mods` →
+`query_modding_docs` (how) → edit Defs/patches/C# → `validate_mod_defs` (pre-launch lint:
+malformed XML + bad C# class refs, no launch needed) → `deploy_rimworld_mods` →
 `run_rimworld_tests` → `read_rimworld_log` → inspect with `execute_game_tool` →
 **performance gate** (`perf_scenario_build` → `perf_benchmark` → `perf_impact` vs baseline) →
 fix → repeat. Load order via `resolve_mod_load_order` whenever the mod set changes. The performance
