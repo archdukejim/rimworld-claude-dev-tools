@@ -158,6 +158,24 @@ namespace RimAgentic
         private static readonly HarmonyMethod _prefix = new HarmonyMethod(typeof(PerfMethodInstrument), nameof(PerfMethodInstrument.Prefix));
         private static readonly HarmonyMethod _postfix = new HarmonyMethod(typeof(PerfMethodInstrument), nameof(PerfMethodInstrument.Postfix));
 
+        private static bool _tickPatchInstalled;
+
+        /// <summary>
+        /// Install the always-on per-tick timer imperatively. Called once at mod init, AFTER Harmony is
+        /// loaded — deliberately not a [HarmonyPatch] attribute, which would force Harmony resolution at
+        /// assembly-load time and abort the mod (see Patch_TickManager_DoSingleTick). Safe to call twice.
+        /// </summary>
+        public static void InstallTickPatch()
+        {
+            if (_tickPatchInstalled) return;
+            var target = AccessTools.Method(typeof(TickManager), "DoSingleTick");
+            if (target == null) { ToolkitLog.Warning("Perf: TickManager.DoSingleTick not found; per-tick timing disabled."); return; }
+            _harmony.Patch(target,
+                prefix: new HarmonyMethod(typeof(Patch_TickManager_DoSingleTick), nameof(Patch_TickManager_DoSingleTick.Prefix)),
+                postfix: new HarmonyMethod(typeof(Patch_TickManager_DoSingleTick), nameof(Patch_TickManager_DoSingleTick.Postfix)));
+            _tickPatchInstalled = true;
+        }
+
         public static string KeyOf(MethodBase m)
         {
             return (m.DeclaringType != null ? m.DeclaringType.FullName : "?") + ":" + m.Name;
@@ -323,8 +341,14 @@ namespace RimAgentic
         }
     }
 
-    /// <summary>Always-on: time each whole game tick so ms/tick and TPS are available without setup.</summary>
-    [HarmonyPatch(typeof(TickManager), "DoSingleTick")]
+    /// <summary>
+    /// Always-on: time each whole game tick so ms/tick and TPS are available without setup.
+    /// NOTE: patched imperatively (see PerfProfiler.InstallTickPatch), NOT via a [HarmonyPatch]
+    /// type attribute. A type-level Harmony attribute forces the CLR to resolve HarmonyLib at
+    /// assembly-load time — before Harmony is guaranteed loaded — which throws during RimWorld's
+    /// type scan and aborts the whole mod (RimWorld then resets ModsConfig to vanilla). Keeping the
+    /// Harmony dependency purely runtime-side, exactly like the on-demand method profiler, avoids that.
+    /// </summary>
     public static class Patch_TickManager_DoSingleTick
     {
         public static void Prefix(out long __state) { __state = Stopwatch.GetTimestamp(); }

@@ -55,6 +55,7 @@ const perf_1 = require("./tools/perf");
 const workshopImages_1 = require("./tools/workshopImages");
 const defValidate_1 = require("./tools/defValidate");
 const defCorpus_1 = require("./tools/defCorpus");
+const corpusRegistry_1 = require("./tools/corpusRegistry");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
@@ -91,6 +92,7 @@ const ALL_TOOLS = [
     ...workshopImages_1.workshopImageTools,
     ...defValidate_1.defValidateTools,
     ...defCorpus_1.defCorpusTools,
+    ...corpusRegistry_1.corpusRegistryTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
@@ -149,6 +151,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (defCorpus_1.defCorpusTools.some(t => t.name === name)) {
         return await (0, defCorpus_1.handleDefCorpusTool)(name, args);
+    }
+    if (corpusRegistry_1.corpusRegistryTools.some(t => t.name === name)) {
+        return await (0, corpusRegistry_1.handleCorpusRegistryTool)(name, args);
     }
     if (pcControl_1.pcControlTools.some(t => t.name === name)) {
         return await (0, pcControl_1.handlePcControlTool)(name, args);
@@ -307,6 +312,9 @@ async function main() {
                 }
                 else if (defCorpus_1.defCorpusTools.some(t => t.name === name)) {
                     result = await (0, defCorpus_1.handleDefCorpusTool)(name, args);
+                }
+                else if (corpusRegistry_1.corpusRegistryTools.some(t => t.name === name)) {
+                    result = await (0, corpusRegistry_1.handleCorpusRegistryTool)(name, args);
                 }
                 else if (pcControl_1.pcControlTools.some(t => t.name === name)) {
                     result = await (0, pcControl_1.handlePcControlTool)(name, args);

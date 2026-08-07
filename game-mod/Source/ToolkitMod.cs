@@ -19,6 +19,7 @@ namespace RimAgentic
 
             var harmony = new Harmony(HarmonyId);
             harmony.PatchAll();
+            PerfProfiler.InstallTickPatch();   // always-on per-tick timer, patched imperatively (Harmony is loaded by now)
 
             LongEventHandler.ExecuteWhenFinished(() =>
             {

@@ -2,6 +2,59 @@ import * as fs from "fs";
 import * as path from "path";
 import { execSync, spawn } from "child_process";
 import { loadConfig, getSaveDataFolder } from "../config";
+import { resolveInstalledMods } from "./testing";
+
+/** Is the Steam client running? An isolated launch bypasses Steam (steam_appid.txt), so SteamAPI.Init
+ *  fails and RimWorld enumerates only Data/ and local Mods/ — every Workshop-only mod is silently
+ *  dropped. Workshop mods therefore load into an isolated launch ONLY when Steam is signed in. */
+function isSteamRunning(): boolean {
+    try {
+        const out = execSync(
+            "powershell -NoProfile -Command \"(Get-Process -Name steam -ErrorAction SilentlyContinue | Measure-Object).Count\"",
+            { encoding: "utf8" }
+        );
+        return (parseInt(String(out).trim(), 10) || 0) > 0;
+    } catch { return false; }
+}
+
+/**
+ * Pre-launch guard for the "Workshop mod dropped because Steam wasn't signed in" failure.
+ *
+ * When an isolated launch's active list contains a mod that lives ONLY in the Steam Workshop and Steam
+ * isn't running, RimWorld drops it without an error of its own — and anything depending on it (Harmony
+ * above all) then dies deep in mod init with a cryptic "Could not resolve type 'HarmonyLib.Harmony'".
+ * Uses the corrected resolver to spot exactly which active mods are Workshop-only and returns a loud,
+ * specific warning naming them, so the real cause is visible up front instead of buried in the log.
+ */
+function checkWorkshopModsLoadable(modsDir: string | undefined, savedata: string): string {
+    if (!modsDir) return "";
+    const cfg = path.join(savedata, "Config", "ModsConfig.xml");
+    let active: string[] = [];
+    try {
+        const xml = fs.readFileSync(cfg, "utf8");
+        const block = /<activeMods>([\s\S]*?)<\/activeMods>/i.exec(xml)?.[1] ?? "";
+        active = Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim().toLowerCase());
+    } catch { return ""; }
+    if (!active.length) return "";
+
+    let byId: Map<string, { source: string; name: string }>;
+    try {
+        byId = new Map(resolveInstalledMods({ rimworldModsDir: modsDir }).map(m => [m.packageId, m]));
+    } catch { return ""; }
+
+    const workshopActive = active
+        .map(id => ({ id, m: byId.get(id) }))
+        .filter(x => x.m && x.m.source === "workshop");
+    if (!workshopActive.length) return "";
+
+    if (isSteamRunning()) {
+        return `Steam is running: ${workshopActive.length} active Workshop mod(s) will load natively.\n`;
+    }
+    const names = workshopActive.map(x => x.id).join(", ");
+    return `WARNING: Steam is not running/signed in, but ${workshopActive.length} active mod(s) live only in the Steam Workshop: ${names}. ` +
+        `An isolated launch can't enumerate the Workshop, so RimWorld will DROP them — and any mod that depends on them (e.g. Harmony) ` +
+        `will fail to load. Sign into Steam before launching, or make these mods available under the local Mods folder.\n`;
+}
 
 export const rimworldDevTools = [
     {
@@ -572,27 +625,37 @@ export async function handleRimworldDevTool(name: string, args: any) {
         
         let logs = `Launching RimWorld directly...\n`;
         
+        // How many RimWorld instances are up right now — used to warn/clean up and avoid resource pileup.
+        const countRimWorld = (): number => {
+            try {
+                const out = execSync("powershell -NoProfile -Command \"(Get-CimInstance Win32_Process -Filter \\\"Name='RimWorldWin64.exe'\\\" | Measure-Object).Count\"", { encoding: "utf8" });
+                return parseInt(String(out).trim(), 10) || 0;
+            } catch { return 0; }
+        };
+
         if (killExisting) {
-            logs += "Closing existing developer RimWorld instances...\n";
-            // 1. Try to close the specifically tracked PID first
+            // A dev laptop can't afford two RimWorld sessions at once, and mixing launch tools used to
+            // leave orphans (this tool only closed -savedatafolder instances, so a plain quicktest one
+            // survived). Guarantee a single instance: close the tracked PID, then EVERY RimWorld process.
+            const before = countRimWorld();
+            logs += `Ensuring no other RimWorld session is running (found ${before})...\n`;
             if (fs.existsSync(pidFilePath)) {
                 try {
                     const oldPid = fs.readFileSync(pidFilePath, "utf8").trim();
-                    logs += `Closing tracked developer instance with PID ${oldPid}...\n`;
                     execSync(`taskkill /f /pid ${oldPid}`, { stdio: "ignore" });
-                    fs.unlinkSync(pidFilePath);
-                } catch (e) {
-                    // Ignore if already dead
-                }
+                } catch (e) { /* already dead */ }
+                try { fs.unlinkSync(pidFilePath); } catch (e) { /* ignore */ }
             }
-            
-            // 2. Backup safety check: scan all RimWorld processes and terminate ONLY those containing '-savedatafolder'.
             try {
-                execSync("powershell -Command \"Get-CimInstance Win32_Process -Filter \\\"Name = 'RimWorldWin64.exe'\\\" | Where-Object { $_.CommandLine -like '*savedatafolder*' } | Foreach-Object { Stop-Process -Id $_.ProcessId -Force }\"", { stdio: "ignore" });
-                logs += "Targeted developer instances cleanup completed safely.\n";
-            } catch (e) {
-                // Ignore if none found
-            }
+                execSync("taskkill /f /im RimWorldWin64.exe", { stdio: "ignore" }); // kills ALL instances
+            } catch (e) { /* taskkill exits non-zero when none are running */ }
+            const after = countRimWorld();
+            logs += after === 0
+                ? (before > 0 ? `Closed ${before} instance(s); none remain.\n` : "No RimWorld instance was running.\n")
+                : `WARNING: ${after} RimWorld instance(s) still running after cleanup — check manually.\n`;
+        } else {
+            const running = countRimWorld();
+            if (running > 0) logs += `WARNING: ${running} RimWorld instance(s) already running and killExisting is false — launching another will strain resources.\n`;
         }
         
         // 1. Write the Prefs.xml file to mute audio and enable devMode under the custom savedatafolder
@@ -637,6 +700,10 @@ export async function handleRimworldDevTool(name: string, args: any) {
                 logs += `Created steam_appid.txt bypass config.\n`;
             } catch (e) {}
         }
+
+        // Bug guard: surface the "Workshop mod dropped because Steam isn't signed in" case up front,
+        // naming the exact mods (Harmony above all) that will silently fail to load in an isolated launch.
+        logs += checkWorkshopModsLoadable(config.rimworldModsDir, savedata);
 
         const params: string[] = [
             `-savedatafolder=${savedata}`,

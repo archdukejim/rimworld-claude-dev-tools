@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.testingTools = void 0;
+exports.resolveInstalledMods = resolveInstalledMods;
 exports.resolveModLoadOrder = resolveModLoadOrder;
 exports.handleTestingTool = handleTestingTool;
 const fs = __importStar(require("fs"));
@@ -41,6 +42,32 @@ const graphql_1 = require("@octokit/graphql");
 const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("../config");
+/**
+ * A mod's OWN packageId — the top-level one under <ModMetaData>, NOT a packageId nested inside a
+ * dependency declaration. This is fundamental to mod resolution: nearly every mod lists
+ * <modDependencies> (Vanilla Expanded and countless others put that block BEFORE their own
+ * <packageId>), and each dependency carries its own <packageId>. A naive first-match regex grabs
+ * that dependency instead — so, e.g., every mod that depends on Harmony reads back as
+ * "brrainz.harmony", masking its real id and (via first-wins dedup) hiding the real Harmony mod
+ * entirely. Strip the dependency blocks first, then take the first remaining packageId.
+ */
+function ownPackageId(xml) {
+    const cleaned = xml
+        .replace(/<modDependencies>[\s\S]*?<\/modDependencies>/gi, "")
+        .replace(/<modDependenciesByVersion>[\s\S]*?<\/modDependenciesByVersion>/gi, "");
+    return /<packageId>([^<]+)<\/packageId>/i.exec(cleaned)?.[1]?.trim();
+}
+/** Resolve a symlinked/junctioned mod folder to its real target (git clones are symlinked into Mods).
+ *  Returns undefined when it can't resolve or the path is already real, so callers can show it only when it adds info. */
+function realTargetOf(folder) {
+    try {
+        const real = fs.realpathSync.native ? fs.realpathSync.native(folder) : fs.realpathSync(folder);
+        return path.resolve(real) !== path.resolve(folder) ? real : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 /**
  * Every mod folder RimWorld can see, in scan order (local, then Workshop, then Data),
  * WITHOUT deduping — so two folders declaring the same packageId both appear. That raw
@@ -78,11 +105,11 @@ function scanModRoots(config) {
                 continue;
             try {
                 const xml = fs.readFileSync(aboutPath, "utf8");
-                const id = /<packageId>([^<]+)<\/packageId>/i.exec(xml)?.[1]?.trim().toLowerCase();
+                const id = ownPackageId(xml)?.toLowerCase();
                 if (!id)
                     continue;
                 const name = /<name>([\s\S]*?)<\/name>/i.exec(xml)?.[1]?.trim() || entry;
-                found.push({ packageId: id, name, source, folder });
+                found.push({ packageId: id, name, source, folder, realPath: realTargetOf(folder) });
             }
             catch { /* an unreadable About.xml is simply not an entry */ }
         }
@@ -105,6 +132,15 @@ function scanInstalledMods(config) {
     }
     return found;
 }
+/**
+ * Public resolver — every installed mod deduped to its OWN packageId (first-wins: local > workshop >
+ * data), each with source and symlink-resolved realPath. The single, corrected source of truth for
+ * "which mod is where", shared with the launch tooling so it can tell whether an active mod lives only
+ * in the Steam Workshop (which an isolated, Steam-bypassed launch cannot enumerate).
+ */
+function resolveInstalledMods(config) {
+    return scanInstalledMods(config);
+}
 function modFolderIndex(config) {
     const index = new Map();
     for (const m of scanInstalledMods(config)) {
@@ -125,7 +161,7 @@ function readModAbout(folder) {
     const depIds = Array.from((/<modDependencies>([\s\S]*?)<\/modDependencies>/i.exec(xml)?.[1] ?? "")
         .matchAll(/<packageId>([^<]+)<\/packageId>/gi)).map(m => m[1].trim());
     return {
-        packageId: tag("packageId"),
+        packageId: ownPackageId(xml),
         name: tag("name"),
         author: tag("author"),
         description: tag("description"),
