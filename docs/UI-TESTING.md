@@ -158,11 +158,33 @@ If the game can't be launched (no RimWorld available), the matrix is authored bu
 marked `BLOCKED — needs game`, and the change is explicitly reported as *unverified*
 rather than done.
 
+## Positive evidence → Steam showcase
+
+A passing **positive** case already produced a screenshot of the feature working —
+exactly the material a Steam Workshop description wants. So for each positive case
+that passes, store its screenshot with **`showcase_add`**:
+
+```
+showcase_add { source: "<the capture_* screenshot>", caption: "<what it shows>",
+               element: "<the UI element>", mod: "<the Workshop item>" }
+```
+
+This scales it to a description-sized JPEG and records it (caption + element + mod)
+in a persistent manifest that survives across sessions. Over time the showcase
+accumulates captioned proof of every feature. At publish time: `showcase_list { mod }`
+→ upload the JPEGs to Steam (Claude-in-Chrome `file_upload`) → `compose_workshop_bbcode`
+with `{ url, caption }` → `swh_update_description`. Negative cases are not stored (they
+demonstrate correct *absence*, not a feature to show off).
+
 ---
 
 ## Enforcement logic (how "these things get done for any UI change")
 
-The agent applies this automatically; it is not opt-in:
+The agent applies this automatically; it is not opt-in. A **PostToolUse hook**
+(`.claude/hooks/ui-test-guard.cjs`, wired in `.claude/settings.json`) fires after every
+Edit/Write/MultiEdit and, when the edited file is a UI-bearing game file, injects this
+requirement into the turn — so a UI change can't slip through untested even if the
+detection step below is skipped.
 
 1. **Detect** — after editing, scan the working diff for UI surfaces:
    - C#: `GetGizmos`, `Command_*`, `Gizmo`, `*Window`, `Dialog_*`, `FloatMenu`,
@@ -176,7 +198,9 @@ The agent applies this automatically; it is not opt-in:
    blocks until `mapLive`), collecting assertions + screenshots + log state.
 5. **Gate** — build the matrix; if any element lacks a negative case, or any row is
    FAIL/BLOCKED, the change is **not done**: fix and re-run, or report it unverified.
-6. **Report** the matrix (elements × {positive, negative} → PASS/FAIL + evidence) as
+6. **Store positives** — `showcase_add` each passing positive case's screenshot
+   (caption + element + mod) so Steam-ready evidence accrues (see above).
+7. **Report** the matrix (elements × {positive, negative} → PASS/FAIL + evidence) as
    the completion artifact for the UI change.
 
 This protocol composes with the existing gates: a clean `read_rimworld_log` and (for

@@ -53,6 +53,7 @@ const moddingDocs_1 = require("./tools/moddingDocs");
 const apiSearch_1 = require("./tools/apiSearch");
 const perf_1 = require("./tools/perf");
 const workshopImages_1 = require("./tools/workshopImages");
+const showcase_1 = require("./tools/showcase");
 const defValidate_1 = require("./tools/defValidate");
 const defCorpus_1 = require("./tools/defCorpus");
 const corpusRegistry_1 = require("./tools/corpusRegistry");
@@ -92,6 +93,7 @@ const ALL_TOOLS = [
     ...apiSearch_1.apiSearchTools,
     ...perf_1.perfTools,
     ...workshopImages_1.workshopImageTools,
+    ...showcase_1.showcaseTools,
     ...defValidate_1.defValidateTools,
     ...defCorpus_1.defCorpusTools,
     ...corpusRegistry_1.corpusRegistryTools,
@@ -150,6 +152,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (workshopImages_1.workshopImageTools.some(t => t.name === name)) {
         return await (0, workshopImages_1.handleWorkshopImageTool)(name, args);
+    }
+    if (showcase_1.showcaseTools.some(t => t.name === name)) {
+        return await (0, showcase_1.handleShowcaseTool)(name, args);
     }
     if (defValidate_1.defValidateTools.some(t => t.name === name)) {
         return await (0, defValidate_1.handleDefValidateTool)(name, args);
@@ -315,6 +320,9 @@ async function main() {
                 }
                 else if (workshopImages_1.workshopImageTools.some(t => t.name === name)) {
                     result = await (0, workshopImages_1.handleWorkshopImageTool)(name, args);
+                }
+                else if (showcase_1.showcaseTools.some(t => t.name === name)) {
+                    result = await (0, showcase_1.handleShowcaseTool)(name, args);
                 }
                 else if (defValidate_1.defValidateTools.some(t => t.name === name)) {
                     result = await (0, defValidate_1.handleDefValidateTool)(name, args);

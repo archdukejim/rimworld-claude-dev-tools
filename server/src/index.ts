@@ -22,6 +22,7 @@ import { moddingDocsTools, handleModdingDocsTool } from "./tools/moddingDocs";
 import { apiSearchTools, handleApiSearchTool } from "./tools/apiSearch";
 import { perfTools, handlePerfTool } from "./tools/perf";
 import { workshopImageTools, handleWorkshopImageTool } from "./tools/workshopImages";
+import { showcaseTools, handleShowcaseTool } from "./tools/showcase";
 import { defValidateTools, handleDefValidateTool } from "./tools/defValidate";
 import { defCorpusTools, handleDefCorpusTool } from "./tools/defCorpus";
 import { corpusRegistryTools, handleCorpusRegistryTool } from "./tools/corpusRegistry";
@@ -65,6 +66,7 @@ const ALL_TOOLS = [
     ...apiSearchTools,
     ...perfTools,
     ...workshopImageTools,
+    ...showcaseTools,
     ...defValidateTools,
     ...defCorpusTools,
     ...corpusRegistryTools,
@@ -137,6 +139,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (workshopImageTools.some(t => t.name === name)) {
         return await handleWorkshopImageTool(name, args);
+    }
+
+    if (showcaseTools.some(t => t.name === name)) {
+        return await handleShowcaseTool(name, args);
     }
 
     if (defValidateTools.some(t => t.name === name)) {
@@ -318,6 +324,8 @@ async function main() {
                     result = await handlePerfTool(name, args);
                 } else if (workshopImageTools.some(t => t.name === name)) {
                     result = await handleWorkshopImageTool(name, args);
+                } else if (showcaseTools.some(t => t.name === name)) {
+                    result = await handleShowcaseTool(name, args);
                 } else if (defValidateTools.some(t => t.name === name)) {
                     result = await handleDefValidateTool(name, args);
                 } else if (defCorpusTools.some(t => t.name === name)) {

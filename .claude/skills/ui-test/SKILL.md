@@ -33,7 +33,9 @@ evidence before it is "done".
    `set_roof`, `set_weather`, `set_time`, `build_room`, `select_thing_at`, …).
 4. **Run** positive then negative cases per element; collect assertion + screenshot +
    log state for each.
-5. **Gate & report** the matrix: elements × {positive, negative} → PASS/FAIL +
+5. **Store positives** — `showcase_add` each passing positive case's screenshot
+   (caption + element + mod) so Steam-ready evidence accrues for description uploads.
+6. **Gate & report** the matrix: elements × {positive, negative} → PASS/FAIL +
    evidence. Any missing negative, or any FAIL/BLOCKED → not done; fix and re-run.
 
 ## Tools (rimworld-claude-dev-tools MCP)
@@ -45,6 +47,7 @@ evidence before it is "done".
   `get_play_settings`, `set_play_setting`, `inspect_thing_at`, `sample_environment`.
 - Evidence: `capture_game_window`, `capture_gizmo`, `capture_colonist_bar`,
   `capture_play_settings`, `capture_screen` (`focusGame:true`).
+- Store positives for Steam: `showcase_add`, `showcase_list`, `showcase_remove`.
 
 ## Preconditions
 RimWorld installed with the RimAgentic mod active (symlinked from the repo). After any
