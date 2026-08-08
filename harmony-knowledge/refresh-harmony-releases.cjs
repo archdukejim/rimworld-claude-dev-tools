@@ -1,26 +1,25 @@
 #!/usr/bin/env node
 /**
- * Watch Harmony (and RimWorld) versions; on a CHANGE, alert, write a diff, and rebuild the Harmony
- * RAG corpus. Deterministic and self-contained (no LLM, no MCP) so it runs unattended from a
- * scheduled task.
+ * Watch Harmony (and RimWorld) versions; on a CHANGE, record a diff and rebuild the Harmony RAG
+ * corpus. Deterministic and self-contained (no LLM, no MCP) so it runs unattended from a scheduled
+ * task.
  *
  * Change-triggered, not unconditional: it compares against a stored baseline (.refresh-state.json)
- * and does nothing on a quiet run. On the FIRST run it seeds the baseline (rebuild, no alert).
+ * and does nothing on a quiet run. On the FIRST run it seeds the baseline (rebuild, no diff file).
  *
  *   - Harmony: fetches the GitHub releases API. New release(s) -> rewrite the SEPARATE auto file
  *     (harmony-releases.auto.jsonl; the curated harmony-corpus.jsonl is never touched) and rebuild.
- *   - RimWorld: reads the installed game's Version.txt. A game-version change is alerted too, with a
+ *   - RimWorld: reads the installed game's Version.txt. A game-version change is recorded too, with a
  *     reminder to re-run the in-game dump_game_api + build_api_index (that corpus can't be rebuilt
  *     headlessly).
  *
- * On any change it writes HARMONY-UPDATE.md (the diff to review) and fires a best-effort desktop
- * notification. Safe on failure: a failed fetch leaves everything untouched.
+ * On any change it writes HARMONY-UPDATE.md (the diff to review) and logs it — no desktop popup.
+ * Safe on failure: a failed fetch leaves everything untouched.
  *
  * Run manually:  node harmony-knowledge/refresh-harmony-releases.cjs
  */
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
 
 const RELEASES_URL = "https://api.github.com/repos/pardeike/Harmony/releases";
 const MAX_RELEASES = 12;
@@ -80,30 +79,6 @@ function releaseToRecord(rel) {
         text: `Harmony ${tag}${date ? ` released ${date}` : ""}: ${name}${body}`.trim(),
         related: ["rel-source"]
     };
-}
-
-/** Best-effort desktop balloon (Win11 Home has no msg.exe). Detached so the dwell never blocks us. */
-function notify(title, message) {
-    try {
-        const ps = `
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$n = New-Object System.Windows.Forms.NotifyIcon
-$n.Icon = [System.Drawing.SystemIcons]::Information
-$n.Visible = $true
-$n.BalloonTipTitle = @'
-${title}
-'@
-$n.BalloonTipText = @'
-${message}
-'@
-$n.ShowBalloonTip(20000)
-Start-Sleep -Seconds 21
-$n.Dispose()`;
-        const child = spawn("powershell", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
-            { detached: true, stdio: "ignore" });
-        child.unref();
-    } catch (e) { log(`Notify failed (${e.message || e}).`); }
 }
 
 function writeUpdateFile(sections, newest) {
@@ -193,10 +168,10 @@ async function main() {
 
     writeState(nextState);
 
-    // --- Baseline run: establish state quietly, no alert ---
-    if (baseline) { log(`Baseline established (Harmony ${latestTag}${rimworldVersion ? `, RimWorld ${rimworldVersion}` : ""}). No alert on first run.`); return; }
+    // --- Baseline run: establish state quietly, no diff file ---
+    if (baseline) { log(`Baseline established (Harmony ${latestTag}${rimworldVersion ? `, RimWorld ${rimworldVersion}` : ""}). First run — no diff written.`); return; }
 
-    // --- A real change: build the diff, write it, and alert ---
+    // --- A real change: build the diff and write it (no popup; the file + log are the record) ---
     const sections = [];
     if (harmonyChanged) {
         const bullets = newTags.length
@@ -212,8 +187,7 @@ async function main() {
     const parts = [];
     if (harmonyChanged) parts.push(newTags.length ? `Harmony ${newTags.join(", ")}` : `Harmony ${latestTag}`);
     if (rimworldChanged) parts.push(`RimWorld ${rimworldVersion}`);
-    notify("RimAgentic: version change", `${parts.join(" · ")}. See HARMONY-UPDATE.md; corpus rebuilt.`);
-    log(`ALERT: ${parts.join(" · ")}.`);
+    log(`CHANGE: ${parts.join(" · ")} — see HARMONY-UPDATE.md; corpus rebuilt.`);
 }
 
 main().catch(e => { log(`Unexpected error: ${e.stack || e}`); process.exit(1); });
