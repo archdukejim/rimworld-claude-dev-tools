@@ -7,7 +7,7 @@ import { getClipboardText, setClipboardText, copySelectedText, pasteText, getCli
 import { getUiElementInfoTool, invokeUiElementActionTool, GetUiElementInfoInput, InvokeUiElementActionInput } from "./pc/uiAutomation";
 import { handleRimworldDevTool } from "./rimworldDev";
 import { armGameWatchdog } from "../gameWatchdog";
-import { requestOpenWindows } from "./gameIpc";
+import { requestOpenWindows, requestGizmos } from "./gameIpc";
 import { sharp } from "./pc/native";
 import * as fs from "fs";
 import * as os from "os";
@@ -62,6 +62,46 @@ function describeFocus(token: string): string {
   return `(focus attempt: ${token})`;
 }
 
+interface CropRect { x: number; y: number; width: number; height: number; }
+
+/**
+ * Foreground RimWorld, capture the full screen, then crop to a UI-space rect — the shared body of
+ * capture_game_window and capture_gizmo. Scales the rect from UI pixels to image pixels via the
+ * game-reported screen dims (so it's correct at any UI Scale) and clamps to the image bounds.
+ */
+async function captureAndCrop(
+  rect: CropRect,
+  uiW: number,
+  uiH: number,
+  opts: { pad?: number; format?: CaptureFormat; quality?: number; outName?: string }
+): Promise<{ outPath: string; left: number; top: number; cropW: number; cropH: number; fullPath: string; focusToken: string }> {
+  const focusToken = foregroundGameWindow();
+  const fullPath = await captureScreen(opts.format, opts.quality);
+
+  const meta = await sharp()(fullPath).metadata();
+  const imgW = meta.width || 0, imgH = meta.height || 0;
+  const sx = uiW ? imgW / uiW : 1, sy = uiH ? imgH / uiH : 1;
+  const p = Math.max(0, Math.round(Number(opts.pad) || 0));
+
+  let left = Math.round(rect.x * sx) - p;
+  let top = Math.round(rect.y * sy) - p;
+  let cropW = Math.round(rect.width * sx) + 2 * p;
+  let cropH = Math.round(rect.height * sy) + 2 * p;
+  left = Math.max(0, Math.min(left, Math.max(0, imgW - 1)));
+  top = Math.max(0, Math.min(top, Math.max(0, imgH - 1)));
+  cropW = Math.max(1, Math.min(cropW, imgW - left));
+  cropH = Math.max(1, Math.min(cropH, imgH - top));
+
+  const ext = opts.format === CaptureFormat.JPEG ? "jpeg" : "png";
+  const outPath = path.resolve(`${opts.outName || "window_crop"}.${ext}`);
+  let pipeline = sharp()(fullPath).extract({ left, top, width: cropW, height: cropH });
+  if (opts.format === CaptureFormat.JPEG) {
+    pipeline = pipeline.jpeg({ quality: Math.max(1, Math.min(100, opts.quality || 80)) });
+  }
+  await pipeline.toFile(outPath);
+  return { outPath, left, top, cropW, cropH, fullPath, focusToken };
+}
+
 const keyValues = Object.values(Key);
 const formatValues = Object.values(CaptureFormat);
 const mouseButtonValues = Object.values(MouseButton);
@@ -103,6 +143,19 @@ export const pcControlTools = [
       properties: {
         window: { type: "string", description: "Substring of the target window's C# type (e.g. 'ModSettings', 'ModsConfig'). Omit to use the frontmost dialog." },
         pad: { type: "integer", minimum: 0, description: "Pixels of padding to add around the window rect (default 0)." },
+        format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
+        quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
+      }
+    }
+  },
+  {
+    name: "capture_gizmo",
+    description: "Screenshot the selected thing's command buttons (gizmos — draft/attack/toggles/designators), cropped. gizmo: a case-insensitive label substring to isolate one button (e.g. 'Draft'); omit to capture the whole gizmo bar. Select a thing first with select_thing_at — gizmos only draw for a selected thing with commands. Returns the cropped image path (read it with the Read tool).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        gizmo: { type: "string", description: "Label substring of the command button to isolate (e.g. 'Draft', 'Attack'). Omit to capture the whole gizmo bar." },
+        pad: { type: "integer", minimum: 0, description: "Pixels of padding around the crop (default 2 for one gizmo, 4 for the bar)." },
         format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
         quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
       }
@@ -419,36 +472,41 @@ export async function handlePcControlTool(name: string, args: any) {
           return { isError: true, content: [{ type: "text", text: `capture_game_window: no window matched "${wantType ?? "(frontmost)"}". Currently open: ${names}. Open one with open_window.` }] };
         }
 
-        // 3) Foreground the game, then capture the full screen.
-        const focusToken = foregroundGameWindow();
-        const fullPath = await captureScreen(format, quality);
+        const r = await captureAndCrop(target.rect, wins.screen?.width || 0, wins.screen?.height || 0, { pad, format, quality, outName: "window_crop" });
+        return { content: [{ type: "text", text: `Captured '${target.type}' cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view. (Full frame kept at ${r.fullPath}.)` }] };
+      }
+      case "capture_gizmo": {
+        const { gizmo: wantLabel, pad, format, quality } = args;
 
-        // 4) Scale the UI-space rect to image pixels and crop with sharp.
-        const meta = await sharp()(fullPath).metadata();
-        const imgW = meta.width || 0, imgH = meta.height || 0;
-        const uiW = wins.screen?.width || imgW, uiH = wins.screen?.height || imgH;
-        const sx = uiW ? imgW / uiW : 1, sy = uiH ? imgH / uiH : 1;
-        const p = Math.max(0, Math.round(Number(pad) || 0));
-
-        let left = Math.round(target.rect.x * sx) - p;
-        let top = Math.round(target.rect.y * sy) - p;
-        let cropW = Math.round(target.rect.width * sx) + 2 * p;
-        let cropH = Math.round(target.rect.height * sy) + 2 * p;
-        // Clamp to image bounds so extract never runs off the edge.
-        left = Math.max(0, Math.min(left, Math.max(0, imgW - 1)));
-        top = Math.max(0, Math.min(top, Math.max(0, imgH - 1)));
-        cropW = Math.max(1, Math.min(cropW, imgW - left));
-        cropH = Math.max(1, Math.min(cropH, imgH - top));
-
-        const ext = format === CaptureFormat.JPEG ? "jpeg" : "png";
-        const outPath = path.resolve(`window_crop.${ext}`);
-        let pipeline = sharp()(fullPath).extract({ left, top, width: cropW, height: cropH });
-        if (format === CaptureFormat.JPEG) {
-          pipeline = pipeline.jpeg({ quality: Math.max(1, Math.min(100, quality || 80)) });
+        const g = await requestGizmos();
+        if (!g) {
+          return { isError: true, content: [{ type: "text", text: "capture_gizmo: no gizmo data from the game. Is RimWorld running with a live game loaded?" }] };
         }
-        await pipeline.toFile(outPath);
+        if (!g.gizmos.length) {
+          return { isError: true, content: [{ type: "text", text: "capture_gizmo: no gizmos on screen. Select a thing first with select_thing_at — gizmos (command buttons) only draw for a selected thing that has commands." }] };
+        }
 
-        return { content: [{ type: "text", text: `Captured '${target.type}' cropped to ${cropW}x${cropH} at (${left},${top}) → ${outPath} ${describeFocus(focusToken)}. Read it to view. (Full frame kept at ${fullPath}.)` }] };
+        let rect: CropRect;
+        let labelDesc: string;
+        if (wantLabel) {
+          const q = String(wantLabel).toLowerCase();
+          const hit = g.gizmos.find(x => (x.label || "").toLowerCase().includes(q));
+          if (!hit) {
+            const names = g.gizmos.map(x => x.label).join(", ");
+            return { isError: true, content: [{ type: "text", text: `capture_gizmo: no gizmo matched "${wantLabel}". On screen: ${names}.` }] };
+          }
+          rect = { x: hit.x, y: hit.y, width: hit.width, height: hit.height };
+          labelDesc = `gizmo '${hit.label}'`;
+        } else {
+          const b = g.bounds || g.gizmos[0];
+          rect = { x: b.x, y: b.y, width: b.width, height: b.height };
+          labelDesc = `gizmo bar (${g.gizmos.length} buttons)`;
+        }
+
+        // A little padding so button borders aren't clipped; more for the whole-bar shot.
+        const effPad = pad ?? (wantLabel ? 2 : 4);
+        const r = await captureAndCrop(rect, g.screen?.width || 0, g.screen?.height || 0, { pad: effPad, format, quality, outName: "gizmo_crop" });
+        return { content: [{ type: "text", text: `Captured ${labelDesc} cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view.` }] };
       }
       case "capture_region": {
         const { left, top, width, height, format, quality, focusGame } = args;

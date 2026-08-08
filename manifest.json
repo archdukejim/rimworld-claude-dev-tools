@@ -214,6 +214,10 @@
       "description": "Screenshot a single RimWorld menu/dialog cropped to just that window. Foregrounds the game, captures, finds the window via the game's window stack, and crops to its rect. window: substring of the window's C# type (e.g. 'ModsConfig', 'ModSettings'); omit for the frontmost dialog. Returns the cropped image path."
     },
     {
+      "name": "capture_gizmo",
+      "description": "Screenshot the selected thing's command buttons (gizmos), cropped. gizmo: label substring to isolate one button (e.g. 'Draft'); omit for the whole gizmo bar. Select a thing first with select_thing_at (in-game). Returns the cropped image path."
+    },
+    {
       "name": "capture_region",
       "description": "Capture a specific region of the screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first (see capture_screen)."
     },

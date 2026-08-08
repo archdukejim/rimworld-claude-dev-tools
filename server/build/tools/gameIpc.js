@@ -37,6 +37,7 @@ exports.gameIpcTools = void 0;
 exports.requestInGameSave = requestInGameSave;
 exports.requestBridgeStatus = requestBridgeStatus;
 exports.requestOpenWindows = requestOpenWindows;
+exports.requestGizmos = requestGizmos;
 exports.handleGameIpcTool = handleGameIpcTool;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -190,6 +191,22 @@ async function requestOpenWindows(timeoutMs = 4000) {
     try {
         const result = await callInGameTool("get_open_windows", {}, timeoutMs);
         if (!result || result.error || !Array.isArray(result.windows))
+            return null;
+        return result;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Read the command buttons (gizmos) currently drawn for the selection, with their on-screen rects.
+ * Returns null if the bridge didn't answer. Used by capture_gizmo to crop a screenshot to a single
+ * button or the whole gizmo bar. Never throws.
+ */
+async function requestGizmos(timeoutMs = 4000) {
+    try {
+        const result = await callInGameTool("get_gizmos", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.gizmos))
             return null;
         return result;
     }

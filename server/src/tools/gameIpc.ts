@@ -181,6 +181,30 @@ export async function requestOpenWindows(timeoutMs = 4000): Promise<OpenWindows 
     }
 }
 
+export interface GizmoRect { label: string; x: number; y: number; width: number; height: number; }
+export interface Gizmos {
+    count: number;
+    screen?: { width: number; height: number };
+    bounds?: { x: number; y: number; width: number; height: number } | null;
+    gizmos: GizmoRect[];
+    note?: string | null;
+}
+
+/**
+ * Read the command buttons (gizmos) currently drawn for the selection, with their on-screen rects.
+ * Returns null if the bridge didn't answer. Used by capture_gizmo to crop a screenshot to a single
+ * button or the whole gizmo bar. Never throws.
+ */
+export async function requestGizmos(timeoutMs = 4000): Promise<Gizmos | null> {
+    try {
+        const result = await callInGameTool("get_gizmos", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.gizmos)) return null;
+        return result as Gizmos;
+    } catch {
+        return null;
+    }
+}
+
 export async function handleGameIpcTool(name: string, args: any) {
     if (name === "list_game_tools") {
         const query = args.query || null;

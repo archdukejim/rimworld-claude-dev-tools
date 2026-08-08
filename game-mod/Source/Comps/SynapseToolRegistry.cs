@@ -168,6 +168,7 @@ namespace RimAgentic
             RegisterSaveTools();
             RegisterMapBuildTools();
             RegisterEnvControlTools();
+            RegisterGizmoTools();
             RegisterDynamicDebugActions();
 
             // Centralized synonym keyword registrations
