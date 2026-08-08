@@ -158,7 +158,42 @@ namespace RimAgentic
                 },
                 isDebug: false, keywords: new List<string> { "open", "window", "menu", "dialog", "settings", "mods", "options", "screenshot", "capture" }
             );
+
+            // Tool: read_float_menu — read the text options of an open float menu (what a gizmo or
+            // right-click produces). The headless way to verify a menu's contents without OCR.
+            RegisterTool(
+                "read_float_menu",
+                "Read the text options of the float menu currently open — the menu a gizmo (activate_gizmo) or right-click produces — returning each option's label and disabled state, plus the count. found:false if no float menu is open (a gizmo may have opened a custom dialog instead — screenshot that with capture_game_window). Use to verify what options a gizmo's menu offers.",
+                new Dictionary<string, object> { ["type"] = "object", ["properties"] = new Dictionary<string, object>() },
+                args =>
+                {
+                    try
+                    {
+                        var fm = Find.WindowStack?.WindowOfType<FloatMenu>();
+                        if (fm == null)
+                            return JsonConvert.SerializeObject(new { success = true, found = false, note = "No float menu open. If a gizmo opened a dialog instead, screenshot it with capture_game_window." });
+
+                        var optsField = AccessTools.Field(typeof(FloatMenu), "options");
+                        var opts = optsField?.GetValue(fm) as List<FloatMenuOption>;
+                        var options = (opts ?? new List<FloatMenuOption>()).Select(o => new
+                        {
+                            label = SafeMenuLabel(o),
+                            disabled = SafeMenuDisabled(o)
+                        }).ToList();
+
+                        return JsonConvert.SerializeObject(new { success = true, found = true, count = options.Count, options });
+                    }
+                    catch (Exception ex)
+                    {
+                        return $"{{\"error\": \"Failed to read float menu: {ex.Message}\"}}";
+                    }
+                },
+                isDebug: false, keywords: new List<string> { "float", "menu", "options", "read", "contents", "dropdown", "choices" }
+            );
         }
+
+        private static string SafeMenuLabel(FloatMenuOption o) { try { return o?.Label; } catch { return null; } }
+        private static bool SafeMenuDisabled(FloatMenuOption o) { try { return o?.Disabled ?? false; } catch { return false; } }
 
         /// <summary>Mod.SettingsCategory() can throw in a badly-behaved mod; never let that sink the enumeration.</summary>
         private static string SafeSettingsCategory(Mod m)

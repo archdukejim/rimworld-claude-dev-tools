@@ -19,17 +19,34 @@ const ID_FIELD = "id";
 const TEXT_FIELDS = ["title", "text", "signature", "category", "kind"];
 const CATEGORIES = ["core", "attributes", "injection", "semantics", "il", "patterns", "gotcha", "rimworld", "release-notes"];
 
-/** Locate the bundled Harmony corpus data. Overridable with RIMAGENTIC_HARMONY. Compiles to
- *  build/tools/, so the repo root is three levels up; a couple of fallbacks cover packaged layouts. */
-function harmonyDataFile(): string {
+/** Locate the harmony-knowledge folder. Overridable with RIMAGENTIC_HARMONY (pointing at the folder
+ *  OR the curated .jsonl). Compiles to build/tools/, so the repo root is three levels up; a couple of
+ *  fallbacks cover packaged layouts. */
+function harmonyDir(): string {
+    const envDir = process.env.RIMAGENTIC_HARMONY;
     const candidates = [
-        process.env.RIMAGENTIC_HARMONY,
-        path.resolve(__dirname, "../../../harmony-knowledge/harmony-corpus.jsonl"),
-        path.resolve(__dirname, "../../harmony-knowledge/harmony-corpus.jsonl"),
-        path.resolve(process.cwd(), "harmony-knowledge/harmony-corpus.jsonl")
+        envDir && (envDir.toLowerCase().endsWith(".jsonl") ? path.dirname(envDir) : envDir),
+        path.resolve(__dirname, "../../../harmony-knowledge"),
+        path.resolve(__dirname, "../../harmony-knowledge"),
+        path.resolve(process.cwd(), "harmony-knowledge")
     ].filter(Boolean) as string[];
     for (const c of candidates) if (fs.existsSync(c)) return c;
     return candidates[1];
+}
+/** Curated, hand-authored records (stable, git-tracked). */
+function harmonyDataFile(): string { return path.join(harmonyDir(), "harmony-corpus.jsonl"); }
+/** Auto-generated release records, refreshed from the GitHub API by refresh-harmony-releases.cjs.
+ *  Kept separate so machine churn never touches the curated file. Optional — absent is fine. */
+function harmonyAutoFile(): string { return path.join(harmonyDir(), "harmony-releases.auto.jsonl"); }
+
+function readJsonl(p: string): any[] {
+    const out: any[] = [];
+    if (!fs.existsSync(p)) return out;
+    for (const line of fs.readFileSync(p, "utf8").split("\n")) {
+        const t = line.trim(); if (!t) continue;
+        try { out.push(JSON.parse(t)); } catch { /* skip malformed */ }
+    }
+    return out;
 }
 
 function textOf(res: any): string {
@@ -53,11 +70,13 @@ async function ensureHarmonyCorpus(force: boolean): Promise<{ built: boolean; in
 
     const dataPath = harmonyDataFile();
     if (!fs.existsSync(dataPath)) {
-        throw new Error(`Harmony corpus data not found at ${dataPath}. Set RIMAGENTIC_HARMONY to point at harmony-corpus.jsonl.`);
+        throw new Error(`Harmony corpus data not found at ${dataPath}. Set RIMAGENTIC_HARMONY to point at harmony-knowledge (or harmony-corpus.jsonl).`);
     }
 
+    // Curated (stable) + auto-generated release records (refreshed from GitHub), merged.
+    const records = [...readJsonl(dataPath), ...readJsonl(harmonyAutoFile())];
     const reg = await handleCorpusRegistryTool("register_corpus", {
-        name: CORPUS, recordsPath: dataPath, idField: ID_FIELD, textFields: TEXT_FIELDS
+        name: CORPUS, records, idField: ID_FIELD, textFields: TEXT_FIELDS
     });
     if (!parsedOk(reg)) throw new Error(`Failed to register Harmony corpus: ${textOf(reg)}`);
 
@@ -154,7 +173,7 @@ export async function handleHarmonyTool(name: string, args: any) {
                     ok: true, corpus: CORPUS, ...r,
                     records: meta?.count ?? null,
                     relations: meta?.relations ?? [],
-                    source: harmonyDataFile(),
+                    source: { curated: harmonyDataFile(), auto: fs.existsSync(harmonyAutoFile()) ? harmonyAutoFile() : null },
                     note: r.indexed ? "Semantic + keyword search ready." : "Keyword search ready (semantic index unavailable — MiniLM model failed to load)."
                 }, null, 2)
             }]

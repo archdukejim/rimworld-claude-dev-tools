@@ -7,6 +7,13 @@ rimtoolkit.mcpb
 # harness runtime state
 harness/.logmarker
 
+# harmony release-notes auto-refresh (machine-generated; corpus regenerates from these + the
+# git-tracked harmony-corpus.jsonl). See harmony-knowledge/refresh-harmony-releases.cjs.
+harmony-knowledge/harmony-releases.auto.jsonl
+harmony-knowledge/.refresh-state.json
+harmony-knowledge/.refresh.log
+harmony-knowledge/HARMONY-UPDATE.md
+
 # steam workshop triage runtime state
 mcp-config/triage-report.json
 mcp-config/triage-state.json

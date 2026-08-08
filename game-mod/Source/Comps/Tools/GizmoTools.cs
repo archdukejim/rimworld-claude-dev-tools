@@ -22,7 +22,7 @@ namespace RimAgentic
     /// Gizmos only draw while something selectable is selected, so select_thing_at is provided to
     /// summon them headlessly: select a thing → get_gizmos / capture_gizmo.
     /// </summary>
-    internal struct GizmoRectRecord { public string label; public Rect rect; }
+    internal struct GizmoRectRecord { public string label; public Rect rect; public Command cmd; }
 
     internal static class GizmoCapture
     {
@@ -45,7 +45,7 @@ namespace RimAgentic
             if (string.IsNullOrEmpty(label)) { try { label = cmd.defaultLabel; } catch { } }
             if (string.IsNullOrEmpty(label)) label = cmd.GetType().Name;
 
-            _current.Add(new GizmoRectRecord { label = label, rect = new Rect(topLeft.x, topLeft.y, w, GizmoHeight) });
+            _current.Add(new GizmoRectRecord { label = label, rect = new Rect(topLeft.x, topLeft.y, w, GizmoHeight), cmd = cmd });
         }
 
         /// <summary>
@@ -56,6 +56,16 @@ namespace RimAgentic
         {
             if (Time.frameCount - _lastFrame > 3) return new List<GizmoRectRecord>();
             return (_current != null && _current.Count > 0) ? _current : _last;
+        }
+
+        /// <summary>Find the most-recently-drawn gizmo whose label contains the query (case-insensitive).</summary>
+        public static GizmoRectRecord? FindByLabel(string q)
+        {
+            if (string.IsNullOrEmpty(q)) return null;
+            string ql = q.ToLowerInvariant();
+            foreach (var r in Latest())
+                if (!string.IsNullOrEmpty(r.label) && r.label.ToLowerInvariant().Contains(ql)) return r;
+            return null;
         }
     }
 
@@ -115,6 +125,78 @@ namespace RimAgentic
                     }
                 },
                 isDebug: false, keywords: new List<string> { "gizmo", "command", "button", "draft", "attack", "toggle", "bar" }
+            );
+
+            // Tool: activate_gizmo — the "click". Fires a gizmo's behavior so its effect (toggle,
+            // action, or the menu/dialog it opens) can then be read/verified. This is what turns
+            // gizmo capture into gizmo *behavior* testing.
+            RegisterTool(
+                "activate_gizmo",
+                "Trigger a gizmo (command button) as if clicked, by label substring — fires its behavior: toggles it, runs its action, or opens the menu/dialog it produces. Afterwards read the menu with read_float_menu (text) or screenshot it with capture_game_window. Select a thing first (select_thing_at); get_gizmos lists the labels. Changes game state.",
+                new Dictionary<string, object>
+                {
+                    ["type"] = "object",
+                    ["properties"] = new Dictionary<string, object>
+                    {
+                        ["label"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "Label substring of the gizmo to trigger (e.g. 'Set plant', 'Draft')." }
+                    },
+                    ["required"] = new List<string> { "label" }
+                },
+                args =>
+                {
+                    try
+                    {
+                        var d = JsonConvert.DeserializeObject<Dictionary<string, object>>(args);
+                        string q = ArgStr(d, "label");
+                        if (string.IsNullOrEmpty(q)) return "{\"error\": \"Missing 'label'.\"}";
+
+                        var rec = GizmoCapture.FindByLabel(q);
+                        if (rec == null)
+                        {
+                            var avail = string.Join(", ", GizmoCapture.Latest().Select(r => r.label));
+                            return $"{{\"error\": \"No gizmo matching '{q}'. Currently drawn: {avail}. Select a thing (select_thing_at) so its gizmos draw.\"}}";
+                        }
+                        if (rec.Value.cmd == null) return "{\"error\": \"That gizmo is not an activatable Command.\"}";
+
+                        // ProcessInput is the click path — runs the action / toggle, or adds the menu/
+                        // dialog to the WindowStack. Runs on the main thread (bridge dispatch), so
+                        // touching the WindowStack here is safe.
+                        rec.Value.cmd.ProcessInput(new Event());
+
+                        var fm = Find.WindowStack?.WindowOfType<FloatMenu>();
+                        object menuOptions = null;
+                        if (fm != null)
+                        {
+                            // A headless-opened float menu vanishes next frame because the cursor is
+                            // "distant"; pin it open so read_float_menu / a screenshot can follow, and
+                            // read its options now (same tick — guaranteed still open).
+                            try { AccessTools.Field(typeof(FloatMenu), "vanishIfMouseDistant")?.SetValue(fm, false); } catch { }
+                            try
+                            {
+                                var opts = AccessTools.Field(typeof(FloatMenu), "options")?.GetValue(fm) as List<FloatMenuOption>;
+                                if (opts != null)
+                                    menuOptions = opts.Select(o => new { label = SafeMenuLabel(o), disabled = SafeMenuDisabled(o) }).ToList();
+                            }
+                            catch { }
+                        }
+
+                        return JsonConvert.SerializeObject(new
+                        {
+                            success = true,
+                            activated = rec.Value.label,
+                            floatMenuOpen = fm != null,
+                            menuOptions,
+                            hint = fm != null
+                                ? "A float menu opened (pinned open). Its options are in menuOptions; read_float_menu re-reads them, or capture_game_window window:'FloatMenu' screenshots it."
+                                : "No float menu detected — the gizmo toggled/ran an action, or opened a custom dialog (check get_open_windows / capture_game_window)."
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        return $"{{\"error\": \"Failed to activate gizmo: {ex.Message}\"}}";
+                    }
+                },
+                isDebug: false, keywords: new List<string> { "activate", "trigger", "click", "invoke", "gizmo", "command" }, isMutating: true
             );
 
             // Tool: select_thing_at — select a thing so its gizmos draw (and its inspect pane opens).
