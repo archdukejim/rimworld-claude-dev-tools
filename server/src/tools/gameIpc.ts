@@ -228,6 +228,29 @@ export async function requestColonistBar(timeoutMs = 4000): Promise<ColonistBar 
     }
 }
 
+export interface ToggleEntry { label: string; on: boolean; x: number; y: number; width: number; height: number; }
+export interface PlaySettings {
+    count: number;
+    screen?: { width: number; height: number };
+    bounds?: { x: number; y: number; width: number; height: number } | null;
+    toggles: ToggleEntry[];
+    note?: string | null;
+}
+
+/**
+ * Read the bottom-right play-settings / map-overlay toggle buttons, with rects + on/off state.
+ * Returns null if the bridge didn't answer. Used by capture_play_settings. Never throws.
+ */
+export async function requestPlaySettings(timeoutMs = 4000): Promise<PlaySettings | null> {
+    try {
+        const result = await callInGameTool("get_play_settings", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.toggles)) return null;
+        return result as PlaySettings;
+    } catch {
+        return null;
+    }
+}
+
 export async function handleGameIpcTool(name: string, args: any) {
     if (name === "list_game_tools") {
         const query = args.query || null;

@@ -39,6 +39,7 @@ exports.requestBridgeStatus = requestBridgeStatus;
 exports.requestOpenWindows = requestOpenWindows;
 exports.requestGizmos = requestGizmos;
 exports.requestColonistBar = requestColonistBar;
+exports.requestPlaySettings = requestPlaySettings;
 exports.handleGameIpcTool = handleGameIpcTool;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -223,6 +224,21 @@ async function requestColonistBar(timeoutMs = 4000) {
     try {
         const result = await callInGameTool("get_colonist_bar", {}, timeoutMs);
         if (!result || result.error || !Array.isArray(result.entries))
+            return null;
+        return result;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Read the bottom-right play-settings / map-overlay toggle buttons, with rects + on/off state.
+ * Returns null if the bridge didn't answer. Used by capture_play_settings. Never throws.
+ */
+async function requestPlaySettings(timeoutMs = 4000) {
+    try {
+        const result = await callInGameTool("get_play_settings", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.toggles))
             return null;
         return result;
     }

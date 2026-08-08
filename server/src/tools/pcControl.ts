@@ -7,7 +7,7 @@ import { getClipboardText, setClipboardText, copySelectedText, pasteText, getCli
 import { getUiElementInfoTool, invokeUiElementActionTool, GetUiElementInfoInput, InvokeUiElementActionInput } from "./pc/uiAutomation";
 import { handleRimworldDevTool } from "./rimworldDev";
 import { armGameWatchdog } from "../gameWatchdog";
-import { requestOpenWindows, requestGizmos, requestColonistBar } from "./gameIpc";
+import { requestOpenWindows, requestGizmos, requestColonistBar, requestPlaySettings } from "./gameIpc";
 import { sharp } from "./pc/native";
 import * as fs from "fs";
 import * as os from "os";
@@ -169,6 +169,19 @@ export const pcControlTools = [
       properties: {
         colonist: { type: "string", description: "Name substring of the colonist portrait to isolate (e.g. 'Nate'). Omit to capture the whole bar." },
         pad: { type: "integer", minimum: 0, description: "Pixels of padding around the crop (default 4 for one portrait, 6 for the bar)." },
+        format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
+        quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
+      }
+    }
+  },
+  {
+    name: "capture_play_settings",
+    description: "Screenshot the bottom-right map-overlay / play-settings toggle row, cropped. toggle: a tooltip-label substring to isolate one button (e.g. 'roof'); omit to capture the whole row. No selection needed. Returns the cropped image path (read it with the Read tool).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toggle: { type: "string", description: "Tooltip-label substring of the toggle to isolate (e.g. 'roof', 'fertility'). Omit to capture the whole row." },
+        pad: { type: "integer", minimum: 0, description: "Pixels of padding around the crop (default 3 for one toggle, 6 for the row)." },
         format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
         quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
       }
@@ -551,6 +564,38 @@ export async function handlePcControlTool(name: string, args: any) {
 
         const effPad = pad ?? (wantName ? 4 : 6);
         const r = await captureAndCrop(rect, cb.screen?.width || 0, cb.screen?.height || 0, { pad: effPad, format, quality, outName: "colonistbar_crop" });
+        return { content: [{ type: "text", text: `Captured ${desc} cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view.` }] };
+      }
+      case "capture_play_settings": {
+        const { toggle: wantToggle, pad, format, quality } = args;
+
+        const ps = await requestPlaySettings();
+        if (!ps) {
+          return { isError: true, content: [{ type: "text", text: "capture_play_settings: no play-settings data from the game. Is RimWorld running with a live map view?" }] };
+        }
+        if (!ps.toggles.length) {
+          return { isError: true, content: [{ type: "text", text: "capture_play_settings: no toggles captured — need a live map view (the play-settings row doesn't draw on the world map)." }] };
+        }
+
+        let rect: CropRect;
+        let desc: string;
+        if (wantToggle) {
+          const q = String(wantToggle).toLowerCase();
+          const hit = ps.toggles.find(t => (t.label || "").toLowerCase().includes(q));
+          if (!hit) {
+            const names = ps.toggles.map(t => t.label).join(", ");
+            return { isError: true, content: [{ type: "text", text: `capture_play_settings: no toggle matched "${wantToggle}". On the row: ${names}.` }] };
+          }
+          rect = { x: hit.x, y: hit.y, width: hit.width, height: hit.height };
+          desc = `toggle '${hit.label}'`;
+        } else {
+          const b = ps.bounds || ps.toggles[0];
+          rect = { x: b.x, y: b.y, width: b.width, height: b.height };
+          desc = `play-settings row (${ps.toggles.length} toggles)`;
+        }
+
+        const effPad = pad ?? (wantToggle ? 3 : 6);
+        const r = await captureAndCrop(rect, ps.screen?.width || 0, ps.screen?.height || 0, { pad: effPad, format, quality, outName: "playsettings_crop" });
         return { content: [{ type: "text", text: `Captured ${desc} cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view.` }] };
       }
       case "capture_region": {

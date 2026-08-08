@@ -222,6 +222,10 @@
       "description": "Screenshot the colonist bar at the top of the screen, cropped. colonist: name substring to isolate one portrait (e.g. 'Nate'); omit for the whole bar. No selection needed. Returns the cropped image path."
     },
     {
+      "name": "capture_play_settings",
+      "description": "Screenshot the bottom-right map-overlay / play-settings toggle row, cropped. toggle: tooltip-label substring to isolate one button (e.g. 'roof'); omit for the whole row. Returns the cropped image path."
+    },
+    {
       "name": "capture_region",
       "description": "Capture a specific region of the screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first (see capture_screen)."
     },
