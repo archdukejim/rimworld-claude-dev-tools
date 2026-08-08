@@ -105,6 +105,24 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
 - Keep families independent: a native-module or bridge failure should disable only
   that family, not crash the server (see the try/catch around `startBridge`).
 
+## Testing UI changes (required)
+
+Any change that adds or alters in-game UI — a **gizmo**, a **window/dialog/float
+menu**, an **inspect-pane** element, a **colonist-bar** element, or a **map-overlay /
+play-settings toggle** (including Def changes that surface a new gizmo/comp) — must be
+verified with **both a positive and a negative test case per changed element**, run
+headlessly through the game, before it is considered done.
+
+- The protocol (positive/negative definitions, per-type playbooks, the assertion
+  tools, and the definition-of-done gate) is **`docs/UI-TESTING.md`** — the source of
+  truth. Run it via the **`ui-test`** skill.
+- A UI change with only a positive case, or missing evidence (screenshot +
+  clean `read_rimworld_log`), is **not done**. If the game can't launch, author the
+  matrix, mark it `BLOCKED — needs game`, and report the change as *unverified*.
+- Assertions come from the headless UI tools (`get_gizmos`, `activate_gizmo`,
+  `read_float_menu`, `get_open_windows`, `get_colonist_bar`, `get_play_settings`,
+  `set_play_setting`, `sample_environment`, …); `capture_*` screenshots are evidence.
+
 ## Planned expansions
 
 The roadmap lives in **`docs/PLANNED-FEATURES.md`** (human-readable snapshot),
