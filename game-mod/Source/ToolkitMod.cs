@@ -17,6 +17,13 @@ namespace RimAgentic
         {
             Instance = this;
 
+            // Keep Unity's Update loop — and therefore the GameComponent file-bridge poller — running
+            // while the window is NOT focused. Unity suspends Update on focus loss by default, which is
+            // why every bridge tool call previously needed the game brought to the foreground first and
+            // still raced load-time timeouts. A dev/test instance should tick regardless of focus; the
+            // idle watchdog is what prevents it from running unattended.
+            try { UnityEngine.Application.runInBackground = true; } catch { }
+
             var harmony = new Harmony(HarmonyId);
             harmony.PatchAll();
             PerfProfiler.InstallTickPatch();   // always-on per-tick timer, patched imperatively (Harmony is loaded by now)

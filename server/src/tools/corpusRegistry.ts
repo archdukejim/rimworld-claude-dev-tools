@@ -395,3 +395,12 @@ function queryCorpusGraph(args: any) {
 
 function okText(obj: any) { return { content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] }; }
 function errText(msg: string) { return { content: [{ type: "text", text: msg }] }; }
+
+/**
+ * Read a corpus's meta (or null) by name — for other families that build ON TOP of the generic
+ * registry (e.g. the Harmony corpus) and need to know whether it's been registered/indexed/graphed
+ * before deciding to bootstrap. Same safeName normalization as the tools.
+ */
+export function corpusMeta(name: string): any | null {
+    return readMeta(safeName(name));
+}

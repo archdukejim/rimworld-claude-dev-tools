@@ -165,6 +165,9 @@ namespace RimAgentic
             RegisterApiDumpTools();
             RegisterPerfTools();
             RegisterPerfScenarioTools();
+            RegisterSaveTools();
+            RegisterMapBuildTools();
+            RegisterEnvControlTools();
             RegisterDynamicDebugActions();
 
             // Centralized synonym keyword registrations
@@ -173,9 +176,15 @@ namespace RimAgentic
             // Mutating manifest: the direct-action tools that change game state.
             // execute_game_tool is included because it can invoke anything by name —
             // leaving it unflagged would let a gated run launder mutations through it.
+            // load_game replaces the running session; save_game only writes a file, so it stays
+            // read-only and a gated/read-only run can still checkpoint before it ends.
             MarkMutating(
                 "modify_pawn_state",
+                "load_game",
                 "execute_game_tool");
+            // EnvControlTools' state-changing tools (set_weather, set_time, fill_rect, build_room) are
+            // flagged isMutating at registration, same as MapBuildTools' spawn_thing/set_roof — nothing
+            // to add here. sample_environment is read-only and move_camera only moves the view.
         }
 
         private static void AssignDefaultKeywords()

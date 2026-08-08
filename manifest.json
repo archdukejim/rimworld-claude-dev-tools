@@ -190,16 +190,32 @@
       "description": "Traverse a corpus graph: given a node id and relation, return neighbors forward or reverse, optionally transitively (e.g. ancestors/descendants)."
     },
     {
+      "name": "search_harmony",
+      "description": "Search the bundled Harmony (HarmonyLib) patching knowledge base — prefix/postfix/transpiler/finalizer semantics, injection parameters (__instance/__result/__state/___field), [HarmonyPatch] targeting, AccessTools/Traverse/CodeMatcher, patch ordering, RimWorld patterns and common gotchas. Hybrid semantic+keyword retrieval; self-building on first use. Use before writing or debugging a Harmony patch."
+    },
+    {
+      "name": "harmony_graph",
+      "description": "Traverse the Harmony knowledge graph: from a record id, follow 'related' links to the surrounding cluster of concepts (forward/reverse, optionally transitive). Self-building on first use."
+    },
+    {
+      "name": "rebuild_harmony_corpus",
+      "description": "Force a rebuild of the Harmony corpus (re-register from the bundled harmony-knowledge data, re-embed the semantic index, rebuild the graph). Run after editing harmony-corpus.jsonl; normally unnecessary."
+    },
+    {
       "name": "launch_quicktest",
-      "description": "Launches RimWorld directly with the -quicktest argument to generate a test map instantly."
+      "description": "Launches RimWorld with -quicktest to generate a test map instantly, booting from the CONFIGURED dev savedatafolder so it loads the modlist configure_active_mods set (not the player's default LocalLow config). Thin wrapper over launch_rimworld with quicktest enabled; arms the same idle watchdog. Pass bare:true for a minimal spawn using the player's default LocalLow config (no savedatafolder pinning or dev setup)."
     },
     {
       "name": "capture_screen",
-      "description": "Capture the entire screen as an image"
+      "description": "Capture the entire screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first so the grab lands on the game even after the launcher moves it to a separate virtual desktop."
+    },
+    {
+      "name": "capture_game_window",
+      "description": "Screenshot a single RimWorld menu/dialog cropped to just that window. Foregrounds the game, captures, finds the window via the game's window stack, and crops to its rect. window: substring of the window's C# type (e.g. 'ModsConfig', 'ModSettings'); omit for the frontmost dialog. Returns the cropped image path."
     },
     {
       "name": "capture_region",
-      "description": "Capture a specific region of the screen"
+      "description": "Capture a specific region of the screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first (see capture_screen)."
     },
     {
       "name": "get_screen_size",
@@ -299,7 +315,7 @@
     },
     {
       "name": "launch_rimworld",
-      "description": "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters."
+      "description": "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. Supports loadSave to resume a save straight from launch. When launching into a map (quicktest/loadSave) it blocks until the map is live (waitForReady, default on) so a following bridge tool call won't race the load. Arms an idle watchdog that autosaves and closes the game after a period with no MCP tool call, so it never runs unattended overnight."
     },
     {
       "name": "run_rimworld_tests",
@@ -308,6 +324,10 @@
     {
       "name": "read_rimworld_log",
       "description": "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any [SYNAPSE-TEST] PASS/FAIL results from the TestRunner mod. Pass raw:true for an unfiltered tail instead."
+    },
+    {
+      "name": "list_rimworld_saves",
+      "description": "Lists the saved games (.rws) in the dev save folder, newest first, with size and last-modified time. Use it to pick a slot for launch_rimworld's loadSave."
     },
     {
       "name": "submit_test_job",
@@ -332,6 +352,10 @@
     {
       "name": "execute_game_tool",
       "description": "Executes an interactive gameplay tool inside RimWorld by name, passing a JSON arguments object."
+    },
+    {
+      "name": "save_rimworld_game",
+      "description": "Saves the currently running RimWorld dev game to a named slot via the in-game bridge, so you can close the game and later resume this exact state with launch_rimworld's loadSave. Requires a live game (does nothing at the main menu)."
     }
   ],
   "keywords": [

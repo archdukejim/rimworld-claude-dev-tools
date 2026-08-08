@@ -16,7 +16,11 @@ namespace RimAgentic
         /// <summary>Max callbacks to process per frame to avoid frame drops.</summary>
         private const int MaxCallbacksPerFrame = 5;
 
-        private static int _fileCheckCooldown = 0;
+        // Real-time accumulator (seconds) gating how often the file bridge is polled. Time-based
+        // rather than frame-based so per-call latency stays bounded even if an unfocused window is
+        // running at a reduced frame rate.
+        private static float _pollAccumulator = 0f;
+        private const float PollIntervalSeconds = 0.2f;
 
         public SynapseGameComponent(Game game) { }
 
@@ -89,10 +93,10 @@ namespace RimAgentic
             // Frame-time sample for the performance profiler (main thread, every frame).
             PerfProfiler.RecordFrame(UnityEngine.Time.deltaTime);
 
-            _fileCheckCooldown++;
-            if (_fileCheckCooldown >= 60)
+            _pollAccumulator += UnityEngine.Time.unscaledDeltaTime;
+            if (_pollAccumulator >= PollIntervalSeconds)
             {
-                _fileCheckCooldown = 0;
+                _pollAccumulator = 0f;
                 PollScriptInputFile();
             }
         }

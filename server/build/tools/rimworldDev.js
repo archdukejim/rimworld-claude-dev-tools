@@ -46,6 +46,19 @@ const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const config_1 = require("../config");
 const testing_1 = require("./testing");
+const gameWatchdog_1 = require("../gameWatchdog");
+const gameIpc_1 = require("./gameIpc");
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+/** Cheap liveness check for a launched game PID (signal 0 doesn't kill — it just probes). */
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 /** Is the Steam client running? An isolated launch bypasses Steam (steam_appid.txt), so SteamAPI.Init
  *  fails and RimWorld enumerates only Data/ and local Mods/ — every Workshop-only mod is silently
  *  dropped. Workshop mods therefore load into an isolated launch ONLY when Steam is signed in. */
@@ -196,6 +209,29 @@ function ensureActiveWorkshopModsLoadable(modsDir, savedata) {
         log += `Cleaned up ${removed} stale managed Workshop junction(s).\n`;
     return log;
 }
+/** Enumerate the .rws saves under a savedatafolder's Saves/ dir, newest first. */
+function listSaves(savedata) {
+    const savesDir = path.join(savedata, "Saves");
+    let entries = [];
+    try {
+        entries = fs.readdirSync(savesDir);
+    }
+    catch {
+        return [];
+    }
+    return entries
+        .filter(f => f.toLowerCase().endsWith(".rws"))
+        .map(f => {
+        const st = fs.statSync(path.join(savesDir, f));
+        return {
+            name: path.basename(f, path.extname(f)),
+            sizeBytes: st.size,
+            modified: st.mtime.toISOString(),
+            modifiedMs: st.mtimeMs
+        };
+    })
+        .sort((a, b) => b.modifiedMs - a.modifiedMs);
+}
 exports.rimworldDevTools = [
     {
         name: "deploy_rimworld_mods",
@@ -222,7 +258,7 @@ exports.rimworldDevTools = [
     },
     {
         name: "launch_rimworld",
-        description: "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters.",
+        description: "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. When launching into a map (quicktest or loadSave) it blocks until the map is live before returning, so a following bridge tool call won't race the load.",
         inputSchema: {
             type: "object",
             properties: {
@@ -249,6 +285,35 @@ exports.rimworldDevTools = [
                 nosound: {
                     type: "boolean",
                     description: "Whether to mute the game audio by launching with -nosound (default: true)."
+                },
+                idleTimeoutMin: {
+                    type: "number",
+                    description: "Minutes with no MCP tool call before the idle watchdog closes the game, so it never runs unattended overnight. 0 disables it. Default: RIMAGENTIC_GAME_IDLE_TIMEOUT_MIN (30)."
+                },
+                loadSave: {
+                    description: "Resume a save straight from launch (the automated 'Continue' button) instead of the menu/quicktest. Pass a save slot name, or true to load the most recent save in the save folder. Needs the RimAgentic mod active. Omit for a normal launch.",
+                    oneOf: [{ type: "string" }, { type: "boolean" }]
+                },
+                waitForReady: {
+                    type: "boolean",
+                    description: "When launching into a live map (quicktest or loadSave), block until the map is actually live (the bridge is polling and Find.CurrentMap exists) before returning, so the next bridge tool call won't race the load. Default true. Ignored for a plain menu launch (no map is expected)."
+                },
+                readyTimeoutSec: {
+                    type: "number",
+                    description: "Max seconds to wait for the map to become live when waitForReady is on (default 120)."
+                }
+            }
+        }
+    },
+    {
+        name: "list_rimworld_saves",
+        description: "Lists the saved games (.rws) in the dev save folder, newest first, with size and last-modified time. Use it to pick a slot for launch_rimworld's loadSave.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                savedatafolder: {
+                    type: "string",
+                    description: "Optional custom savedatafolder to read Saves/ from. Defaults to the configured dev save folder."
                 }
             }
         }
@@ -701,13 +766,44 @@ async function handleRimworldDevTool(name, args) {
     }
     if (name === "launch_rimworld") {
         const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
-        const quicktest = args.quicktest === true;
+        let quicktest = args.quicktest === true;
         const developer = args.developer !== false;
         const killExisting = args.killExisting !== false;
         const verbose = args.verbose === true;
         const nosound = args.nosound !== false;
         const pidFilePath = path.join(__dirname, "..", "..", "dev_instance_pid.txt");
         let logs = `Launching RimWorld directly...\n`;
+        // Resolve loadSave (string slot | true = newest save) into a concrete save name to autoload.
+        // The game side reads RIMAGENTIC_AUTOLOAD_SAVE at the main menu and loads it. Resuming a save
+        // and generating a quicktest map are mutually exclusive, so loadSave wins and disables quicktest.
+        let autoloadSave = null;
+        if (args.loadSave !== undefined && args.loadSave !== false && args.loadSave !== null) {
+            const saves = listSaves(savedata);
+            if (args.loadSave === true) {
+                if (saves.length === 0) {
+                    logs += `WARNING: loadSave=true but no saves exist in ${path.join(savedata, "Saves")} — launching without resume.\n`;
+                }
+                else {
+                    autoloadSave = saves[0].name;
+                    logs += `loadSave: resuming most recent save '${autoloadSave}' (${saves[0].modified}).\n`;
+                }
+            }
+            else {
+                const requested = String(args.loadSave).trim();
+                if (saves.some(s => s.name.toLowerCase() === requested.toLowerCase())) {
+                    autoloadSave = saves.find(s => s.name.toLowerCase() === requested.toLowerCase()).name;
+                    logs += `loadSave: resuming save '${autoloadSave}'.\n`;
+                }
+                else {
+                    logs += `WARNING: loadSave requested '${requested}' but no such save in ${path.join(savedata, "Saves")} `;
+                    logs += `(available: ${saves.map(s => s.name).join(", ") || "none"}) — launching without resume.\n`;
+                }
+            }
+            if (autoloadSave && quicktest) {
+                quicktest = false;
+                logs += "Ignoring quicktest because loadSave was given (can't do both).\n";
+            }
+        }
         // How many RimWorld instances are up right now — used to warn/clean up and avoid resource pileup.
         const countRimWorld = () => {
             try {
@@ -812,14 +908,22 @@ async function handleRimworldDevTool(name, args) {
         }
         try {
             logs += `Spawning isolated game process: ${rimworldExe}\n`;
+            const launchEnv = {
+                ...process.env,
+                SteamAppId: "294100",
+                SteamAppID: "294100"
+            };
+            if (autoloadSave) {
+                launchEnv.RIMAGENTIC_AUTOLOAD_SAVE = autoloadSave;
+            }
+            else {
+                // Never inherit a stale autoload from this server's own environment into the game.
+                delete launchEnv.RIMAGENTIC_AUTOLOAD_SAVE;
+            }
             const child = (0, child_process_1.spawn)(rimworldExe, params, {
                 detached: true,
                 stdio: "ignore",
-                env: {
-                    ...process.env,
-                    SteamAppId: "294100",
-                    SteamAppID: "294100"
-                }
+                env: launchEnv
             });
             child.unref();
             if (child.pid) {
@@ -829,6 +933,8 @@ async function handleRimworldDevTool(name, args) {
             else {
                 logs += "RimWorld process successfully spawned in background (unable to resolve PID dynamically).\n";
             }
+            // Guard against unattended overnight runs: close the game once the agent stops driving it.
+            logs += (0, gameWatchdog_1.armGameWatchdog)({ pid: child.pid ?? null, idleTimeoutMin: args.idleTimeoutMin });
             // Trigger background virtual desktop mover to second desktop dynamically
             const moverScript = `
                 Start-Sleep -Seconds 2
@@ -871,13 +977,61 @@ async function handleRimworldDevTool(name, args) {
                 stdio: "ignore"
             });
             mover.unref();
-            logs += "Virtual desktop migration script spawned in background.";
+            logs += "Virtual desktop migration script spawned in background.\n";
+            // Block until the map is live, so the caller's first bridge tool call doesn't race the
+            // load (the old failure mode: blind sleep + timeouts while the game was still loading).
+            // Only meaningful when a live map is expected — a plain menu launch never becomes live.
+            const expectsMap = quicktest || !!autoloadSave;
+            const waitForReady = args.waitForReady !== false; // default on
+            if (waitForReady && expectsMap) {
+                const budgetMs = Math.max(5000, (args.readyTimeoutSec ?? 120) * 1000);
+                logs += `Waiting up to ${Math.round(budgetMs / 1000)}s for the map to become live...\n`;
+                const start = Date.now();
+                let ready = null;
+                while (Date.now() - start < budgetMs) {
+                    // Bail immediately on a load-time crash instead of waiting out the whole budget.
+                    if (child.pid && !isProcessAlive(child.pid)) {
+                        logs += "Game process exited before a map became live — check read_rimworld_log for a startup crash.\n";
+                        break;
+                    }
+                    const st = await (0, gameIpc_1.requestBridgeStatus)(1500);
+                    if (st && st.mapLive) {
+                        ready = st;
+                        break;
+                    }
+                    await sleep(1000);
+                }
+                if (ready) {
+                    const size = ready.mapSize ? `${ready.mapSize.x}x${ready.mapSize.z}` : "unknown size";
+                    logs += `Map is live (${size}, hour ${ready.hourOfDay}, ${ready.colonistCount} colonists) after ${Math.round((Date.now() - start) / 1000)}s — bridge tools are ready.\n`;
+                }
+                else if (child.pid && isProcessAlive(child.pid)) {
+                    logs += "Map did not report live within the budget — the game may still be loading. Retry a bridge tool (or get_bridge_status) shortly.\n";
+                }
+            }
+            else if (waitForReady && !expectsMap) {
+                logs += "Menu launch (no quicktest/loadSave) — not waiting for a map; the bridge serves tools once a game is loaded.\n";
+            }
         }
         catch (err) {
             logs += `Launch failed: ${err.message}`;
             return { isError: true, content: [{ type: "text", text: logs }] };
         }
         return { content: [{ type: "text", text: logs }] };
+    }
+    if (name === "list_rimworld_saves") {
+        const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
+        const saves = listSaves(savedata);
+        return {
+            content: [{
+                    type: "text",
+                    text: JSON.stringify({
+                        savesDir: path.join(savedata, "Saves"),
+                        count: saves.length,
+                        saves
+                    }, null, 2)
+                }]
+        };
     }
     if (name === "run_rimworld_tests") {
         // Thin wrapper over the reusable runTestCycle core. The tool resolves the shared-default

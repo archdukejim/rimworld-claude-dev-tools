@@ -25,10 +25,12 @@ import { workshopImageTools, handleWorkshopImageTool } from "./tools/workshopIma
 import { defValidateTools, handleDefValidateTool } from "./tools/defValidate";
 import { defCorpusTools, handleDefCorpusTool } from "./tools/defCorpus";
 import { corpusRegistryTools, handleCorpusRegistryTool } from "./tools/corpusRegistry";
+import { harmonyTools, handleHarmonyTool } from "./tools/harmony";
 import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
 import { jobsTools, handleJobsTool } from "./tools/jobs";
+import { noteGameActivity } from "./gameWatchdog";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
@@ -66,6 +68,7 @@ const ALL_TOOLS = [
     ...defValidateTools,
     ...defCorpusTools,
     ...corpusRegistryTools,
+    ...harmonyTools,
     ...pcControlTools,
     ...rimworldDevTools,
     ...gameIpcTools,
@@ -92,6 +95,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params as any;
+
+    // Any tool call means the agent is still driving the loop — keep the game's idle watchdog alive.
+    noteGameActivity();
 
     if (GITHUB_BACKED_TOOLS.has(name)) {
         requireGitHubToken(token, name);
@@ -143,6 +149,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (corpusRegistryTools.some(t => t.name === name)) {
         return await handleCorpusRegistryTool(name, args);
+    }
+
+    if (harmonyTools.some(t => t.name === name)) {
+        return await handleHarmonyTool(name, args);
     }
 
     if (pcControlTools.some(t => t.name === name)) {
@@ -280,6 +290,7 @@ async function main() {
 
         app.post("/api/tools/:name", async (req: any, res: any) => {
             notifyActivity();
+            noteGameActivity();
             const name = req.params.name;
             const args = req.body.arguments || req.body || {};
 
@@ -313,6 +324,8 @@ async function main() {
                     result = await handleDefCorpusTool(name, args);
                 } else if (corpusRegistryTools.some(t => t.name === name)) {
                     result = await handleCorpusRegistryTool(name, args);
+                } else if (harmonyTools.some(t => t.name === name)) {
+                    result = await handleHarmonyTool(name, args);
                 } else if (pcControlTools.some(t => t.name === name)) {
                     result = await handlePcControlTool(name, args);
                 } else if (rimworldDevTools.some(t => t.name === name)) {

@@ -83,7 +83,9 @@ GitHub-backed (need a token): `issues`, `projects`, `codebase`, `sync`, plus
 No token required: `wiki`, `factions`, `psychology`, `pcControl` (desktop
 automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
 `gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
-loopback `bridge`), `github` (SWH issue tools, repo-map based).
+loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
+(generic register/index/graph/search), `harmony` (Harmony patching RAG — a
+curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
 
 ## Build / run
 

@@ -10,6 +10,25 @@ Newest first.
 
 Things that are built and in the toolkit today.
 
+### Headless scene staging + visual verification (skylight-retro round 1)
+New in-game tools (registered in `game-mod/.../Tools/EnvControlTools.cs`, dispatched
+through `execute_game_tool` — no server change): `set_weather`, `set_time` (jump the
+clock to an hour so night/moonlight is checkable without waiting out the day cycle),
+`move_camera`, and `sample_environment` — the headless "what does it look like":
+total ground glow vs. artificial-only vs. **sky contribution** (their difference —
+what an open cell or skylight admits), sky glow, celestial sun glow, day/night, and
+weather with rain/snow rates. Plus bulk builders `fill_rect` and `build_room` (wall
+ring + roof in one call) so a prepared test room is one call to rebuild after a
+relaunch, not ~25 `spawn_thing`s. Separately, `capture_screen`/`capture_region` now
+return the saved image **path** (Read it) instead of appending inline base64 that
+blew the token limit and forced a PowerShell decode per shot, and take
+`focusGame:true` to foreground the RimWorld window before the grab so it lands on
+the game rather than whatever virtual desktop is visible (the launcher moves the
+game to a separate desktop; PrintWindow can't substitute — it's black for Unity).
+The bridge unfocused-poll, readiness (`get_bridge_status` + `launch_rimworld`
+`waitForReady`), `open_window`, and `focusGame` capture were all verified live
+end-to-end.
+
 ### Generic modding-toolkit pivot → RimAgentic
 The repo is a distributable, agent-driven RimWorld modding toolkit: a plugin +
 MCP server + game-side tool bridge + bundled modding knowledge base, installable
@@ -102,3 +121,43 @@ they no longer race for commands.
 Turn the two-launch perf sequence (mod-off baseline → mod-on test → `perf_impact`)
 into a single async job through the broker, instead of the agent driving both
 launches by hand.
+
+### Dev-loop guardrails from the skylight-modpack retro
+`enhancement` · from a session building a true-skylight modpack
+
+Friction points that ate the most looping. **Round 1 — headless scene staging,
+visual sampling, and screenshot-as-path — is shipped above.** The rest, roughly by
+time cost:
+
+- **Bridge: poll while unfocused + a "map is live" ready signal. — shipped.**
+  `ToolkitMod` now sets `Application.runInBackground = true` so Unity keeps ticking
+  (and the poller keeps polling) while the window is unfocused — no more
+  `SetForegroundWindow` before every batch; verified answering while RimWorld sat on
+  a separate virtual desktop. The poll is time-based (~0.2s) so latency is bounded
+  regardless of frame rate. New `get_bridge_status` probe reports `mapLive` + world
+  state, and `launch_rimworld` blocks until the map is live (`waitForReady`, default
+  on) when launching into quicktest/loadSave. Also added `open_window`
+  (modsettings/options/mods) so a menu can be brought up for capture without mouse
+  input, since injection doesn't reach RimWorld.
+- **Hot-reload defs/textures** without a full ~2-min relaunch (def/texture-only
+  changes still force a full restart).
+- **Restore-last-scene on relaunch** and/or a per-session idle-timeout bump during
+  active dev — the idle watchdog closed the game between user checks; the timeout is
+  env-configurable but can't be bumped in-loop.
+- **defName cross-reference validator.** `validate_mod_defs` resolves C# class refs
+  but not defName refs (`researchPrerequisite`, `recipeUsers`, …); a static or
+  quick-headless pass would catch unresolved references.
+- **Decompiler tool** (`decompile_type` / show a method body). The API corpus has
+  signatures only, so reimplementing a transpiler needed a hand-installed ILSpy
+  (`ilspycmd --version 8.2.0.7535` — latest was broken — plus
+  `DOTNET_ROLL_FORWARD=Major` because it targets .NET 6). Bundle a known-good
+  decompiler with the correct invocation.
+- **Document input-injection as non-functional against RimWorld/Unity.** `click_at`
+  returns success but nothing registers and `press_key` errors; steer to the headless
+  bridge tools up front. Also document the screen (1920×1200) ↔ `get_screen_size`
+  (1280×800) ↔ window coordinate-space mismatch, or expose a converter.
+- **Launch/config-target guarantee.** `configure_active_mods` once wrote a config the
+  default-LocalLow launch didn't read, so a mod that never loaded showed a clean log
+  (a near false pass); `launch_quicktest` now pins the dev folder — keep launch +
+  configure targeting the same config by construction, and never treat a clean log as
+  success without confirming the mod is in the active list and its defs registered.

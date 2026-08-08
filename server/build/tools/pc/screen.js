@@ -44,10 +44,17 @@ const crypto_1 = require("crypto");
 let screenshotCounter = 0;
 const MAX_SCREENSHOTS = 20;
 /**
- * Captures the entire screen and returns the image as a base64 string
+ * Captures the entire screen, writes it to a PNG/JPEG file, and returns the file PATH.
+ *
+ * It used to append the whole image as a base64 data URI to the return string. That routinely
+ * blew the tool-output token limit, so every screenshot then had to be dumped to a file and
+ * decoded via PowerShell before it could be read — 2-3 extra calls per capture. The file is
+ * already on disk here; returning its path lets the caller Read it directly (the Read tool
+ * renders images), which is one call and no base64 in the transcript.
+ *
  * @param format - The format for the image data (png or jpeg)
  * @param quality - JPEG quality (1-100, optional, defaults to 80)
- * @returns Base64 encoded image data with filename context
+ * @returns The absolute path of the saved image file
  */
 async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
     const { screen, Region: NutRegion } = (0, native_1.nut)();
@@ -73,25 +80,19 @@ async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
             console.error(`Temporary file NOT found after capture attempt: ${tempFilepath}`);
             throw new Error(`nut-js failed to create the temporary screenshot file at ${tempFilepath}`);
         }
-        let imageBuffer;
-        let resultMessage;
         if (format === types_1.CaptureFormat.JPEG) {
             // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
             // machine where sharp will not load.
-            imageBuffer = await (0, native_1.sharp)()(tempFilepath)
+            const imageBuffer = await (0, native_1.sharp)()(tempFilepath)
                 .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
                 .toBuffer();
             await fs.writeFile(finalFilepath, imageBuffer);
-            resultMessage = `File saved as ${finalFilename} (JPEG quality: ${quality}). Image data: data:image/jpeg;base64,`;
         }
         else {
-            imageBuffer = await fs.readFile(tempFilepath);
-            await fs.writeFile(finalFilepath, imageBuffer);
-            resultMessage = `File saved as ${finalFilename}. Image data: data:image/png;base64,`;
+            await fs.copyFile(tempFilepath, finalFilepath);
         }
-        const base64Image = imageBuffer.toString("base64");
         await fs.unlink(tempFilepath);
-        return `${resultMessage}${base64Image}`;
+        return finalFilepath;
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -106,11 +107,13 @@ async function captureScreen(format = types_1.CaptureFormat.PNG, quality = 80) {
     }
 }
 /**
- * Captures a region of the screen and returns the image as a base64 string
+ * Captures a region of the screen, writes it to a PNG/JPEG file, and returns the file PATH.
+ * See captureScreen for why this returns a path instead of inline base64.
+ *
  * @param region - The region to capture (left, top, width, height)
  * @param format - The format for the image data (png or jpeg)
  * @param quality - JPEG quality (1-100, optional, defaults to 80)
- * @returns Base64 encoded image data with filename context
+ * @returns The absolute path of the saved image file
  */
 async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality = 80) {
     const { screen, Region: NutRegion } = (0, native_1.nut)();
@@ -134,25 +137,19 @@ async function captureRegion(region, format = types_1.CaptureFormat.PNG, quality
             console.error(`Temporary file NOT found after capture attempt: ${tempFilepath}`);
             throw new Error(`nut-js failed to create the temporary screenshot file at ${tempFilepath}`);
         }
-        let imageBuffer;
-        let resultMessage;
         if (format === types_1.CaptureFormat.JPEG) {
             // sharp is only needed to re-encode as JPEG, so the PNG path below still works on a
             // machine where sharp will not load.
-            imageBuffer = await (0, native_1.sharp)()(tempFilepath)
+            const imageBuffer = await (0, native_1.sharp)()(tempFilepath)
                 .jpeg({ quality: Math.max(1, Math.min(100, quality)) })
                 .toBuffer();
             await fs.writeFile(finalFilepath, imageBuffer);
-            resultMessage = `File saved as ${finalFilename} (JPEG quality: ${quality}). Image data: data:image/jpeg;base64,`;
         }
         else {
-            imageBuffer = await fs.readFile(tempFilepath);
-            await fs.writeFile(finalFilepath, imageBuffer);
-            resultMessage = `File saved as ${finalFilename}. Image data: data:image/png;base64,`;
+            await fs.copyFile(tempFilepath, finalFilepath);
         }
-        const base64Image = imageBuffer.toString("base64");
         await fs.unlink(tempFilepath);
-        return `${resultMessage}${base64Image}`;
+        return finalFilepath;
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

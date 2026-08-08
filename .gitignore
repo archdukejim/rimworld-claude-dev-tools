@@ -24,3 +24,10 @@ game-mod/Source/GamePath.props
 game-mod/Source/bin/
 game-mod/Source/obj/
 game-mod/Assemblies/
+
+# screen-capture artifacts (capture_* tools write to the server's cwd = repo root)
+screenshot_*.png
+screenshot_*.jpeg
+window_crop.png
+window_crop.jpeg
+temp_screenshot_*.png

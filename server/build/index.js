@@ -56,10 +56,12 @@ const workshopImages_1 = require("./tools/workshopImages");
 const defValidate_1 = require("./tools/defValidate");
 const defCorpus_1 = require("./tools/defCorpus");
 const corpusRegistry_1 = require("./tools/corpusRegistry");
+const harmony_1 = require("./tools/harmony");
 const pcControl_1 = require("./tools/pcControl");
 const rimworldDev_1 = require("./tools/rimworldDev");
 const gameIpc_1 = require("./tools/gameIpc");
 const jobs_1 = require("./tools/jobs");
+const gameWatchdog_1 = require("./gameWatchdog");
 const config_1 = require("./config");
 // Steam Workshop families (merged in from steam-workshop-helper)
 const bridge_1 = require("./bridge");
@@ -93,6 +95,7 @@ const ALL_TOOLS = [
     ...defValidate_1.defValidateTools,
     ...defCorpus_1.defCorpusTools,
     ...corpusRegistry_1.corpusRegistryTools,
+    ...harmony_1.harmonyTools,
     ...pcControl_1.pcControlTools,
     ...rimworldDev_1.rimworldDevTools,
     ...gameIpc_1.gameIpcTools,
@@ -116,6 +119,8 @@ server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
 });
 server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // Any tool call means the agent is still driving the loop — keep the game's idle watchdog alive.
+    (0, gameWatchdog_1.noteGameActivity)();
     if (GITHUB_BACKED_TOOLS.has(name)) {
         (0, config_1.requireGitHubToken)(token, name);
     }
@@ -154,6 +159,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     }
     if (corpusRegistry_1.corpusRegistryTools.some(t => t.name === name)) {
         return await (0, corpusRegistry_1.handleCorpusRegistryTool)(name, args);
+    }
+    if (harmony_1.harmonyTools.some(t => t.name === name)) {
+        return await (0, harmony_1.handleHarmonyTool)(name, args);
     }
     if (pcControl_1.pcControlTools.some(t => t.name === name)) {
         return await (0, pcControl_1.handlePcControlTool)(name, args);
@@ -273,6 +281,7 @@ async function main() {
         });
         app.post("/api/tools/:name", async (req, res) => {
             notifyActivity();
+            (0, gameWatchdog_1.noteGameActivity)();
             const name = req.params.name;
             const args = req.body.arguments || req.body || {};
             try {
@@ -315,6 +324,9 @@ async function main() {
                 }
                 else if (corpusRegistry_1.corpusRegistryTools.some(t => t.name === name)) {
                     result = await (0, corpusRegistry_1.handleCorpusRegistryTool)(name, args);
+                }
+                else if (harmony_1.harmonyTools.some(t => t.name === name)) {
+                    result = await (0, harmony_1.handleHarmonyTool)(name, args);
                 }
                 else if (pcControl_1.pcControlTools.some(t => t.name === name)) {
                     result = await (0, pcControl_1.handlePcControlTool)(name, args);

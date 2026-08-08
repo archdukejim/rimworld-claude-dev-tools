@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pcControlTools = void 0;
 exports.handlePcControlTool = handlePcControlTool;
@@ -9,6 +42,67 @@ const keyboard_1 = require("./pc/keyboard");
 const screen_1 = require("./pc/screen");
 const clipboard_1 = require("./pc/clipboard");
 const uiAutomation_1 = require("./pc/uiAutomation");
+const rimworldDev_1 = require("./rimworldDev");
+const gameWatchdog_1 = require("../gameWatchdog");
+const gameIpc_1 = require("./gameIpc");
+const native_1 = require("./pc/native");
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
+const crypto_1 = require("crypto");
+/**
+ * Bring a process's main window to the foreground before a screen grab, and block through a short
+ * settle so the desktop switch completes. RimWorld is moved to a SEPARATE virtual desktop at launch,
+ * so a plain capture grabs whichever desktop is currently visible (usually the Claude window). This
+ * switches Windows to the game's desktop and makes it the visible surface. PrintWindow can't replace
+ * this — it returns black for Unity/DirectX. Best-effort; returns a short status token for the log.
+ *
+ * The script is written to a temp .ps1 and run with -File rather than -Command, so the Add-Type
+ * here-string (with its embedded quotes) needs no shell-escaping.
+ */
+function foregroundGameWindow(imageName = "RimWorldWin64") {
+    const safeName = imageName.replace(/[^A-Za-z0-9_]/g, ""); // only ever an image name; keep it inert
+    const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Fg {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
+}
+"@
+$p = Get-Process -Name ${safeName} -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if ($p) {
+  [Fg]::ShowWindow($p.MainWindowHandle, 9) | Out-Null   # SW_RESTORE
+  [Fg]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+  Start-Sleep -Milliseconds 700
+  "focused"
+} else { "notfound" }
+`;
+    const scriptPath = path.join(os.tmpdir(), `rwdt_focus_${(0, crypto_1.randomBytes)(6).toString("hex")}.ps1`);
+    try {
+        fs.writeFileSync(scriptPath, script, "utf8");
+        const out = (0, child_process_1.execSync)(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: "utf8", timeout: 8000 });
+        return String(out).trim() || "unknown";
+    }
+    catch (e) {
+        return `error:${e?.message ?? e}`;
+    }
+    finally {
+        try {
+            fs.unlinkSync(scriptPath);
+        }
+        catch { /* best effort */ }
+    }
+}
+/** Turn foregroundGameWindow's status token into a human note for the tool result. */
+function describeFocus(token) {
+    if (token === "focused")
+        return "(RimWorld foregrounded)";
+    if (token === "notfound")
+        return "(focusGame requested but no RimWorld window found — is the game running?)";
+    return `(focus attempt: ${token})`;
+}
 const keyValues = Object.values(types_1.Key);
 const formatValues = Object.values(types_1.CaptureFormat);
 const mouseButtonValues = Object.values(types_1.MouseButton);
@@ -16,20 +110,39 @@ const scrollDirectionValues = Object.values(types_1.ScrollDirection);
 exports.pcControlTools = [
     {
         name: "launch_quicktest",
-        description: "Launches RimWorld directly with the -quicktest argument to generate a test map instantly.",
+        description: "Launches RimWorld with -quicktest to generate a test map instantly, booting from the CONFIGURED dev savedatafolder so it loads the modlist configure_active_mods set (not the player's default LocalLow config). Thin wrapper over launch_rimworld with quicktest enabled.",
         inputSchema: {
             type: "object",
             properties: {
-                killExisting: { type: "boolean", description: "Whether to force close any already running instances of RimWorld first (default: true)" }
+                killExisting: { type: "boolean", description: "Whether to force close any already running instances of RimWorld first (default: true)" },
+                bare: { type: "boolean", description: "Escape hatch: minimal spawn that opens the game with the player's DEFAULT LocalLow config — no -savedatafolder pinning, dev-mode/Prefs, Workshop mirroring, or desktop move. Use to poke the game open as-is, not to test a configured modlist. Default: false (guarded launch)." },
+                savedatafolder: { type: "string", description: "Optional override for -savedatafolder (ignored when bare). Defaults to the configured dev save folder — the same one configure_active_mods writes." },
+                developer: { type: "boolean", description: "Force developer mode enabled (default: true)." },
+                nosound: { type: "boolean", description: "Mute game audio via -nosound (default: true)." },
+                idleTimeoutMin: { type: "number", description: "Minutes with no MCP tool call before the idle watchdog closes the game, so it never runs unattended overnight. 0 disables it. Default: RIMAGENTIC_GAME_IDLE_TIMEOUT_MIN (30)." }
             }
         }
     },
     {
         name: "capture_screen",
-        description: "Capture the entire screen as an image",
+        description: "Capture the entire screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to grab RimWorld even after the launcher moves it to a separate virtual desktop — it foregrounds the game window first so the capture lands on the game rather than whatever desktop is visible.",
         inputSchema: {
             type: "object",
             properties: {
+                format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
+                quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" },
+                focusGame: { type: "boolean", description: "Bring the RimWorld window to the foreground (switching to its virtual desktop) immediately before capturing, so the grab lands on the game and not the currently visible desktop. Default false." }
+            }
+        }
+    },
+    {
+        name: "capture_game_window",
+        description: "Screenshot a single RimWorld menu/dialog, cropped to just that window. Foregrounds the game, captures the screen, finds the window in the game's own window stack, and crops to its rect (scaled from UI to image pixels). window: a case-insensitive substring of the window's C# type to target (e.g. 'ModsConfig', 'ModSettings', 'Options'); omit to use the frontmost dialog. Open the menu first with open_window. Returns the cropped image path (read it with the Read tool).",
+        inputSchema: {
+            type: "object",
+            properties: {
+                window: { type: "string", description: "Substring of the target window's C# type (e.g. 'ModSettings', 'ModsConfig'). Omit to use the frontmost dialog." },
+                pad: { type: "integer", minimum: 0, description: "Pixels of padding to add around the window rect (default 0)." },
                 format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
                 quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
             }
@@ -37,7 +150,7 @@ exports.pcControlTools = [
     },
     {
         name: "capture_region",
-        description: "Capture a specific region of the screen",
+        description: "Capture a specific region of the screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first (see capture_screen).",
         inputSchema: {
             type: "object",
             properties: {
@@ -46,7 +159,8 @@ exports.pcControlTools = [
                 width: { type: "integer", minimum: 1, description: "Width of the region in pixels" },
                 height: { type: "integer", minimum: 1, description: "Height of the region in pixels" },
                 format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
-                quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
+                quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" },
+                focusGame: { type: "boolean", description: "Bring the RimWorld window to the foreground before capturing, so the grab lands on the game. Default false." }
             },
             required: ["left", "top", "width", "height"]
         }
@@ -314,15 +428,67 @@ async function handlePcControlTool(name, args) {
     try {
         switch (name) {
             case "capture_screen": {
-                const { format, quality } = args;
-                const result = await (0, screen_1.captureScreen)(format, quality);
-                return { content: [{ type: "text", text: `Screen captured successfully. ${result}` }] };
+                const { format, quality, focusGame } = args;
+                const focusNote = focusGame ? " " + describeFocus(foregroundGameWindow()) : "";
+                const filePath = await (0, screen_1.captureScreen)(format, quality);
+                return { content: [{ type: "text", text: `Screen captured to ${filePath}${focusNote} — open it with the Read tool to view the image.` }] };
+            }
+            case "capture_game_window": {
+                const { window: wantType, pad, format, quality } = args;
+                // 1) Read the game's window stack (needs a live game — the bridge only answers then).
+                const wins = await (0, gameIpc_1.requestOpenWindows)();
+                if (!wins) {
+                    return { isError: true, content: [{ type: "text", text: "capture_game_window: no window data from the game. Is RimWorld running with a live game loaded? (Open a menu with open_window first.)" }] };
+                }
+                // 2) Pick the target window (skip the tiny always-on ImmediateWindow overlays).
+                const candidates = wins.windows.filter(w => w.type !== "ImmediateWindow");
+                let target;
+                if (wantType) {
+                    const q = String(wantType).toLowerCase();
+                    // Search front-to-back so the most-recently-opened match wins.
+                    target = [...candidates].reverse().find(w => w.type.toLowerCase().includes(q) || w.fullType.toLowerCase().includes(q));
+                }
+                else {
+                    const dialogs = candidates.filter(w => w.layer === "Dialog");
+                    target = (dialogs.length ? dialogs : candidates).slice(-1)[0];
+                }
+                if (!target) {
+                    const names = candidates.map(w => w.type).join(", ") || "(none open)";
+                    return { isError: true, content: [{ type: "text", text: `capture_game_window: no window matched "${wantType ?? "(frontmost)"}". Currently open: ${names}. Open one with open_window.` }] };
+                }
+                // 3) Foreground the game, then capture the full screen.
+                const focusToken = foregroundGameWindow();
+                const fullPath = await (0, screen_1.captureScreen)(format, quality);
+                // 4) Scale the UI-space rect to image pixels and crop with sharp.
+                const meta = await (0, native_1.sharp)()(fullPath).metadata();
+                const imgW = meta.width || 0, imgH = meta.height || 0;
+                const uiW = wins.screen?.width || imgW, uiH = wins.screen?.height || imgH;
+                const sx = uiW ? imgW / uiW : 1, sy = uiH ? imgH / uiH : 1;
+                const p = Math.max(0, Math.round(Number(pad) || 0));
+                let left = Math.round(target.rect.x * sx) - p;
+                let top = Math.round(target.rect.y * sy) - p;
+                let cropW = Math.round(target.rect.width * sx) + 2 * p;
+                let cropH = Math.round(target.rect.height * sy) + 2 * p;
+                // Clamp to image bounds so extract never runs off the edge.
+                left = Math.max(0, Math.min(left, Math.max(0, imgW - 1)));
+                top = Math.max(0, Math.min(top, Math.max(0, imgH - 1)));
+                cropW = Math.max(1, Math.min(cropW, imgW - left));
+                cropH = Math.max(1, Math.min(cropH, imgH - top));
+                const ext = format === types_1.CaptureFormat.JPEG ? "jpeg" : "png";
+                const outPath = path.resolve(`window_crop.${ext}`);
+                let pipeline = (0, native_1.sharp)()(fullPath).extract({ left, top, width: cropW, height: cropH });
+                if (format === types_1.CaptureFormat.JPEG) {
+                    pipeline = pipeline.jpeg({ quality: Math.max(1, Math.min(100, quality || 80)) });
+                }
+                await pipeline.toFile(outPath);
+                return { content: [{ type: "text", text: `Captured '${target.type}' cropped to ${cropW}x${cropH} at (${left},${top}) → ${outPath} ${describeFocus(focusToken)}. Read it to view. (Full frame kept at ${fullPath}.)` }] };
             }
             case "capture_region": {
-                const { left, top, width, height, format, quality } = args;
+                const { left, top, width, height, format, quality, focusGame } = args;
+                const focusNote = focusGame ? " " + describeFocus(foregroundGameWindow()) : "";
                 const region = { left, top, width, height };
-                const result = await (0, screen_1.captureRegion)(region, format, quality);
-                return { content: [{ type: "text", text: `Screen region captured successfully. ${result}` }] };
+                const filePath = await (0, screen_1.captureRegion)(region, format, quality);
+                return { content: [{ type: "text", text: `Screen region captured to ${filePath}${focusNote} — open it with the Read tool to view the image.` }] };
             }
             case "get_screen_size": {
                 const { width, height } = await (0, screen_1.getScreenSize)();
@@ -443,22 +609,37 @@ async function handlePcControlTool(name, args) {
                 return { content: [{ type: "text", text: resultMessage }] };
             }
             case "launch_quicktest": {
-                const killExisting = args.killExisting !== false;
-                if (killExisting) {
-                    try {
-                        (0, child_process_1.execSync)("taskkill /f /im RimWorldWin64.exe", { stdio: "ignore" });
+                // Bare escape hatch (bare:true): the old minimal spawn — just open the game as the player has
+                // it. No -savedatafolder pinning, no Prefs.xml, no Workshop mirroring, no desktop move; it uses
+                // the default LocalLow config. Use it to poke the game open as-is, NOT to test a configured
+                // modlist (that's the guarded path below). The idle watchdog is still armed so a bare launch
+                // can't run unattended overnight either.
+                if (args.bare === true) {
+                    const killExisting = args.killExisting !== false;
+                    if (killExisting) {
+                        try {
+                            (0, child_process_1.execSync)("taskkill /f /im RimWorldWin64.exe", { stdio: "ignore" });
+                        }
+                        catch (e) {
+                            // Ignore if process not found
+                        }
                     }
-                    catch (e) {
-                        // Ignore if process not found
-                    }
+                    const rimworldPath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\RimWorldWin64.exe";
+                    const child = (0, child_process_1.spawn)(rimworldPath, ["-quicktest"], {
+                        detached: true,
+                        stdio: "ignore"
+                    });
+                    child.unref();
+                    const watchdogNote = (0, gameWatchdog_1.armGameWatchdog)({ pid: child.pid ?? null, idleTimeoutMin: args.idleTimeoutMin });
+                    return { content: [{ type: "text", text: `RimWorld quicktest launched (bare) — default LocalLow config, no dev/savedatafolder pinning.\n${watchdogNote}`.trim() }] };
                 }
-                const rimworldPath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld\\RimWorldWin64.exe";
-                const child = (0, child_process_1.spawn)(rimworldPath, ["-quicktest"], {
-                    detached: true,
-                    stdio: "ignore"
-                });
-                child.unref();
-                return { content: [{ type: "text", text: "RimWorld quicktest launched successfully." }] };
+                // Guarded default: route through launch_rimworld with quicktest so the map boots from the
+                // CONFIGURED savedatafolder (the one configure_active_mods writes) — not the player's default
+                // LocalLow config. Booting from the wrong config is a silent false pass: the modlist you set up
+                // isn't the one that loads. Delegating also picks up the Steam bypass, Workshop-mod mirroring,
+                // PID tracking and idle watchdog. Any launch_rimworld option (savedatafolder, killExisting,
+                // developer, nosound, loadSave, idleTimeoutMin) passes through.
+                return await (0, rimworldDev_1.handleRimworldDevTool)("launch_rimworld", { ...args, quicktest: true });
             }
             default:
                 throw new Error(`Unknown PC Control tool: ${name}`);
