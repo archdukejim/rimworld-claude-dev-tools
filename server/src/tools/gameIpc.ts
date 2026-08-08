@@ -205,6 +205,29 @@ export async function requestGizmos(timeoutMs = 4000): Promise<Gizmos | null> {
     }
 }
 
+export interface BarEntry { label: string; x: number; y: number; width: number; height: number; }
+export interface ColonistBar {
+    count: number;
+    screen?: { width: number; height: number };
+    bounds?: { x: number; y: number; width: number; height: number } | null;
+    entries: BarEntry[];
+    note?: string | null;
+}
+
+/**
+ * Read the colonist-bar portraits currently drawn at the top of the screen, with their rects.
+ * Returns null if the bridge didn't answer. Used by capture_colonist_bar. Never throws.
+ */
+export async function requestColonistBar(timeoutMs = 4000): Promise<ColonistBar | null> {
+    try {
+        const result = await callInGameTool("get_colonist_bar", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.entries)) return null;
+        return result as ColonistBar;
+    } catch {
+        return null;
+    }
+}
+
 export async function handleGameIpcTool(name: string, args: any) {
     if (name === "list_game_tools") {
         const query = args.query || null;

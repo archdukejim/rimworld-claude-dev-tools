@@ -38,6 +38,7 @@ exports.requestInGameSave = requestInGameSave;
 exports.requestBridgeStatus = requestBridgeStatus;
 exports.requestOpenWindows = requestOpenWindows;
 exports.requestGizmos = requestGizmos;
+exports.requestColonistBar = requestColonistBar;
 exports.handleGameIpcTool = handleGameIpcTool;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -207,6 +208,21 @@ async function requestGizmos(timeoutMs = 4000) {
     try {
         const result = await callInGameTool("get_gizmos", {}, timeoutMs);
         if (!result || result.error || !Array.isArray(result.gizmos))
+            return null;
+        return result;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Read the colonist-bar portraits currently drawn at the top of the screen, with their rects.
+ * Returns null if the bridge didn't answer. Used by capture_colonist_bar. Never throws.
+ */
+async function requestColonistBar(timeoutMs = 4000) {
+    try {
+        const result = await callInGameTool("get_colonist_bar", {}, timeoutMs);
+        if (!result || result.error || !Array.isArray(result.entries))
             return null;
         return result;
     }

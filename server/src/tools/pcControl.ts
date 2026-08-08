@@ -7,7 +7,7 @@ import { getClipboardText, setClipboardText, copySelectedText, pasteText, getCli
 import { getUiElementInfoTool, invokeUiElementActionTool, GetUiElementInfoInput, InvokeUiElementActionInput } from "./pc/uiAutomation";
 import { handleRimworldDevTool } from "./rimworldDev";
 import { armGameWatchdog } from "../gameWatchdog";
-import { requestOpenWindows, requestGizmos } from "./gameIpc";
+import { requestOpenWindows, requestGizmos, requestColonistBar } from "./gameIpc";
 import { sharp } from "./pc/native";
 import * as fs from "fs";
 import * as os from "os";
@@ -156,6 +156,19 @@ export const pcControlTools = [
       properties: {
         gizmo: { type: "string", description: "Label substring of the command button to isolate (e.g. 'Draft', 'Attack'). Omit to capture the whole gizmo bar." },
         pad: { type: "integer", minimum: 0, description: "Pixels of padding around the crop (default 2 for one gizmo, 4 for the bar)." },
+        format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
+        quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
+      }
+    }
+  },
+  {
+    name: "capture_colonist_bar",
+    description: "Screenshot the colonist bar at the top of the screen, cropped. colonist: a case-insensitive name substring to isolate one portrait (e.g. 'Nate'); omit to capture the whole bar. No selection needed — the bar draws whenever colonists exist. Returns the cropped image path (read it with the Read tool).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        colonist: { type: "string", description: "Name substring of the colonist portrait to isolate (e.g. 'Nate'). Omit to capture the whole bar." },
+        pad: { type: "integer", minimum: 0, description: "Pixels of padding around the crop (default 4 for one portrait, 6 for the bar)." },
         format: { type: "string", enum: formatValues, description: "Image format (png or jpeg)" },
         quality: { type: "integer", minimum: 1, maximum: 100, description: "JPEG quality (1-100, default: 80)" }
       }
@@ -507,6 +520,38 @@ export async function handlePcControlTool(name: string, args: any) {
         const effPad = pad ?? (wantLabel ? 2 : 4);
         const r = await captureAndCrop(rect, g.screen?.width || 0, g.screen?.height || 0, { pad: effPad, format, quality, outName: "gizmo_crop" });
         return { content: [{ type: "text", text: `Captured ${labelDesc} cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view.` }] };
+      }
+      case "capture_colonist_bar": {
+        const { colonist: wantName, pad, format, quality } = args;
+
+        const cb = await requestColonistBar();
+        if (!cb) {
+          return { isError: true, content: [{ type: "text", text: "capture_colonist_bar: no colonist-bar data from the game. Is RimWorld running with a live game loaded?" }] };
+        }
+        if (!cb.entries.length) {
+          return { isError: true, content: [{ type: "text", text: "capture_colonist_bar: no colonist bar on screen — are there colonists, and is the bar enabled in Options?" }] };
+        }
+
+        let rect: CropRect;
+        let desc: string;
+        if (wantName) {
+          const q = String(wantName).toLowerCase();
+          const hit = cb.entries.find(e => (e.label || "").toLowerCase().includes(q));
+          if (!hit) {
+            const names = cb.entries.map(e => e.label).join(", ");
+            return { isError: true, content: [{ type: "text", text: `capture_colonist_bar: no colonist matched "${wantName}". On the bar: ${names}.` }] };
+          }
+          rect = { x: hit.x, y: hit.y, width: hit.width, height: hit.height };
+          desc = `colonist '${hit.label}'`;
+        } else {
+          const b = cb.bounds || cb.entries[0];
+          rect = { x: b.x, y: b.y, width: b.width, height: b.height };
+          desc = `colonist bar (${cb.entries.length} pawns)`;
+        }
+
+        const effPad = pad ?? (wantName ? 4 : 6);
+        const r = await captureAndCrop(rect, cb.screen?.width || 0, cb.screen?.height || 0, { pad: effPad, format, quality, outName: "colonistbar_crop" });
+        return { content: [{ type: "text", text: `Captured ${desc} cropped to ${r.cropW}x${r.cropH} at (${r.left},${r.top}) → ${r.outPath} ${describeFocus(r.focusToken)}. Read it to view.` }] };
       }
       case "capture_region": {
         const { left, top, width, height, format, quality, focusGame } = args;

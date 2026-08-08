@@ -218,6 +218,10 @@
       "description": "Screenshot the selected thing's command buttons (gizmos), cropped. gizmo: label substring to isolate one button (e.g. 'Draft'); omit for the whole gizmo bar. Select a thing first with select_thing_at (in-game). Returns the cropped image path."
     },
     {
+      "name": "capture_colonist_bar",
+      "description": "Screenshot the colonist bar at the top of the screen, cropped. colonist: name substring to isolate one portrait (e.g. 'Nate'); omit for the whole bar. No selection needed. Returns the cropped image path."
+    },
+    {
       "name": "capture_region",
       "description": "Capture a specific region of the screen to an image file and return its path (read it with the Read tool). Pass focusGame:true to foreground the RimWorld window first (see capture_screen)."
     },
