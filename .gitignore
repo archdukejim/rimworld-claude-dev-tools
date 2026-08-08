@@ -44,3 +44,6 @@ colonistbar_crop.jpeg
 playsettings_crop.png
 playsettings_crop.jpeg
 temp_screenshot_*.png
+
+# runtime launch state (rewritten on every game launch)
+server/dev_instance_pid.txt
