@@ -171,7 +171,9 @@ namespace RimAgentic
             RegisterGizmoTools();
             RegisterColonistBarTools();
             RegisterPlaySettingsTools();
+            RegisterWindowContentTools();  // read_window / invoke_window_control (immediate-mode UI capture)
             RegisterDynamicDebugActions();
+            RegisterDebugActionBridge();   // generic list_debug_actions / run_debug_action over ALL mod assemblies
 
             // Centralized synonym keyword registrations
             AssignDefaultKeywords();

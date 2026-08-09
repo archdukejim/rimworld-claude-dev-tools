@@ -89,14 +89,27 @@ exports.gameIpcTools = [
         }
     }
 ];
-// Both ends of this channel must agree on the directory. The game-side mod
-// (SynapseGameComponent.ScriptingDir) and this server both default to the same fixed
-// location — %LOCALAPPDATA%\RimAgentic\ipc — and both honour RIMAGENTIC_IPC_DIR, so the
-// bridge connects with zero configuration and no knowledge of where the mod is installed.
+// Both ends of this channel must resolve the same physical directory, or every bridge call
+// writes its request where nothing is polling and dies at the 10s timeout.
+//
+// The canonical dev bridge is the generic toolkit game mod (RimAgentic): its
+// SynapseGameComponent.ScriptingDir defaults to %LOCALAPPDATA%\RimAgentic\ipc and honours
+// RIMAGENTIC_IPC_DIR. This server matches exactly, so the bridge connects with ZERO configuration
+// for any modlist that includes the toolkit mod — which force-loads last, so its reflection scan
+// (and run_debug_action) sees every other mod. RIMAGENTIC_IPC_DIR overrides both ends together.
+//
+// (RimSynapse's Core carries a separate, forked bridge that polls <RIMSYNAPSE_ROOT>/Core instead;
+// that is Core's own channel, not this generic one. Point RIMAGENTIC_IPC_DIR at it only if you
+// deliberately want to drive Core's bridge rather than the toolkit mod's.)
 function ipcDir() {
     const env = process.env.RIMAGENTIC_IPC_DIR;
-    if (env)
+    if (env) {
+        try {
+            fs.mkdirSync(env, { recursive: true });
+        }
+        catch { /* best effort */ }
         return env;
+    }
     const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
     const dir = path.join(local, "RimAgentic", "ipc");
     try {
@@ -110,6 +123,36 @@ function toolInputFile() {
 }
 function toolOutputFile() {
     return path.join(ipcDir(), "tool_output.json");
+}
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Tools whose whole point is to change what window is on screen. After one runs, the freshly
+// changed window is worth reading back so its contents ride along in the receipt.
+const WINDOW_AFFECTING_TOOLS = new Set(["open_window", "activate_gizmo", "invoke_window_control"]);
+/**
+ * Best-effort follow-up read after a window-affecting command: settle a few frames so the new/
+ * changed window draws at least once (the capture layer is per-frame), then read its contents.
+ * Returns the read_window payload to attach, or undefined when it doesn't apply. Never throws — a
+ * hiccup in the convenience read must not fail the primary command.
+ */
+async function maybeAttachWindow(toolName, toolArgs, result) {
+    if (!WINDOW_AFFECTING_TOOLS.has(toolName))
+        return undefined;
+    if (!result || result.error)
+        return undefined;
+    // Target the just-opened window precisely when the tool reported its type; else let read_window
+    // pick the topmost real dialog.
+    let windowType;
+    if (toolName === "open_window" && typeof result.opened === "string")
+        windowType = result.opened;
+    else if (toolArgs && typeof toolArgs.windowType === "string")
+        windowType = toolArgs.windowType;
+    try {
+        await sleep(250); // ~15 frames at 60fps: the new window has drawn and been captured
+        return await callInGameTool("read_window", windowType ? { windowType } : {}, 6000);
+    }
+    catch {
+        return undefined;
+    }
 }
 async function callInGameTool(name, args, maxWaitMs = 10000) {
     const requestPayload = {
@@ -274,10 +317,17 @@ async function handleGameIpcTool(name, args) {
             tool_name: toolName,
             arguments_json: JSON.stringify(toolArgs)
         });
+        // Self-describing UI: after a command that changes the window stack, settle a couple of
+        // frames and attach the resulting window's contents (buttons/labels/checkboxes) to the same
+        // receipt — so the caller sees what it can act on without a separate "read the screen" call.
+        // This collapses "open -> inspect -> locate -> click" into "command (receipt = state) ->
+        // follow-up command". Gated to window-affecting tools so ordinary calls pay nothing.
+        const attached = await maybeAttachWindow(toolName, toolArgs, result);
+        const payload = attached !== undefined ? { result, window: attached } : result;
         return {
             content: [{
                     type: "text",
-                    text: JSON.stringify(result, null, 2)
+                    text: JSON.stringify(payload, null, 2)
                 }]
         };
     }

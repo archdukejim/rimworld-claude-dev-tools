@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
+import { getActiveKey } from "./keystore";
 
 export interface MCPConfig {
     defaultProjectId: string;
@@ -92,6 +93,22 @@ export function loadConfig(): MCPConfig {
  * token field left blank is the normal case, not an error, so the absence is reported per-call by
  * requireGitHubToken instead of at startup.
  */
+/**
+ * Primary on-disk location for the locally-stored PAT (repo root). This is the FIRST candidate
+ * getGitHubToken reads, so set_github_token writes here to guarantee the write path matches the
+ * read path. __dirname is server/build at runtime, so ../../ is the repo root.
+ */
+export function githubTokenFilePath(): string {
+    return path.join(__dirname, "..", "..", "github_token.txt");
+}
+
+/** Persist a PAT to the local token file in the `TOKEN=...` format getGitHubToken reads. Returns the path written. */
+export function writeGitHubTokenFile(token: string): string {
+    const p = githubTokenFilePath();
+    fs.writeFileSync(p, `TOKEN=${token}\n`, { mode: 0o600 });
+    return p;
+}
+
 export function getGitHubToken(): string {
     // Env first: this is what manifest.json wires user_config.github_token into.
     const fromEnv = process.env.GITHUB_TOKEN?.trim();
@@ -99,9 +116,15 @@ export function getGitHubToken(): string {
         return fromEnv;
     }
 
+    // Then the active PAT from the local keyring (set_github_token / set_active_key).
+    const fromRing = getActiveKey("github");
+    if (fromRing) {
+        return fromRing;
+    }
+
     const tokenFileCandidates = [
-        path.join(__dirname, "..", "..", "github_token.txt"), // source: server/build -> repo root
-        path.join(__dirname, "..", "github_token.txt"),       // bundle: server -> extension root
+        githubTokenFilePath(),                          // source: server/build -> repo root
+        path.join(__dirname, "..", "github_token.txt"), // bundle: server -> extension root
     ];
 
     for (const tokenFilePath of tokenFileCandidates) {
@@ -139,9 +162,11 @@ export function requireGitHubToken(token: string, toolName: string): void {
     if (!token) {
         throw new Error(
             `The '${toolName}' tool needs a GitHub token, and none is available. ` +
-            `Log in with 'gh auth login' (reused from your keyring automatically), ` +
-            `set the GITHUB_TOKEN environment variable, or add a PAT with 'repo' scope to github_token.txt. ` +
-            `The RimWorld build, launch and log tools do not need one and will keep working without it.`
+            `Run 'set_github_token' (opens a window to paste a PAT — the recommended path), ` +
+            `set the GITHUB_TOKEN environment variable, or add a PAT to github_token.txt. ` +
+            `Note: the 'gh auth login' keyring token works for issues/code but LACKS the 'project' scope, ` +
+            `so org project-board tools need a PAT with 'repo' + 'read:org' + 'project' (or a fine-grained PAT with ` +
+            `Projects/Issues/Contents read-write). The RimWorld build, launch and log tools need no token.`
         );
     }
 }

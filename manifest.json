@@ -75,11 +75,11 @@
     },
     {
       "name": "configure_active_mods",
-      "description": "Configures active mods and DLCs in RimWorld's ModsConfig.xml. Resolves file path dynamically."
+      "description": "Configures active mods and DLCs in RimWorld's ModsConfig.xml with official-first, dependency-aware load order. Auto-activates installed HARD dependencies (<modDependencies>) the chosen mods require, and errors when a required prerequisite is not installed. Resolves file path dynamically."
     },
     {
       "name": "resolve_mod_load_order",
-      "description": "Read-only. Resolves mod packageIds into RimWorld load order (official block first, then a topological sort of declared loadAfter/loadBefore/modDependencies) and returns { resolved, ambiguous, cycles, uninstalled } without writing ModsConfig."
+      "description": "Read-only. Resolves mod packageIds into RimWorld load order (official block first, then a topological sort of declared loadAfter/loadBefore/modDependencies) and returns { resolved, ambiguous, cycles, uninstalled, missingDependencies } — the last being unsatisfied hard dependencies — without writing ModsConfig."
     },
     {
       "name": "list_installed_mods",
@@ -91,7 +91,7 @@
     },
     {
       "name": "detect_mod_conflicts",
-      "description": "Read-only. Analyzes a mod set (or the active ModsConfig list) for duplicate packageIds (shadowing), incompatibleWith pairs both active, and load-order cycles. Returns { conflictCount, duplicatePackageIds, incompatiblePairs, cycles }."
+      "description": "Read-only. Analyzes a mod set (or the active ModsConfig list) for duplicate packageIds (shadowing), incompatibleWith pairs both active, load-order cycles, and unsatisfied hard dependencies. Returns { conflictCount, duplicatePackageIds, incompatiblePairs, cycles, missingDependencies }."
     },
     {
       "name": "sync_repo_wiki",
@@ -104,6 +104,26 @@
     {
       "name": "set_anthropic_key",
       "description": "Store your Anthropic API key for enrich_api_corpus. With no argument, opens a small window to paste your key into; it is saved locally, used immediately (no restart), and never shown in chat or committed to git."
+    },
+    {
+      "name": "set_github_token",
+      "description": "Store a GitHub PAT in the local keyring so the issue/project-board/codebase/sync tools authenticate as you, not the gh CLI's scope-poor keyring token. With no argument, opens a small window to paste your PAT into; saved locally, used immediately (no restart), never shown in chat or committed. Supports multiple PATs via `label` (e.g. one per org); the new key becomes active. For org boards the PAT needs repo + read:org + project (or fine-grained: Projects/Issues/Contents RW, Metadata R)."
+    },
+    {
+      "name": "list_keys",
+      "description": "List stored GitHub PATs and Anthropic API keys (values masked): service, label, active flag, added date, recorded expiry, and expired flag. Pass verify:true to live-check each against GitHub/Anthropic. Use to find expired or irrelevant keys to delete."
+    },
+    {
+      "name": "delete_key",
+      "description": "Delete a stored key by service + label (from list_keys). If it was active, the next remaining key is promoted and applied to the running server. Use to remove expired or irrelevant keys."
+    },
+    {
+      "name": "set_active_key",
+      "description": "Choose which stored key is active for a service (e.g. switch between a RimSynapse-org PAT and a personal PAT). Applied to the running server immediately — no restart."
+    },
+    {
+      "name": "suppress_rimsort_warnings",
+      "description": "Silence RimSort's noisy startup dialogs for a mod developer: the 'Mods with Missing Properties' popup (fires for every local/unpublished mod with no Steam PublishedFileId) and the 'Duplicate mods' popup. Sets duplicate_mods_warning=false and auto-adds every local mod missing About/PublishedFileId.txt to RimSort's ignore list. Read live by RimSort (no restart), idempotent, and touches only RimSort config — never your mods."
     },
     {
       "name": "enrich_api_corpus",
@@ -339,7 +359,7 @@
     },
     {
       "name": "launch_rimworld",
-      "description": "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. Supports loadSave to resume a save straight from launch. When launching into a map (quicktest/loadSave) it blocks until the map is live (waitForReady, default on) so a following bridge tool call won't race the load. Arms an idle watchdog that autosaves and closes the game after a period with no MCP tool call, so it never runs unattended overnight."
+      "description": "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. Supports loadSave to resume a save straight from launch. When launching into a map (quicktest/loadSave) it blocks until the map is live (waitForReady, default on) so a following bridge tool call won't race the load. Always runs a first-pass environment check after launch — active modlist + triaged startup Player.log (missing dependencies, Harmony failures, exceptions) — so a broken test setup is caught immediately. Arms an idle watchdog that autosaves and closes the game after a period with no MCP tool call, so it never runs unattended overnight."
     },
     {
       "name": "run_rimworld_tests",
