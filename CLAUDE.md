@@ -3,6 +3,29 @@
 Guidance for Claude Code working in this repo. Keep this file current as the MCP
 server grows — new tool families ("expansions") get documented here.
 
+## Worktree isolation & branching (MANDATORY — read first)
+
+Multiple Claude sessions run against this repo concurrently (and forks add more). To make
+"two agents stomping the same checkout" impossible, **every session works in its own git
+worktree on its own branch.** This is enforced by hooks, not left to discipline.
+
+- **`main` is PROTECTED.** Never commit, merge, rebase, or push to `main`. It is release-only,
+  updated solely by PR **from `development`**. A `PreToolUse` hook (`.claude/hooks/protect-main.cjs`)
+  hard-blocks any git write to `main`.
+- **`development` is the integration branch** — and also protected from *direct* commits. You
+  branch **from** it and merge **into** it via PR; you do not commit on it directly.
+- **Your work happens in a per-session worktree** at `../worktrees/<repo>/<session-id>` on branch
+  `agent/<session-id>`, created automatically by the `SessionStart` hook
+  (`.claude/hooks/session-worktree.cjs`) off `development`. **cd into that worktree** and use
+  absolute paths under it for all edits/commits. The session-start message tells you the exact path.
+- **Landing work:** push your `agent/<id>` branch and open a PR **into `development`** (never `main`).
+- **Referencing / absorbing another session's work:** `git worktree list` shows every session's
+  path + branch. To pull a finished subtask into your worktree: `git -C <your-wt> merge agent/<other-id>`.
+- **Handoff:** a finishing session records what it did in `AGENT-HANDOFF.md` (on its branch) so the
+  next agent can absorb it before merging. Read it first when picking up another branch.
+
+Full workflow, rationale, and recipes: **`docs/AGENT-WORKTREES.md`**.
+
 ## What this repo is
 
 The **RimSynapse** dev-tools hub: a Model Context Protocol (MCP) server that lets
