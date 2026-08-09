@@ -3,6 +3,29 @@
 Guidance for Claude Code working in this repo. Keep this file current as the MCP
 server grows — new tool families ("expansions") get documented here.
 
+## Worktree isolation & branching (MANDATORY — read first)
+
+Multiple Claude sessions run against this repo concurrently (and forks add more). To make
+"two agents stomping the same checkout" impossible, **every session works in its own git
+worktree on its own branch.** This is enforced by hooks, not left to discipline.
+
+- **`main` is PROTECTED.** Never commit, merge, rebase, or push to `main`. It is release-only,
+  updated solely by PR **from `development`**. A `PreToolUse` hook (`.claude/hooks/protect-main.cjs`)
+  hard-blocks any git write to `main`.
+- **`development` is the integration branch** — and also protected from *direct* commits. You
+  branch **from** it and merge **into** it via PR; you do not commit on it directly.
+- **Your work happens in a per-session worktree** at `../worktrees/<repo>/<session-id>` on branch
+  `agent/<session-id>`, created automatically by the `SessionStart` hook
+  (`.claude/hooks/session-worktree.cjs`) off `development`. **cd into that worktree** and use
+  absolute paths under it for all edits/commits. The session-start message tells you the exact path.
+- **Landing work:** push your `agent/<id>` branch and open a PR **into `development`** (never `main`).
+- **Referencing / absorbing another session's work:** `git worktree list` shows every session's
+  path + branch. To pull a finished subtask into your worktree: `git -C <your-wt> merge agent/<other-id>`.
+- **Handoff:** a finishing session records what it did in `AGENT-HANDOFF.md` (on its branch) so the
+  next agent can absorb it before merging. Read it first when picking up another branch.
+
+Full workflow, rationale, and recipes: **`docs/AGENT-WORKTREES.md`**.
+
 ## What this repo is
 
 The **RimSynapse** dev-tools hub: a Model Context Protocol (MCP) server that lets
@@ -85,7 +108,10 @@ automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
 `gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
 loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
 (generic register/index/graph/search), `harmony` (Harmony patching RAG — a
-curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
+curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
+`auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
+`set_active_key`; multiple labelled keys per service, active-key resolution),
+`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
 
 ## Build / run
 
@@ -104,6 +130,47 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
 - Tool names are a single global namespace — no collisions across families.
 - Keep families independent: a native-module or bridge failure should disable only
   that family, not crash the server (see the try/catch around `startBridge`).
+- **`search_issues` doesn't reliably honour `repo:`** — a `repo:owner/name is:issue`
+  query has returned issues from other repos. Don't trust a repo-scoped search to be
+  scoped; verify each result's repo before acting, and prefer per-repo listing when it
+  matters. (Bug to fix: pass the `repo:` qualifier through instead of OR-ing terms.)
+- **`run_rimworld_tests` can run a stale binary** — it builds to `<repo>/Assemblies`
+  but does **not** redeploy to the Steam `Mods/` folder the game loads from. Run
+  `deploy_rimworld_mods` first, or the test launches whatever binary was last deployed.
+
+## GitHub auth & release ops (rules)
+
+The GitHub token resolves in this order (`getGitHubToken`, `server/src/config.ts`):
+`GITHUB_TOKEN` env → `github_token.txt` (`TOKEN=…`) → **fallback** `gh auth token`.
+
+- **The `gh auth token` fallback is a trap for Projects v2.** It returns the gh
+  CLI's own OAuth keyring token (`gho_…`, scopes `repo read:org gist admin:public_key`),
+  which can only gain `project`/`read:project` via an interactive `gh auth refresh` —
+  never the user's PAT. So issues/files/wiki (`repo`) work while **every org-board op
+  fails**: `get_project_items` (needs `read:project`), `add_project_item`,
+  `update_project_item_status`, `update_project_item_iteration`, `cleanup_project_board`
+  (all need `project`). The GraphQL error to recognize is `requires ['project']` /
+  `requires ['read:project']`.
+- **Rule: provision an explicit PAT — never rely on the fallback for board work.** The
+  easy path is the **`set_github_token`** tool (`server/src/tools/auth.ts`): with no arg it
+  opens a native paste window, saves the PAT to the local keyring (`%LOCALAPPDATA%\RimAgentic\keys.json`,
+  also mirrored to `github_token.txt`), hot-swaps the running server's client (no restart), and
+  live-verifies the PAT. Multiple PATs are supported — pass a `label` (e.g. one per org) and switch
+  with `set_active_key`; inspect/prune with `list_keys` / `delete_key`. Token resolution is
+  **env `GITHUB_TOKEN` → active keyring key → `github_token.txt` → `gh` fallback** (see `keystore.ts`
+  + `getGitHubToken`). Or set `GITHUB_TOKEN` / `github_token.txt` yourself to a PAT with
+  **`repo`, `read:org`, `project`** (classic) —
+  `project` covers both read and write of Projects v2. Fine-grained PAT must be authorized
+  for the org with Projects: Read and write, Issues RW, Contents RW, Metadata R. Provisioning
+  the scopes in GitHub is not enough — the PAT must actually be *installed* where the MCP
+  reads it (env → `github_token.txt` → `gh` fallback), else the fallback silently wins.
+- **Rule: on a scope error, don't surface the raw GraphQL error.** Say which token is in
+  use (`gho_…` from `gh auth token` means the fallback fired) and that it needs `project`
+  scope — point at setting `GITHUB_TOKEN` to a PAT or `gh auth refresh -s read:project,project`.
+- **Release/tagging: `--target` rejects a short SHA.** Creating a tag/release (e.g.
+  `gh release create vX.Y.Z --target …`) must pass a **branch name or a full 40-char SHA**,
+  not an abbreviated SHA. When `main`'s HEAD is a merge commit, the branch name (`main`)
+  is the reliable target.
 
 ## Testing UI changes (required)
 
@@ -122,6 +189,36 @@ headlessly through the game, before it is considered done.
 - Assertions come from the headless UI tools (`get_gizmos`, `activate_gizmo`,
   `read_float_menu`, `get_open_windows`, `get_colonist_bar`, `get_play_settings`,
   `set_play_setting`, `sample_environment`, …); `capture_*` screenshots are evidence.
+
+## Debug-command validation (required — part of the testing gate)
+
+Building or changing a **code or mechanic setup** in a mod — a comp, manager, incident,
+mental state, trigger, or def-driven behavior — is **not done** until it has been exercised
+by a debug command and observed to behave as intended. Assuming the code works is not
+validation. This is a definition-of-done requirement that sits alongside the UI-testing gate
+below. For every mechanic you build or change, you **MUST**:
+
+1. **Build** a `[DebugAction]` that forces the mechanic to run (bypassing its trigger
+   conditions) and/or dumps its state — a required deliverable of the change, not optional tooling.
+2. **Trigger** it — in-game via the Debug Actions menu, or headlessly via `execute_game_tool`.
+3. **Confirm** from the result / `read_rimworld_log` output that the behavior matches intent.
+
+A mechanic change with no debug command exercised against it is **unverified**, exactly like a
+UI change missing its positive/negative case. (This is proof-of-function for what you touched —
+not a mandate to retrofit debug actions onto untouched existing mechanics.)
+
+- Use `[DebugAction("RimSynapse", "...", actionType = ..., allowedGameStates = ...)]` on static
+  methods, grouped under the mod's category — this gives the in-game **Debug Actions menu** entry.
+  The house pattern and the full playbook live in
+  **`modding-knowledge/04-csharp-and-harmony.md`** ("Debug actions").
+- **A plain `[DebugAction]` is headlessly triggerable** via the toolkit mod's generic bridge tools
+  `list_debug_actions` / `run_debug_action` (call them through `execute_game_tool`). `run_debug_action`
+  reflects over every loaded assembly and dispatches on signature: no-arg runs immediately, `Pawn`
+  takes `pawnName`, `IntVec3` takes `x`/`z`. So one `[DebugAction]` yields both the human menu entry
+  and the agent's headless hook — no per-mod `RegisterTool` needed just to validate. This requires the
+  toolkit mod (`archdukejim.rimagentic`) to be the active bridge (it loads last; the MCP defaults to
+  its `%LOCALAPPDATA%\RimAgentic\ipc` channel). Use `SynapseToolRegistry.RegisterTool(...)` only when
+  you want a first-class tool with a structured arg schema / JSON return.
 
 ## Planned expansions
 
