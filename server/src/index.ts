@@ -31,6 +31,7 @@ import { pcControlTools, handlePcControlTool } from "./tools/pcControl";
 import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
 import { jobsTools, handleJobsTool } from "./tools/jobs";
+import { authTools, handleAuthTool } from "./tools/auth";
 import { noteGameActivity } from "./gameWatchdog";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
@@ -40,8 +41,16 @@ import { githubTools as swhGithubTools, handleGithubTool as handleSwhGithubTool 
 
 // 1. Setup Config & Auth
 const config = loadConfig();
-const token = getGitHubToken();
-const octokit = new Octokit({ auth: token });
+// `let`, not `const`: set_github_token hot-swaps these so a freshly-pasted PAT takes effect
+// without a server restart. Every CallTool dispatch reads the current values.
+let token = getGitHubToken();
+let octokit = new Octokit({ auth: token });
+
+/** Swap the running process's GitHub token + client. Called by set_github_token after it saves a PAT. */
+function applyGitHubToken(newToken: string): void {
+    token = newToken;
+    octokit = new Octokit({ auth: newToken });
+}
 
 // Steam loopback bridge — set in main(); the swh_* tools require it.
 let bridge: Bridge | null = null;
@@ -76,7 +85,8 @@ const ALL_TOOLS = [
     ...gameIpcTools,
     ...jobsTools,
     ...swhTools,
-    ...swhGithubTools
+    ...swhGithubTools,
+    ...authTools
 ];
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
@@ -105,10 +115,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         requireGitHubToken(token, name);
     }
 
+    // Not GitHub-backed: this is how you INSTALL the token, so it must never require one.
+    if (authTools.some(t => t.name === name)) {
+        return await handleAuthTool(name, args, applyGitHubToken);
+    }
+
     if (issueTools.some(t => t.name === name)) {
         return await handleIssueTool(name, args, octokit, config.organization);
     }
-    
+
     if (projectTools.some(t => t.name === name)) {
         return await handleProjectTool(name, args, token, config.defaultProjectId);
     }
@@ -306,7 +321,9 @@ async function main() {
                 }
 
                 let result;
-                if (issueTools.some(t => t.name === name)) {
+                if (authTools.some(t => t.name === name)) {
+                    result = await handleAuthTool(name, args, applyGitHubToken);
+                } else if (issueTools.some(t => t.name === name)) {
                     result = await handleIssueTool(name, args, octokit, config.organization);
                 } else if (projectTools.some(t => t.name === name)) {
                     result = await handleProjectTool(name, args, token, config.defaultProjectId);

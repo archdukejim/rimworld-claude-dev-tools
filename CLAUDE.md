@@ -104,6 +104,43 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
 - Tool names are a single global namespace — no collisions across families.
 - Keep families independent: a native-module or bridge failure should disable only
   that family, not crash the server (see the try/catch around `startBridge`).
+- **`search_issues` doesn't reliably honour `repo:`** — a `repo:owner/name is:issue`
+  query has returned issues from other repos. Don't trust a repo-scoped search to be
+  scoped; verify each result's repo before acting, and prefer per-repo listing when it
+  matters. (Bug to fix: pass the `repo:` qualifier through instead of OR-ing terms.)
+- **`run_rimworld_tests` can run a stale binary** — it builds to `<repo>/Assemblies`
+  but does **not** redeploy to the Steam `Mods/` folder the game loads from. Run
+  `deploy_rimworld_mods` first, or the test launches whatever binary was last deployed.
+
+## GitHub auth & release ops (rules)
+
+The GitHub token resolves in this order (`getGitHubToken`, `server/src/config.ts`):
+`GITHUB_TOKEN` env → `github_token.txt` (`TOKEN=…`) → **fallback** `gh auth token`.
+
+- **The `gh auth token` fallback is a trap for Projects v2.** It returns the gh
+  CLI's own OAuth keyring token (`gho_…`, scopes `repo read:org gist admin:public_key`),
+  which can only gain `project`/`read:project` via an interactive `gh auth refresh` —
+  never the user's PAT. So issues/files/wiki (`repo`) work while **every org-board op
+  fails**: `get_project_items` (needs `read:project`), `add_project_item`,
+  `update_project_item_status`, `update_project_item_iteration`, `cleanup_project_board`
+  (all need `project`). The GraphQL error to recognize is `requires ['project']` /
+  `requires ['read:project']`.
+- **Rule: provision an explicit PAT — never rely on the fallback for board work.** The
+  easy path is the **`set_github_token`** tool (`server/src/tools/auth.ts`): with no arg it
+  opens a native paste window, writes `github_token.txt` (gitignored), hot-swaps the running
+  server's client (no restart), and live-verifies the PAT. Or set `GITHUB_TOKEN` /
+  `github_token.txt` yourself to a PAT with **`repo`, `read:org`, `project`** (classic) —
+  `project` covers both read and write of Projects v2. Fine-grained PAT must be authorized
+  for the org with Projects: Read and write, Issues RW, Contents RW, Metadata R. Provisioning
+  the scopes in GitHub is not enough — the PAT must actually be *installed* where the MCP
+  reads it (env → `github_token.txt` → `gh` fallback), else the fallback silently wins.
+- **Rule: on a scope error, don't surface the raw GraphQL error.** Say which token is in
+  use (`gho_…` from `gh auth token` means the fallback fired) and that it needs `project`
+  scope — point at setting `GITHUB_TOKEN` to a PAT or `gh auth refresh -s read:project,project`.
+- **Release/tagging: `--target` rejects a short SHA.** Creating a tag/release (e.g.
+  `gh release create vX.Y.Z --target …`) must pass a **branch name or a full 40-char SHA**,
+  not an abbreviated SHA. When `main`'s HEAD is a merge commit, the branch name (`main`)
+  is the reliable target.
 
 ## Testing UI changes (required)
 
