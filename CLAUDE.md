@@ -45,7 +45,10 @@ The server is TypeScript, compiled to `server/build/`, and also packaged as an
 - `server/src/tools/` — **one module per tool family.** This is where expansions live.
 - `server/src/config.ts`, `bridge.ts`, `manager.ts` — config/auth, the Steam
   loopback bridge (for `swh_*` browser tools), and the process manager.
-- `server/build/` — `tsc` output (git-tracked build artifacts + one-off scripts).
+- `server/build/` — `tsc` output. **Not tracked in git** (gitignored); regenerate with
+  `cd server && npm run build` (or `server/build_server.bat`). The `.mcpb` bundle is built from
+  a fresh compile, and the running dev server (`node server/build/index.js`) uses this on-disk
+  output — so rebuild after editing `server/src/` (and restart the server).
 - `manifest.json` — `.mcpb` bundle manifest; **also lists every tool** (name +
   description). Must be kept in sync when tools are added/removed.
 - `harness/` — PowerShell build/deploy/launch/test scripts and the triage runner.
