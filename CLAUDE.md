@@ -85,7 +85,10 @@ automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
 `gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
 loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
 (generic register/index/graph/search), `harmony` (Harmony patching RAG — a
-curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry).
+curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
+`auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
+`set_active_key`; multiple labelled keys per service, active-key resolution),
+`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
 
 ## Build / run
 
@@ -127,9 +130,13 @@ The GitHub token resolves in this order (`getGitHubToken`, `server/src/config.ts
   `requires ['read:project']`.
 - **Rule: provision an explicit PAT — never rely on the fallback for board work.** The
   easy path is the **`set_github_token`** tool (`server/src/tools/auth.ts`): with no arg it
-  opens a native paste window, writes `github_token.txt` (gitignored), hot-swaps the running
-  server's client (no restart), and live-verifies the PAT. Or set `GITHUB_TOKEN` /
-  `github_token.txt` yourself to a PAT with **`repo`, `read:org`, `project`** (classic) —
+  opens a native paste window, saves the PAT to the local keyring (`%LOCALAPPDATA%\RimAgentic\keys.json`,
+  also mirrored to `github_token.txt`), hot-swaps the running server's client (no restart), and
+  live-verifies the PAT. Multiple PATs are supported — pass a `label` (e.g. one per org) and switch
+  with `set_active_key`; inspect/prune with `list_keys` / `delete_key`. Token resolution is
+  **env `GITHUB_TOKEN` → active keyring key → `github_token.txt` → `gh` fallback** (see `keystore.ts`
+  + `getGitHubToken`). Or set `GITHUB_TOKEN` / `github_token.txt` yourself to a PAT with
+  **`repo`, `read:org`, `project`** (classic) —
   `project` covers both read and write of Projects v2. Fine-grained PAT must be authorized
   for the org with Projects: Read and write, Issues RW, Contents RW, Metadata R. Provisioning
   the scopes in GitHub is not enough — the PAT must actually be *installed* where the MCP

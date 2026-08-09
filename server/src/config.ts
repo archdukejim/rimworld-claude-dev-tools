@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
+import { getActiveKey } from "./keystore";
 
 export interface MCPConfig {
     defaultProjectId: string;
@@ -113,6 +114,12 @@ export function getGitHubToken(): string {
     const fromEnv = process.env.GITHUB_TOKEN?.trim();
     if (fromEnv) {
         return fromEnv;
+    }
+
+    // Then the active PAT from the local keyring (set_github_token / set_active_key).
+    const fromRing = getActiveKey("github");
+    if (fromRing) {
+        return fromRing;
     }
 
     const tokenFileCandidates = [

@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import { embed, embedBatch, cosine, EMBED_DIM } from "../embeddings";
+import { addKey, getActiveKey } from "../keystore";
 
 function localAppData(): string {
     return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
@@ -90,7 +91,10 @@ export const apiSearchTools = [
         inputSchema: {
             type: "object",
             properties: {
-                key: { type: "string", description: "Optional. If given, store this key directly instead of opening the paste window." }
+                key: { type: "string", description: "Optional. If given, store this key directly instead of opening the paste window." },
+                label: { type: "string", description: "Optional name for this key (supports multiple Anthropic keys). Defaults to 'default' / auto." },
+                note: { type: "string", description: "Optional free-text note (what this key is for)." },
+                expiresAt: { type: "string", description: "Optional ISO date (YYYY-MM-DD) the key expires, so list_keys can flag it." }
             }
         }
     },
@@ -275,9 +279,11 @@ export async function handleApiSearchTool(name: string, args: any) {
 
 const keyFilePath = () => path.join(rimAgenticDir(), "anthropic.key");
 
-/** ANTHROPIC_API_KEY (env) wins; otherwise the key stored by set_anthropic_key. Null if neither. */
+/** ANTHROPIC_API_KEY (env) wins; then the active keyring key; then the legacy single-key file. Null if none. */
 function resolveAnthropicKey(): string | null {
     if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim()) return process.env.ANTHROPIC_API_KEY.trim();
+    const fromRing = getActiveKey("anthropic");
+    if (fromRing) return fromRing;
     try { const k = fs.readFileSync(keyFilePath(), "utf8").trim(); if (k) return k; } catch { /* not stored */ }
     return null;
 }
@@ -291,7 +297,7 @@ function getAnthropic(): any {
     return apiKey ? new Ctor({ apiKey }) : new Ctor();
 }
 
-/** Open a native paste window (or store a directly-supplied key), then save it locally. */
+/** Open a native paste window (or store a directly-supplied key), then save it to the keyring. */
 async function setAnthropicKey(args: any) {
     let key = args.key ? String(args.key).trim() : "";
     let source = key ? "argument" : "window";
@@ -301,12 +307,15 @@ async function setAnthropicKey(args: any) {
     }
     if (!key) return okText({ ok: false, note: "No key entered (window cancelled). Nothing was saved." });
     if (!/^sk-ant-/.test(key)) return errText(`That doesn't look like an Anthropic key — it should start with "sk-ant-". Nothing was saved.`);
+    let entry;
     try {
+        entry = addKey("anthropic", key, { label: args.label, note: args.note, expiresAt: args.expiresAt, nowIso: new Date().toISOString() });
+        // Keep the legacy single-key file in sync with the active key for older readers.
         fs.mkdirSync(rimAgenticDir(), { recursive: true });
         fs.writeFileSync(keyFilePath(), key, { mode: 0o600 });
     } catch (e: any) { return errText(`Failed to save the key: ${e?.message || e}`); }
     const masked = `${key.slice(0, 7)}…${key.slice(-4)}`;
-    return okText({ ok: true, source, saved: keyFilePath(), key: masked, note: "Stored. enrich_api_corpus will use it right away — no restart needed." });
+    return okText({ ok: true, source, service: "anthropic", label: entry.label, active: true, key: masked, note: "Stored in the keyring; enrich_api_corpus uses it right away — no restart. Manage keys with list_keys / set_active_key / delete_key." });
 }
 
 /** Show a Windows input box and return the pasted text (empty string if cancelled). */

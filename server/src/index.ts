@@ -32,6 +32,7 @@ import { rimworldDevTools, handleRimworldDevTool } from "./tools/rimworldDev";
 import { gameIpcTools, handleGameIpcTool } from "./tools/gameIpc";
 import { jobsTools, handleJobsTool } from "./tools/jobs";
 import { authTools, handleAuthTool } from "./tools/auth";
+import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { noteGameActivity } from "./gameWatchdog";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
@@ -86,7 +87,8 @@ const ALL_TOOLS = [
     ...jobsTools,
     ...swhTools,
     ...swhGithubTools,
-    ...authTools
+    ...authTools,
+    ...rimsortTools
 ];
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
@@ -118,6 +120,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Not GitHub-backed: this is how you INSTALL the token, so it must never require one.
     if (authTools.some(t => t.name === name)) {
         return await handleAuthTool(name, args, applyGitHubToken);
+    }
+
+    if (rimsortTools.some(t => t.name === name)) {
+        return await handleRimsortTool(name, args);
     }
 
     if (issueTools.some(t => t.name === name)) {
@@ -323,6 +329,8 @@ async function main() {
                 let result;
                 if (authTools.some(t => t.name === name)) {
                     result = await handleAuthTool(name, args, applyGitHubToken);
+                } else if (rimsortTools.some(t => t.name === name)) {
+                    result = await handleRimsortTool(name, args);
                 } else if (issueTools.some(t => t.name === name)) {
                     result = await handleIssueTool(name, args, octokit, config.organization);
                 } else if (projectTools.some(t => t.name === name)) {

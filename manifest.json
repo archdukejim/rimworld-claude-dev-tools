@@ -107,7 +107,23 @@
     },
     {
       "name": "set_github_token",
-      "description": "Store your GitHub PAT so the issue/project-board/codebase/sync tools authenticate as you, not the gh CLI's scope-poor keyring token. With no argument, opens a small window to paste your PAT into; it is saved locally (github_token.txt, gitignored), used immediately (no restart), and never shown in chat or committed. For org boards the PAT needs repo + read:org + project (or fine-grained: Projects/Issues/Contents RW, Metadata R)."
+      "description": "Store a GitHub PAT in the local keyring so the issue/project-board/codebase/sync tools authenticate as you, not the gh CLI's scope-poor keyring token. With no argument, opens a small window to paste your PAT into; saved locally, used immediately (no restart), never shown in chat or committed. Supports multiple PATs via `label` (e.g. one per org); the new key becomes active. For org boards the PAT needs repo + read:org + project (or fine-grained: Projects/Issues/Contents RW, Metadata R)."
+    },
+    {
+      "name": "list_keys",
+      "description": "List stored GitHub PATs and Anthropic API keys (values masked): service, label, active flag, added date, recorded expiry, and expired flag. Pass verify:true to live-check each against GitHub/Anthropic. Use to find expired or irrelevant keys to delete."
+    },
+    {
+      "name": "delete_key",
+      "description": "Delete a stored key by service + label (from list_keys). If it was active, the next remaining key is promoted and applied to the running server. Use to remove expired or irrelevant keys."
+    },
+    {
+      "name": "set_active_key",
+      "description": "Choose which stored key is active for a service (e.g. switch between a RimSynapse-org PAT and a personal PAT). Applied to the running server immediately — no restart."
+    },
+    {
+      "name": "suppress_rimsort_warnings",
+      "description": "Silence RimSort's noisy startup dialogs for a mod developer: the 'Mods with Missing Properties' popup (fires for every local/unpublished mod with no Steam PublishedFileId) and the 'Duplicate mods' popup. Sets duplicate_mods_warning=false and auto-adds every local mod missing About/PublishedFileId.txt to RimSort's ignore list. Read live by RimSort (no restart), idempotent, and touches only RimSort config — never your mods."
     },
     {
       "name": "enrich_api_corpus",
