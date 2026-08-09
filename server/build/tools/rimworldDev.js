@@ -209,6 +209,92 @@ function ensureActiveWorkshopModsLoadable(modsDir, savedata) {
         log += `Cleaned up ${removed} stale managed Workshop junction(s).\n`;
     return log;
 }
+/** Resolve the Player.log RimWorld writes, trying the savedatafolder's Logs/ first, then the
+ *  Unity LocalLow default (RimWorld keeps the Player.log there regardless of -savedatafolder).
+ *  Shared by read_rimworld_log and the launch first-pass so both read the same file. */
+function resolvePlayerLogPath(savedata) {
+    const candidates = [
+        path.join(savedata, "Logs", "Player.log"),
+        path.join(savedata, "Player.log"),
+        path.join(process.env.USERPROFILE || "", "AppData", "LocalLow", "Ludeon Studios", "RimWorld by Ludeon Studios", "Player.log")
+    ];
+    for (const c of candidates)
+        if (fs.existsSync(c))
+            return c;
+    return null;
+}
+/**
+ * First-pass environment check, run immediately after a launch: confirm the modlist that will be
+ * tested actually loaded clean. Reads the active modlist and triages the startup Player.log so a
+ * broken test environment — missing dependency, Harmony failure, load-time exception — is surfaced
+ * at launch time rather than after the agent has already started driving a doomed session.
+ *
+ * Best-effort and non-fatal: it never throws. When `ready` is false (a plain menu launch, where we
+ * didn't wait for a map) it gives startup a short window to reach at least the menu — signalled by
+ * the in-game bridge answering — so the log reflects the full mod-load pass before it is read.
+ */
+async function firstPassEnvironmentCheck(savedata, pid, ready) {
+    if (!ready) {
+        const budgetMs = 25000;
+        const start = Date.now();
+        while (Date.now() - start < budgetMs) {
+            if (pid && !isProcessAlive(pid))
+                break; // crashed during startup — read whatever it left
+            if (await (0, gameIpc_1.requestBridgeStatus)(1500))
+                break; // bridge answered → startup reached the menu
+            await sleep(1000);
+        }
+    }
+    let out = "\n--- First-pass environment check ---\n";
+    // The active modlist this launch will load.
+    let activeMods = [];
+    const modsConfigPath = path.join(savedata, "Config", "ModsConfig.xml");
+    try {
+        const cfg = fs.readFileSync(modsConfigPath, "utf8");
+        const block = /<activeMods>([\s\S]*?)<\/activeMods>/i.exec(cfg)?.[1] ?? "";
+        activeMods = Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim());
+    }
+    catch { /* absence is itself worth reporting below */ }
+    out += activeMods.length
+        ? `Active modlist: ${activeMods.length} mod(s) (last: ${activeMods[activeMods.length - 1]}).\n`
+        : `Could not read an active modlist from ${modsConfigPath}.\n`;
+    // Startup log triage.
+    const logPath = resolvePlayerLogPath(savedata);
+    if (!logPath) {
+        out += `No Player.log found yet — cannot verify a clean startup. Re-check with read_rimworld_log shortly.\n`;
+        return out;
+    }
+    let report;
+    try {
+        const lines = fs.readFileSync(logPath, "utf8").split(/\r?\n/);
+        report = classifyLog(lines, 10);
+    }
+    catch (e) {
+        out += `Could not read ${logPath}: ${e.message}\n`;
+        return out;
+    }
+    const c = report.counts;
+    if (report.ok && c.missingDependency === 0) {
+        out += `Startup log clean: no blocking errors, missing dependencies, or Harmony failures. Environment looks ready.\n`;
+    }
+    else {
+        out += `ENVIRONMENT PROBLEMS DETECTED in ${logPath}:\n`;
+        if (c.missingDependency > 0)
+            out += `  Missing dependencies (${c.missingDependency}): ${report.categories.missingDependency.join(" | ")}\n`;
+        if (c.harmonyPatchFailure > 0)
+            out += `  Harmony patch failures (${c.harmonyPatchFailure}): ${report.categories.harmonyPatchFailure.join(" | ")}\n`;
+        if (c.xmlError > 0)
+            out += `  XML/def errors (${c.xmlError}): ${report.categories.xmlError.slice(0, 5).join(" | ")}\n`;
+        if (c.exception > 0)
+            out += `  Exceptions (${c.exception}): ${report.categories.exception.slice(0, 3).join(" | ")}\n`;
+        if (c.error > 0)
+            out += `  Errors (${c.error}): ${report.categories.error.slice(0, 3).join(" | ")}\n`;
+        out += `  Run read_rimworld_log for the full triage before trusting any test result.\n`;
+    }
+    if (c.versionWarning > 0)
+        out += `  Note: ${c.versionWarning} version-mismatch warning(s).\n`;
+    return out;
+}
 /** Enumerate the .rws saves under a savedatafolder's Saves/ dir, newest first. */
 function listSaves(savedata) {
     const savesDir = path.join(savedata, "Saves");
@@ -258,7 +344,7 @@ exports.rimworldDevTools = [
     },
     {
         name: "launch_rimworld",
-        description: "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. When launching into a map (quicktest or loadSave) it blocks until the map is live before returning, so a following bridge tool call won't race the load.",
+        description: "Closes existing RimWorld instances and launches a new one with developer, quicktest, or custom save data folder parameters. When launching into a map (quicktest or loadSave) it blocks until the map is live before returning, so a following bridge tool call won't race the load. Always runs a first-pass environment check after launch: reports the active modlist and triages the startup Player.log (missing dependencies, Harmony failures, load-time exceptions) so a broken test environment is caught immediately.",
         inputSchema: {
             type: "object",
             properties: {
@@ -983,6 +1069,7 @@ async function handleRimworldDevTool(name, args) {
             // Only meaningful when a live map is expected — a plain menu launch never becomes live.
             const expectsMap = quicktest || !!autoloadSave;
             const waitForReady = args.waitForReady !== false; // default on
+            let confirmedReady = false; // did we observe the game reach a live map?
             if (waitForReady && expectsMap) {
                 const budgetMs = Math.max(5000, (args.readyTimeoutSec ?? 120) * 1000);
                 logs += `Waiting up to ${Math.round(budgetMs / 1000)}s for the map to become live...\n`;
@@ -1002,6 +1089,7 @@ async function handleRimworldDevTool(name, args) {
                     await sleep(1000);
                 }
                 if (ready) {
+                    confirmedReady = true;
                     const size = ready.mapSize ? `${ready.mapSize.x}x${ready.mapSize.z}` : "unknown size";
                     logs += `Map is live (${size}, hour ${ready.hourOfDay}, ${ready.colonistCount} colonists) after ${Math.round((Date.now() - start) / 1000)}s — bridge tools are ready.\n`;
                 }
@@ -1012,6 +1100,10 @@ async function handleRimworldDevTool(name, args) {
             else if (waitForReady && !expectsMap) {
                 logs += "Menu launch (no quicktest/loadSave) — not waiting for a map; the bridge serves tools once a game is loaded.\n";
             }
+            // First pass on the freshly launched environment: verify the modlist loaded and the
+            // startup log is clean, so a broken test setup (a missed hard dependency, a Harmony
+            // failure) is caught right now instead of after the agent starts driving the session.
+            logs += await firstPassEnvironmentCheck(savedata, child.pid ?? null, confirmedReady);
         }
         catch (err) {
             logs += `Launch failed: ${err.message}`;
@@ -1052,18 +1144,7 @@ async function handleRimworldDevTool(name, args) {
     if (name === "read_rimworld_log") {
         const savedata = args.savedatafolder || config.savedatafolder || (0, config_1.getSaveDataFolder)();
         const linesToGet = args.lines || 100;
-        let logPath = "";
-        const candidates = [
-            path.join(savedata, "Logs", "Player.log"),
-            path.join(savedata, "Player.log"),
-            path.join(process.env.USERPROFILE || "", "AppData", "LocalLow", "Ludeon Studios", "RimWorld by Ludeon Studios", "Player.log")
-        ];
-        for (const c of candidates) {
-            if (fs.existsSync(c)) {
-                logPath = c;
-                break;
-            }
-        }
+        const logPath = resolvePlayerLogPath(savedata);
         if (!logPath) {
             throw new Error(`RimWorld Player.log file not found at any of the candidate paths.`);
         }

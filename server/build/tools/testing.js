@@ -35,6 +35,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.testingTools = void 0;
 exports.resolveInstalledMods = resolveInstalledMods;
+exports.findMissingDependencies = findMissingDependencies;
+exports.withInstalledDependencies = withInstalledDependencies;
 exports.resolveModLoadOrder = resolveModLoadOrder;
 exports.handleTestingTool = handleTestingTool;
 const fs = __importStar(require("fs"));
@@ -203,6 +205,116 @@ function declaredOrdering(folder) {
     };
 }
 /**
+ * A mod's declared HARD dependencies — the <modDependencies> and <modDependenciesByVersion>
+ * blocks — each with the packageId it requires plus the displayName/downloadUrl the author gave.
+ * These are the mods RimWorld needs BOTH installed AND active: a hard dependency that is merely
+ * absent doesn't reorder anything, it makes the dependent mod fail deep in startup (the classic
+ * "Could not resolve type 'HarmonyLib.Harmony'"). Empty when the mod isn't installed or declares none.
+ */
+function modHardDependencies(folder) {
+    if (!folder)
+        return [];
+    const aboutPath = path.join(folder, "About", "About.xml");
+    if (!fs.existsSync(aboutPath))
+        return [];
+    let xml = "";
+    try {
+        xml = fs.readFileSync(aboutPath, "utf8");
+    }
+    catch {
+        return [];
+    }
+    // modDependenciesByVersion nests <li> inside per-version blocks; joining both regions and then
+    // scanning for <li> finds every declared dependency regardless of which block it lives in.
+    const region = [
+        /<modDependencies>([\s\S]*?)<\/modDependencies>/i.exec(xml)?.[1] ?? "",
+        /<modDependenciesByVersion>([\s\S]*?)<\/modDependenciesByVersion>/i.exec(xml)?.[1] ?? ""
+    ].join("\n");
+    const out = [];
+    const seen = new Set();
+    for (const li of region.matchAll(/<li>([\s\S]*?)<\/li>/gi)) {
+        const inner = li[1];
+        const pid = /<packageId>([^<]+)<\/packageId>/i.exec(inner)?.[1]?.trim().toLowerCase();
+        if (!pid || seen.has(pid))
+            continue;
+        seen.add(pid);
+        out.push({
+            packageId: pid,
+            displayName: /<displayName>([^<]+)<\/displayName>/i.exec(inner)?.[1]?.trim(),
+            downloadUrl: /<downloadUrl>([^<]+)<\/downloadUrl>/i.exec(inner)?.[1]?.trim()
+        });
+    }
+    return out;
+}
+/**
+ * Every HARD dependency an active mod declares that is NOT itself in the active set — the check
+ * that was missing. Load-order sorting only ever reasoned about mods already in the list, so a mod
+ * whose prerequisite was simply absent loaded anyway and failed later with a cryptic error. The
+ * `installed` flag splits "installed but not activated" (just activate it) from "not installed at
+ * all" (the modlist cannot be satisfied on this machine). An uninstalled ACTIVE mod is skipped here
+ * because it is already reported as `uninstalled`; we only chase dependencies of mods that exist.
+ */
+function findMissingDependencies(activeMods, config) {
+    const index = modFolderIndex(config);
+    const activeLower = new Set(activeMods.map(m => m.trim().toLowerCase()));
+    const missing = [];
+    const seen = new Set();
+    for (const mod of activeMods) {
+        const folder = index.get(mod.trim().toLowerCase());
+        if (!folder)
+            continue;
+        for (const dep of modHardDependencies(folder)) {
+            if (activeLower.has(dep.packageId))
+                continue;
+            const key = `${mod.trim().toLowerCase()}|${dep.packageId}`;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            missing.push({
+                mod: mod.trim().toLowerCase(),
+                dependsOn: dep.packageId,
+                displayName: dep.displayName,
+                downloadUrl: dep.downloadUrl,
+                installed: index.has(dep.packageId)
+            });
+        }
+    }
+    return missing;
+}
+/**
+ * Add every INSTALLED hard dependency that `activeMods` leaves out, transitively, returning the
+ * augmented list and the record of what was pulled in. This is what makes a configured test
+ * environment actually correct: a mod's installed prerequisites are activated for it instead of
+ * being silently dropped. Dependencies that are not installed at all can't be added — they are left
+ * for `findMissingDependencies` to report as unsatisfiable. Pure: reads About.xml, mutates nothing.
+ */
+function withInstalledDependencies(activeMods, config) {
+    const index = modFolderIndex(config);
+    const result = [...activeMods];
+    const activeLower = new Set(result.map(m => m.trim().toLowerCase()));
+    const added = [];
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const mod of [...result]) {
+            const folder = index.get(mod.trim().toLowerCase());
+            if (!folder)
+                continue;
+            for (const dep of modHardDependencies(folder)) {
+                if (activeLower.has(dep.packageId))
+                    continue;
+                if (!index.has(dep.packageId))
+                    continue; // not installed — can't satisfy, reported elsewhere
+                result.push(dep.packageId);
+                activeLower.add(dep.packageId);
+                added.push({ dependency: dep.packageId, requiredBy: mod.trim().toLowerCase() });
+                changed = true;
+            }
+        }
+    }
+    return { activeMods: result, added };
+}
+/**
  * Order mods so every declared loadAfter / modDependency comes first, preserving the caller's
  * order wherever the declarations do not care.
  *
@@ -314,7 +426,11 @@ function resolveModLoadOrder(activeMods, config) {
     }
     const ambiguous = tailInput.filter(m => index.has(m.toLowerCase()) && !constrained.has(m.toLowerCase()));
     const uninstalled = deduped.filter(m => !index.has(m.toLowerCase()));
-    return { resolved, cycles, ambiguous, uninstalled };
+    // Unsatisfied HARD dependencies: a prerequisite a present mod declares but that is not in the
+    // active set. This is the gap the load-order sort never covered — an absent dependency isn't a
+    // mis-ordering, it's a mod that will fail to load. Reported so callers can activate or install it.
+    const missingDependencies = findMissingDependencies(deduped, config);
+    return { resolved, cycles, ambiguous, uninstalled, missingDependencies };
 }
 exports.testingTools = [
     {
@@ -342,7 +458,11 @@ exports.testingTools = [
     },
     {
         name: "configure_active_mods",
-        description: "Configures active mods and DLCs in RimWorld's ModsConfig.xml. Resolves file path dynamically.",
+        description: "Configures active mods and DLCs in RimWorld's ModsConfig.xml, resolving official-first, " +
+            "dependency-aware load order. Also enforces HARD dependencies (<modDependencies>): any " +
+            "installed prerequisite a chosen mod requires is automatically activated for it (transitively), " +
+            "and a prerequisite that is not installed at all is reported as an error because RimWorld will " +
+            "fail to load the dependent mod. Resolves file path dynamically.",
         inputSchema: {
             type: "object",
             properties: {
@@ -350,6 +470,10 @@ exports.testingTools = [
                     type: "array",
                     items: { type: "string" },
                     description: "List of mod IDs to set as active. Overwrites current list."
+                },
+                autoAddDependencies: {
+                    type: "boolean",
+                    description: "Automatically activate installed hard dependencies (<modDependencies>) that the chosen mods require but that were left out of the list (default: true). Set false to leave the list exactly as given and only report unsatisfied dependencies."
                 },
                 addMods: {
                     type: "array",
@@ -383,10 +507,12 @@ exports.testingTools = [
         description: "Read-only. Resolves a set of mod packageIds into RimWorld load order using the exact " +
             "rules configure_active_mods writes with (official block first — harmony, core, DLCs — " +
             "then a topological sort of declared loadAfter/loadBefore/modDependencies). Reads each " +
-            "mod's About.xml; writes nothing. Returns { resolved, ambiguous, cycles, uninstalled }: " +
-            "'ambiguous' = installed mods with no ordering constraints (the ones needing judgment), " +
-            "'cycles' = mutually-conflicting declarations left in the given order, 'uninstalled' = " +
-            "packageIds found in no mod folder (RimWorld silently drops them). If 'mods' is omitted, " +
+            "mod's About.xml; writes nothing. Returns { resolved, ambiguous, cycles, uninstalled, " +
+            "missingDependencies }: 'ambiguous' = installed mods with no ordering constraints (the ones " +
+            "needing judgment), 'cycles' = mutually-conflicting declarations left in the given order, " +
+            "'uninstalled' = packageIds found in no mod folder (RimWorld silently drops them), " +
+            "'missingDependencies' = hard <modDependencies> prerequisites not in the set (each flagged " +
+            "installed=true if just inactive, false if not on disk at all). If 'mods' is omitted, " +
             "reads the current active list from ModsConfig.xml.",
         inputSchema: {
             type: "object",
@@ -442,10 +568,11 @@ exports.testingTools = [
         description: "Read-only. Analyzes a mod set (or the active ModsConfig list) for the conflicts a modder " +
             "must deconflict: duplicate packageIds across installed folders (RimWorld loads only the " +
             "first, silently shadowing the rest — e.g. a Workshop mod squatting a DLC's id), " +
-            "incompatibleWith pairs that are both active, and load-order cycles from declared " +
-            "loadAfter/loadBefore. Returns { conflictCount, duplicatePackageIds, incompatiblePairs, " +
-            "cycles }. Reads About.xml; writes nothing. If 'mods' is omitted, reads the active list " +
-            "from ModsConfig.xml.",
+            "incompatibleWith pairs that are both active, load-order cycles from declared " +
+            "loadAfter/loadBefore, and unsatisfied HARD dependencies (a <modDependencies> prerequisite " +
+            "not in the active set — the dependent mod will fail to load). Returns { conflictCount, " +
+            "duplicatePackageIds, incompatiblePairs, cycles, missingDependencies }. Reads About.xml; " +
+            "writes nothing. If 'mods' is omitted, reads the active list from ModsConfig.xml.",
         inputSchema: {
             type: "object",
             properties: {
@@ -714,13 +841,30 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
                 }
             }
         }
+        // Pull in installed HARD dependencies the caller left out, BEFORE ordering. A hard
+        // dependency (<modDependencies>) must be both installed AND active or the dependent mod
+        // fails deep in startup; the load-order sort alone never noticed an absent prerequisite,
+        // so a missing dependency was silently dropped (the recent miss this fixes). Installed
+        // prerequisites are activated for their dependents; ones not installed at all are reported.
+        const autoAddDeps = args.autoAddDependencies !== false;
+        let autoAdded = [];
+        if (autoAddDeps) {
+            const augmented = withInstalledDependencies(activeList, config);
+            activeList = augmented.activeMods;
+            autoAdded = augmented.added;
+        }
         // Resolve into official-first, dependency-aware load order via the shared resolver.
         // Ignoring loadAfter here once silently disabled Factions: alphabetical order put it
         // ahead of Regions-and-Territories whose assembly it binds against, so every Factions
         // type failed to resolve with only four "Could not find a type named ..." lines as
         // evidence. RimWorld obeys this file and treats loadAfter as advisory.
-        const { resolved, cycles, uninstalled: missing } = resolveModLoadOrder(activeList, config);
+        const { resolved, cycles, uninstalled: missing, missingDependencies } = resolveModLoadOrder(activeList, config);
         activeList = resolved;
+        // After auto-add, anything still unsatisfied is a hard dependency not installed at all (or,
+        // if autoAddDependencies was disabled, one merely not activated). The former can't be fixed
+        // from here and breaks the run; the latter is fixable by the caller.
+        const unsatisfiedDeps = missingDependencies.filter(d => !d.installed);
+        const inactiveDeps = missingDependencies.filter(d => d.installed); // only when auto-add is off
         // Format activeMods XML block
         const newActiveXml = `<activeMods>\n` + activeList.map(m => `        <li>${m}</li>`).join("\n") + `\n    </activeMods>`;
         if (content.includes("<activeMods>")) {
@@ -736,20 +880,40 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
         // only evidence that it was never loaded. `missing` comes from the resolver above.
         const notes = [];
         notes.push(`Wrote ${configPath}`);
+        if (autoAdded.length > 0) {
+            notes.push(`Auto-activated ${autoAdded.length} installed hard dependency(ies): ` +
+                autoAdded.map(a => `${a.dependency} (required by ${a.requiredBy})`).join(", "));
+        }
+        if (unsatisfiedDeps.length > 0) {
+            notes.push(`MISSING HARD DEPENDENCY — not installed; RimWorld will fail to load the dependent mod: ` +
+                unsatisfiedDeps.map(d => {
+                    const nm = d.displayName ? `${d.displayName} [${d.dependsOn}]` : d.dependsOn;
+                    const src = d.downloadUrl ? ` — get it: ${d.downloadUrl}` : "";
+                    return `${nm} required by ${d.mod}${src}`;
+                }).join("; "));
+        }
+        if (inactiveDeps.length > 0) {
+            notes.push(`Installed but NOT activated (autoAddDependencies is off — activate these or re-run with it on): ` +
+                inactiveDeps.map(d => `${d.dependsOn} required by ${d.mod}`).join(", "));
+        }
         if (missing.length > 0) {
             notes.push(`NOT INSTALLED (RimWorld will ignore these): ${missing.join(", ")}`);
         }
         if (cycles.length > 0) {
             notes.push(`Circular loadAfter/loadBefore among: ${cycles.join(", ")} — left in the order given.`);
         }
+        const hasBlockingProblem = missing.length > 0 || unsatisfiedDeps.length > 0;
+        const headline = hasBlockingProblem
+            ? `Configured ModsConfig.xml, but the test environment is NOT sound (see notes).`
+            : autoAdded.length > 0
+                ? `Successfully configured ModsConfig.xml (auto-activated ${autoAdded.length} missing hard dependency(ies)).`
+                : `Successfully configured ModsConfig.xml.`;
         return {
-            isError: missing.length > 0,
+            isError: hasBlockingProblem,
             content: [{
                     type: "text",
                     text: [
-                        missing.length > 0
-                            ? `Configured ModsConfig.xml, but ${missing.length} requested mod(s) are not installed.`
-                            : `Successfully configured ModsConfig.xml.`,
+                        headline,
                         ...notes,
                         `Active mods, in load order: ${JSON.stringify(activeList)}`
                     ].join("\n")
@@ -852,11 +1016,16 @@ async function handleTestingTool(name, args, octokit, org, token, defaultProject
         }
         // 3. Load-order cycles within the set (official block never cycles).
         const { cycles } = orderByDeclaredDependencies(mods.filter(m => OFFICIAL_ORDER.indexOf(m.toLowerCase()) === -1), index);
-        const conflictCount = duplicatePackageIds.length + incompatiblePairs.length + (cycles.length > 0 ? 1 : 0);
+        // 4. Unsatisfied hard dependencies — a prerequisite an active mod requires but that is not
+        // active. RimWorld will load the dependent mod and it will fail; this is the class of miss
+        // that motivated the check. Reported alongside the deconfliction conflicts.
+        const missingDependencies = findMissingDependencies(mods, config);
+        const conflictCount = duplicatePackageIds.length + incompatiblePairs.length
+            + (cycles.length > 0 ? 1 : 0) + missingDependencies.length;
         return {
             content: [{
                     type: "text",
-                    text: JSON.stringify({ conflictCount, duplicatePackageIds, incompatiblePairs, cycles }, null, 2)
+                    text: JSON.stringify({ conflictCount, duplicatePackageIds, incompatiblePairs, cycles, missingDependencies }, null, 2)
                 }]
         };
     }

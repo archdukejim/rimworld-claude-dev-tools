@@ -167,6 +167,36 @@ headlessly through the game, before it is considered done.
   `read_float_menu`, `get_open_windows`, `get_colonist_bar`, `get_play_settings`,
   `set_play_setting`, `sample_environment`, …); `capture_*` screenshots are evidence.
 
+## Debug-command validation (required — part of the testing gate)
+
+Building or changing a **code or mechanic setup** in a mod — a comp, manager, incident,
+mental state, trigger, or def-driven behavior — is **not done** until it has been exercised
+by a debug command and observed to behave as intended. Assuming the code works is not
+validation. This is a definition-of-done requirement that sits alongside the UI-testing gate
+below. For every mechanic you build or change, you **MUST**:
+
+1. **Build** a `[DebugAction]` that forces the mechanic to run (bypassing its trigger
+   conditions) and/or dumps its state — a required deliverable of the change, not optional tooling.
+2. **Trigger** it — in-game via the Debug Actions menu, or headlessly via `execute_game_tool`.
+3. **Confirm** from the result / `read_rimworld_log` output that the behavior matches intent.
+
+A mechanic change with no debug command exercised against it is **unverified**, exactly like a
+UI change missing its positive/negative case. (This is proof-of-function for what you touched —
+not a mandate to retrofit debug actions onto untouched existing mechanics.)
+
+- Use `[DebugAction("RimSynapse", "...", actionType = ..., allowedGameStates = ...)]` on static
+  methods, grouped under the mod's category — this gives the in-game **Debug Actions menu** entry.
+  The house pattern and the full playbook live in
+  **`modding-knowledge/04-csharp-and-harmony.md`** ("Debug actions").
+- **A plain `[DebugAction]` is headlessly triggerable** via the toolkit mod's generic bridge tools
+  `list_debug_actions` / `run_debug_action` (call them through `execute_game_tool`). `run_debug_action`
+  reflects over every loaded assembly and dispatches on signature: no-arg runs immediately, `Pawn`
+  takes `pawnName`, `IntVec3` takes `x`/`z`. So one `[DebugAction]` yields both the human menu entry
+  and the agent's headless hook — no per-mod `RegisterTool` needed just to validate. This requires the
+  toolkit mod (`archdukejim.rimagentic`) to be the active bridge (it loads last; the MCP defaults to
+  its `%LOCALAPPDATA%\RimAgentic\ipc` channel). Use `SynapseToolRegistry.RegisterTool(...)` only when
+  you want a first-class tool with a structured arg schema / JSON return.
+
 ## Planned expansions
 
 The roadmap lives in **`docs/PLANNED-FEATURES.md`** (human-readable snapshot),
