@@ -116,6 +116,36 @@ foreach ($mod in $mods) {
             $problems += @{ mod=$name; issue='steam_description.txt has no "[b]Version:[/b] vX.Y.Z" line' }
         }
     }
+
+    # (4) About/Manifest.xml — the Version Checker companion file that drives the in-game compat
+    # tracker (Core #91). Validated IF PRESENT; not yet required, since each mod adds it as part of
+    # its tracker-integration issue. Its <version> must equal <modVersion> so the tracker can't
+    # report a version the mod list disagrees with; <coreVersion> (the min-Core floor) must parse.
+    $manifestPath = Join-Path $mod.FullName 'About\Manifest.xml'
+    if (Test-Path $manifestPath) {
+        $maniXml = $null
+        try { [xml]$maniXml = Get-Content $manifestPath -Raw }
+        catch { $problems += @{ mod=$name; issue="Manifest.xml is not well-formed XML: $($_.Exception.Message)" } }
+
+        if ($maniXml) {
+            $maniVersion = $maniXml.Manifest.version
+            if (-not $maniVersion) {
+                $problems += @{ mod=$name; issue='Manifest.xml has no <version>' }
+            } elseif ($maniVersion -ne $modVersion) {
+                $problems += @{ mod=$name
+                                issue="Manifest.xml <version> is $maniVersion but <modVersion> is $modVersion — the compat tracker would report a version the mod list disagrees with" }
+            } else {
+                $checked += @{ mod=$name; field='manifest version'; value="v$maniVersion" }
+            }
+
+            $coreFloor = $maniXml.Manifest.coreVersion
+            if ($coreFloor -and ($coreFloor -notmatch '^[0-9]+(\.[0-9]+){0,3}$')) {
+                $problems += @{ mod=$name; issue="Manifest.xml <coreVersion> '$coreFloor' is not a valid version" }
+            } elseif ($coreFloor) {
+                $checked += @{ mod=$name; field='manifest core floor'; value="Core >= $coreFloor" }
+            }
+        }
+    }
 }
 
 $ok = ($problems.Count -eq 0)
