@@ -2,6 +2,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import { randomBytes } from "crypto";
 import { nut, sharp } from "./pc/native";
+import { loadConfig } from "../config";
 
 /**
  * Steam Workshop image pipeline (roadmap #1): capture RimWorld content and produce Workshop-ready
@@ -62,6 +63,332 @@ async function toWorkshopJpeg(srcPath: string, name: string, maxWidth: number, q
     await fsp.writeFile(out, buf);
     const meta = await S(out).metadata();
     return { path: out, name, width: meta.width || null, height: meta.height || null, bytes: buf.length };
+}
+
+/* ------------------------------------------------------------------------ *
+ * Infographic renderer (roadmap #3): generate Vanilla-Expanded-style banners
+ * and feature panels as PNGs, entirely from structured input via SVG -> sharp
+ * (no headless browser / canvas needed). Two components mirror the VE layout
+ * language: a notched "ribbon" section header, and a feature panel with an
+ * icon tile + gray content panel (ribbon subtitle, italic flavor quote, body,
+ * and an optional key/value stat grid). Themeable via a brand accent colour so
+ * an author's images read as their own brand, not a VE clone.
+ * ------------------------------------------------------------------------ */
+
+const DEFAULT_ACCENT = "#b9622b"; // warm amber brand accent (VE itself uses ~#a83a3a red)
+
+interface InfographicTheme {
+    bg: string; bgEdge: string;
+    accent: string; accentHi: string; accentSh: string;
+    panel: string; panelEdge: string; chip: string;
+    head: string; body: string; flavor: string;
+    serif: string; sans: string;
+}
+
+/** Clamp+shade a #rrggbb colour by `amt` in [-1,1] (negative darkens, positive lightens). */
+function shade(hex: string, amt: number): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+    const n = m ? parseInt(m[1], 16) : 0xb9622b;
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(c => {
+        const v = amt >= 0 ? c + (255 - c) * amt : c * (1 + amt);
+        return Math.max(0, Math.min(255, Math.round(v)));
+    });
+    return "#" + ch.map(c => c.toString(16).padStart(2, "0")).join("");
+}
+
+function buildTheme(accent?: string): InfographicTheme {
+    const a = /^#?[0-9a-f]{6}$/i.test(String(accent || "")) ? (accent!.startsWith("#") ? accent! : "#" + accent) : DEFAULT_ACCENT;
+    return {
+        bg: "#1b2838", bgEdge: "#12202e",
+        accent: a, accentHi: shade(a, 0.18), accentSh: shade(a, -0.28),
+        panel: "#4a4f55", panelEdge: "#2b2f34", chip: "#3a3f45",
+        head: "#ffffff", body: "#e7e9ec", flavor: "#b9bcc0",
+        serif: "Georgia, 'Times New Roman', serif",
+        sans: "'Segoe UI', Verdana, sans-serif",
+    };
+}
+
+const xmlEsc = (s: any) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Greedy word-wrap by estimated glyph width (avg = fraction of font-size per char). */
+function wrapText(text: string, fontSize: number, maxW: number, avg = 0.53): string[] {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    const cw = fontSize * avg;
+    const lines: string[] = []; let cur = "";
+    for (const w of words) {
+        const test = cur ? cur + " " + w : w;
+        if (test.length * cw > maxW && cur) { lines.push(cur); cur = w; }
+        else cur = test;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+}
+
+/** Faint topographic contour texture (low-opacity wavy lines) matching the VE background. */
+function contourTexture(w: number, h: number): string {
+    let p = "";
+    for (let y = -20; y < h + 20; y += 26) {
+        let d = `M -20 ${y}`;
+        for (let x = 0; x <= w + 40; x += 80) {
+            const off = ((x / 80 + y) % 3) * 6 - 6;
+            d += ` Q ${x - 40} ${y + off} ${x} ${y - off * 0.5}`;
+        }
+        p += `<path d="${d}" fill="none" stroke="#ffffff" stroke-opacity="0.03" stroke-width="1.2"/>`;
+    }
+    return p;
+}
+
+/** Notched ribbon-flag path (points inward on the right, like VE section banners). */
+function ribbonPath(x: number, y: number, w: number, h: number, notch = 18): string {
+    const r = x + w;
+    return `M ${x} ${y} L ${r} ${y} L ${r - notch} ${y + h / 2} L ${r} ${y + h} L ${x} ${y + h} Z`;
+}
+
+function svgDefs(t: InfographicTheme): string {
+    return `<defs>
+    <linearGradient id="rib" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${t.accentHi}"/><stop offset="1" stop-color="${t.accentSh}"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${t.bg}"/><stop offset="1" stop-color="${t.bgEdge}"/>
+    </linearGradient>
+    <clipPath id="iconClip"><rect x="12" y="12" width="150" height="150" rx="6"/></clipPath>
+  </defs>`;
+}
+
+/** Section header banner (default 800x51). */
+function renderHeaderSvg(title: string, t: InfographicTheme, width = 800, height = 51): string {
+    const rw = Math.min(width - 40, 200 + String(title).length * 13);
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    ${svgDefs(t)}
+    <rect width="${width}" height="${height}" fill="url(#bg)"/>
+    ${contourTexture(width, height)}
+    <path d="${ribbonPath(6, 6, rw, height - 12)}" fill="url(#rib)" stroke="${t.accentSh}" stroke-width="1"/>
+    <text x="24" y="${height / 2 + 8}" font-family="${t.serif}" font-size="24" fill="${t.head}">${xmlEsc(title)}</text>
+  </svg>`;
+}
+
+interface StatRow { k?: string; v?: string; iconHref?: string | null; }
+interface FeatureOpts {
+    title: string; flavor?: string; body?: string; rows?: StatRow[];
+    requirements?: string; iconHref?: string | null;
+    width?: number; height?: number;
+}
+
+/** Feature panel (default 800x300): icon tile + gray content panel. */
+function renderFeatureSvg(opts: FeatureOpts, t: InfographicTheme): string {
+    const width = opts.width || 800, height = opts.height || 300;
+    const pad = 12, iconSize = 150;
+    const iconX = pad, iconY = pad;
+    const panelX = iconX + iconSize + 14;
+    const panelW = width - panelX - pad;
+    const panelY = pad, panelH = height - pad * 2;
+
+    const title = String(opts.title || "");
+    const ribH = 40, ribW = Math.min(panelW - 20, 150 + title.length * 12);
+    let y = panelY + 14;
+    let content = "";
+
+    content += `<path d="${ribbonPath(panelX + 14, y, ribW, ribH)}" fill="url(#rib)" stroke="${t.accentSh}"/>`;
+    content += `<text x="${panelX + 32}" y="${y + ribH / 2 + 8}" font-family="${t.serif}" font-size="22" fill="${t.head}">${xmlEsc(title)}</text>`;
+    y += ribH + 16;
+
+    for (const l of wrapText(opts.flavor || "", 15, panelW - 40, 0.5)) {
+        content += `<text x="${panelX + 20}" y="${y}" font-family="${t.serif}" font-style="italic" font-size="15" fill="${t.flavor}">${xmlEsc(l)}</text>`;
+        y += 20;
+    }
+    if (opts.flavor) y += 6;
+    for (const l of wrapText(opts.body || "", 16, panelW - 40, 0.52)) {
+        content += `<text x="${panelX + 20}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(l)}</text>`;
+        y += 21;
+    }
+    if (Array.isArray(opts.rows) && opts.rows.length) {
+        y += 6;
+        const hasIcon = opts.rows.some(r => r?.iconHref);
+        const step = hasIcon ? 30 : 22;
+        const ico = 26;
+        for (const r of opts.rows) {
+            content += `<text x="${panelX + 20}" y="${y}" font-family="${t.sans}" font-size="15" font-weight="bold" fill="${t.head}">${xmlEsc(r?.k || "")}</text>`;
+            if (r?.iconHref) {
+                // VE-style "<label> = <icon>" grid row.
+                content += `<text x="${panelX + 150}" y="${y}" font-family="${t.sans}" font-size="16" fill="${t.body}">=</text>`;
+                content += `<image href="${r.iconHref}" x="${panelX + 172}" y="${y - ico + 6}" width="${ico}" height="${ico}" preserveAspectRatio="xMidYMid meet"/>`;
+                if (r?.v) content += `<text x="${panelX + 172 + ico + 8}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(r.v)}</text>`;
+            } else {
+                content += `<text x="${panelX + 150}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(r?.v || "")}</text>`;
+            }
+            y += step;
+        }
+    }
+
+    // Icon tile: embed the supplied image (as a data URI) clipped to the tile, else a neutral chip.
+    let iconEl = `<rect x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" rx="6" fill="${t.chip}" stroke="${t.panelEdge}" stroke-width="2"/>`;
+    if (opts.iconHref) {
+        iconEl += `<image href="${opts.iconHref}" x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid slice" clip-path="url(#iconClip)"/>`;
+        iconEl += `<rect x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" rx="6" fill="none" stroke="${t.panelEdge}" stroke-width="2"/>`;
+    }
+    // Optional requirements chip is drawn as body text under the icon when there's no icon overlap.
+    let reqEl = "";
+    if (opts.requirements) {
+        const reqLines = wrapText(opts.requirements, 12, iconSize - 12, 0.5);
+        const chipH = 20 + reqLines.length * 15;
+        const chipY = height - pad - chipH;
+        reqEl += `<rect x="${iconX}" y="${chipY}" width="${iconSize}" height="${chipH}" rx="4" fill="${t.chip}" fill-opacity="0.92" stroke="${t.panelEdge}"/>`;
+        let ry = chipY + 16;
+        reqEl += `<text x="${iconX + 8}" y="${ry}" font-family="${t.sans}" font-size="12" font-weight="bold" fill="${t.head}">Requires:</text>`;
+        ry += 15;
+        for (const l of reqLines) { reqEl += `<text x="${iconX + 8}" y="${ry}" font-family="${t.sans}" font-size="12" fill="${t.body}">${xmlEsc(l)}</text>`; ry += 15; }
+    }
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    ${svgDefs(t)}
+    <rect width="${width}" height="${height}" fill="url(#bg)"/>
+    ${contourTexture(width, height)}
+    ${iconEl}
+    ${reqEl}
+    <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="4" fill="${t.panel}" fill-opacity="0.72" stroke="${t.panelEdge}"/>
+    ${content}
+  </svg>`;
+}
+
+/** Render an SVG string to a PNG under imagesDir; returns saved path + dimensions. */
+async function saveSvgPng(svg: string, name: string) {
+    await fsp.mkdir(imagesDir(), { recursive: true });
+    const S = sharp();
+    const buf = await S(Buffer.from(svg)).png().toBuffer();
+    const out = path.join(imagesDir(), name);
+    await fsp.writeFile(out, buf);
+    const meta = await S(out).metadata();
+    return { path: out, name, width: meta.width || null, height: meta.height || null, bytes: buf.length };
+}
+
+/** Read an image file and return a data: URI for inline <image> embedding (for icon tiles). */
+async function fileToDataUri(p: string): Promise<string | null> {
+    try {
+        const buf = await fsp.readFile(p);
+        const ext = path.extname(p).toLowerCase();
+        const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png";
+        return `data:${mime};base64,${buf.toString("base64")}`;
+    } catch { return null; }
+}
+
+function safePngName(name?: string): string {
+    let base = (name || "").replace(/\.png$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!base) base = "infographic-" + randomBytes(4).toString("hex");
+    return base + ".png";
+}
+
+/* ------------------------------------------------------------------------ *
+ * RimWorld texture icon resolver.
+ *
+ * RimWorld ships Core/DLC art inside Unity .assets bundles (not loose files),
+ * so vanilla item icons can't be pulled from disk without asset-bundle
+ * extraction (also EULA-restricted to redistribute). MOD textures, however,
+ * are loose PNGs under <mod>/[<sub>/]Textures/... — including the author's own
+ * mods in the local Mods folder. So we resolve icon refs against loose PNGs:
+ * a drop-in icon library the author fills themselves (for any vanilla icons
+ * they extract), the local Mods folder, and optionally the 294100 Workshop
+ * tree. Resolution mirrors RimWorld's texPath rules: a single <texPath>.png,
+ * else a variant folder from which the UI-front variant is chosen.
+ * ------------------------------------------------------------------------ */
+
+const iconLibraryDir = () => path.join(localAppData(), "RimAgentic", "icons");
+
+/** Derive the Steam Workshop content dir for RimWorld (294100) from the configured install path. */
+function workshopContentDir(): string | null {
+    const cfg = loadConfig();
+    const base = cfg.rimworldModsDir || cfg.rimworldPath || "";
+    // .../steamapps/common/RimWorld/(Mods|RimWorldWin64.exe) -> .../steamapps
+    const idx = base.replace(/\\/g, "/").toLowerCase().indexOf("/steamapps/");
+    if (idx < 0) return null;
+    return path.join(base.slice(0, idx), "steamapps", "workshop", "content", "294100");
+}
+
+function defaultIconRoots(searchWorkshop: boolean): string[] {
+    const cfg = loadConfig();
+    const roots = [iconLibraryDir()];
+    if (cfg.rimworldModsDir) roots.push(cfg.rimworldModsDir);
+    if (searchWorkshop) { const ws = workshopContentDir(); if (ws) roots.push(ws); }
+    return roots;
+}
+
+// Variant suffixes RimWorld appends to texture files; lower rank = preferred as the UI-front icon.
+function variantRank(baseNoExt: string): number {
+    const m = /_(a|b|c|north|south|east|west|\d+)$/i.exec(baseNoExt);
+    if (!m) return 0; // no suffix — a plain single file is the best match
+    const order: Record<string, number> = { south: 1, a: 2, east: 3, north: 4, west: 5, b: 6, c: 7 };
+    return order[m[1].toLowerCase()] ?? 8;
+}
+const stripVariant = (b: string) => b.replace(/_(a|b|c|north|south|east|west|\d+)$/i, "");
+
+interface IconIndex { keys: Map<string, { file: string; rank: number }>; }
+const iconIndexCache = new Map<string, IconIndex>();
+
+/** Walk a root and index every loose PNG under a Textures/ segment by texPath and by bare name. */
+async function buildIconIndex(root: string): Promise<IconIndex> {
+    const cached = iconIndexCache.get(root);
+    if (cached) return cached;
+    const keys = new Map<string, { file: string; rank: number }>();
+    const put = (key: string, file: string, rank: number) => {
+        if (!key) return;
+        const prev = keys.get(key);
+        if (!prev || rank < prev.rank) keys.set(key, { file, rank });
+    };
+    async function walk(dir: string, texturesRel: string | null, depth: number) {
+        if (depth > 10) return;
+        let ents: any[];
+        try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of ents) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (/^(\.git|Source|Assemblies|Sounds|Languages|News)$/i.test(e.name)) continue;
+                const isTex = /^Textures$/i.test(e.name);
+                await walk(full, isTex ? "" : (texturesRel === null ? null : path.join(texturesRel, e.name)), depth + 1);
+            } else if (texturesRel !== null && /\.png$/i.test(e.name)) {
+                const baseNoExt = e.name.replace(/\.png$/i, "");
+                const rank = variantRank(baseNoExt);
+                const relNoExt = path.join(texturesRel, baseNoExt).replace(/\\/g, "/").toLowerCase();
+                put(relNoExt, full, rank);                              // full texPath incl. variant
+                const relStripped = path.join(texturesRel, stripVariant(baseNoExt)).replace(/\\/g, "/").toLowerCase();
+                put(relStripped, full, rank);                           // texPath with variant stripped
+                const folder = texturesRel.replace(/\\/g, "/").toLowerCase();
+                const folderName = path.basename(texturesRel).toLowerCase();
+                if (folderName && folderName === stripVariant(baseNoExt).toLowerCase()) put(folder, full, rank); // variant-folder convention
+                put(stripVariant(baseNoExt).toLowerCase(), full, rank); // bare name
+            }
+        }
+    }
+    // The icon library holds flat <defName>.png files (not under a Textures/ segment), so treat its
+    // root as the texture base; every other root only indexes PNGs beneath a Textures/ directory.
+    const isLibrary = path.resolve(root) === path.resolve(iconLibraryDir());
+    await walk(root, isLibrary ? "" : null, 0);
+    const idx = { keys };
+    iconIndexCache.set(root, idx);
+    return idx;
+}
+
+/** Resolve an icon ref (existing file path, texPath, or bare item name) to an absolute PNG path. */
+async function resolveIconPath(ref: string, roots: string[]): Promise<string | null> {
+    const raw = String(ref || "").trim();
+    if (!raw) return null;
+    // 1) An existing file path wins outright.
+    try { const st = await fsp.stat(raw); if (st.isFile()) return raw; } catch { /* not a direct path */ }
+    // 2) Index lookup by normalized texPath, then by bare basename.
+    const norm = raw.replace(/\\/g, "/").replace(/\.png$/i, "").replace(/^textures\//i, "").toLowerCase();
+    const baseKey = norm.split("/").pop() || norm;
+    for (const root of roots) {
+        const idx = await buildIconIndex(root);
+        const hit = idx.keys.get(norm) || idx.keys.get(baseKey);
+        if (hit) return hit.file;
+    }
+    return null;
+}
+
+async function resolveIconDataUri(ref: string, roots: string[]): Promise<{ path: string; dataUri: string } | null> {
+    const p = await resolveIconPath(ref, roots);
+    if (!p) return null;
+    const dataUri = await fileToDataUri(p);
+    return dataUri ? { path: p, dataUri } : null;
 }
 
 export const workshopImageTools = [
@@ -142,6 +469,49 @@ export const workshopImageTools = [
             },
             required: ["images"]
         }
+    },
+    {
+        name: "render_workshop_infographic",
+        description:
+            "Generate a Vanilla-Expanded-style infographic PNG for a Workshop description from structured input — " +
+            "no screenshot or external tool needed. Two components: type 'header' renders a notched ribbon section " +
+            "banner (default 800x51) from a title; type 'feature' renders a feature panel (default 800x300) with a " +
+            "left icon tile + optional 'Requires' chip and a gray content panel holding a ribbon subtitle, an italic " +
+            "flavor quote, body text, and an optional key/value stat grid. Themeable via 'accent' (a #rrggbb brand " +
+            "colour) so the images read as your own brand. Saves a PNG to the workshop-images folder; upload it " +
+            "(imgur or Steam) and embed via compose_workshop_bbcode. Build a description by rendering a header + " +
+            "several feature panels in order.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                type: { type: "string", description: "'header' (ribbon section banner) or 'feature' (icon + content panel)." },
+                title: { type: "string", description: "Banner text (header) or the panel's ribbon subtitle (feature)." },
+                name: { type: "string", description: "Output file name without extension; generated if omitted." },
+                accent: { type: "string", description: `Brand accent colour as #rrggbb (default ${DEFAULT_ACCENT}).` },
+                flavor: { type: "string", description: "feature: italic flavor/quote line(s), e.g. the in-game description." },
+                body: { type: "string", description: "feature: main body paragraph (auto-wrapped)." },
+                rows: {
+                    type: "array",
+                    description: "feature: stat grid rows. Each is a bold label plus EITHER a text value (v) or a " +
+                        "real item texture icon (icon), rendered VE-style as 'label = <icon>'.",
+                    items: {
+                        type: "object",
+                        properties: {
+                            k: { type: "string", description: "Row label, e.g. '10 Mining skill'." },
+                            v: { type: "string", description: "Text value (used when no icon, or as a suffix after an icon)." },
+                            icon: { type: "string", description: "Icon ref: a file path, a RimWorld texPath (e.g. 'Things/Item/Resource/Steel'), or a bare item/texture name. Resolved against loose mod PNGs + the icon library." }
+                        }
+                    }
+                },
+                requirements: { type: "string", description: "feature: short text for the 'Requires:' chip under the icon." },
+                icon: { type: "string", description: "feature: left tile image — a file path, texPath, or item/texture name (same resolver as row icons)." },
+                iconRoots: { type: "array", items: { type: "string" }, description: "Extra folders to resolve icon refs against, searched FIRST (e.g. your mod's project folder). Defaults add the icon library + local Mods dir." },
+                searchWorkshop: { type: "boolean", description: "Also resolve icons against the 294100 Steam Workshop mods tree (slower first call; indexed+cached). Default false." },
+                width: { type: "number", description: "Override output width (default 800)." },
+                height: { type: "number", description: "Override output height (default 51 header / 300 feature)." }
+            },
+            required: ["type", "title"]
+        }
     }
 ];
 
@@ -183,7 +553,7 @@ export async function handleWorkshopImageTool(name: string, args: any) {
             const dir = imagesDir();
             let entries: string[] = [];
             try { entries = await fsp.readdir(dir); } catch { return okText({ count: 0, folder: dir, images: [] }); }
-            const jpgs = entries.filter(f => /\.jpe?g$/i.test(f));
+            const jpgs = entries.filter(f => /\.(jpe?g|png)$/i.test(f) && !f.startsWith("_tmp_"));
             const S = sharp();
             const images = [];
             for (const f of jpgs) {
@@ -224,6 +594,68 @@ export async function handleWorkshopImageTool(name: string, args: any) {
         else { parts.push(imagesBlock); } // replace
         const bbcode = parts.join("\n\n");
         return okText({ ok: true, images: blocks.length, mode, chars: bbcode.length, bbcode, note: "Pass 'bbcode' to swh_update_description { fileId, description }." });
+    }
+
+    if (name === "render_workshop_infographic") {
+        const type = String(args?.type || "").toLowerCase();
+        const title = String(args?.title || "").trim();
+        if (type !== "header" && type !== "feature") return errText("'type' must be 'header' or 'feature'.");
+        if (!title) return errText("'title' is required.");
+        try {
+            const theme = buildTheme(args?.accent);
+            const outName = safePngName(args?.name);
+            const width = Number(args?.width) > 0 ? Number(args.width) : 800;
+            let svg: string;
+            if (type === "header") {
+                const height = Number(args?.height) > 0 ? Number(args.height) : 51;
+                svg = renderHeaderSvg(title, theme, width, height);
+            } else {
+                const height = Number(args?.height) > 0 ? Number(args.height) : 300;
+                // Icon resolution roots: caller-supplied first, then library + Mods (+ workshop if asked).
+                const extra = Array.isArray(args?.iconRoots) ? args.iconRoots.map((r: any) => String(r)).filter(Boolean) : [];
+                const roots = [...extra, ...defaultIconRoots(!!args?.searchWorkshop)];
+                const resolved: Record<string, string> = {};
+                const unresolved: string[] = [];
+                const resolve = async (ref: string): Promise<string | null> => {
+                    const hit = await resolveIconDataUri(ref, roots);
+                    if (hit) { resolved[ref] = hit.path; return hit.dataUri; }
+                    unresolved.push(ref); return null;
+                };
+
+                let iconHref: string | null = null;
+                if (args?.icon) iconHref = await resolve(String(args.icon));
+
+                const rows: StatRow[] = [];
+                if (Array.isArray(args?.rows)) {
+                    for (const r of args.rows) {
+                        const row: StatRow = { k: r?.k ? String(r.k) : "", v: r?.v ? String(r.v) : "" };
+                        if (r?.icon) row.iconHref = await resolve(String(r.icon));
+                        rows.push(row);
+                    }
+                }
+                svg = renderFeatureSvg({
+                    title,
+                    flavor: args?.flavor ? String(args.flavor) : "",
+                    body: args?.body ? String(args.body) : "",
+                    rows,
+                    requirements: args?.requirements ? String(args.requirements) : "",
+                    iconHref,
+                    width, height,
+                }, theme);
+                const res = await saveSvgPng(svg, outName);
+                return okText({
+                    ok: true, type, ...res, folder: imagesDir(),
+                    icons: { resolved, unresolved, rootsSearched: roots },
+                    note: unresolved.length
+                        ? `PNG saved, but ${unresolved.length} icon ref(s) did not resolve (shown as blank): ${unresolved.join(", ")}. Pass 'iconRoots' pointing at the mod's folder, set searchWorkshop:true, or drop the PNG into the icon library (${iconLibraryDir()}).`
+                        : "PNG saved. Upload it (imgur or Steam), then embed via compose_workshop_bbcode."
+                });
+            }
+            const res = await saveSvgPng(svg, outName);
+            return okText({ ok: true, type, ...res, folder: imagesDir(), note: "PNG saved. Upload it (imgur or Steam), then embed via compose_workshop_bbcode." });
+        } catch (e: any) {
+            return errText(`Failed to render infographic: ${e?.message || e}`);
+        }
     }
 
     throw new Error(`Unknown workshop-image tool: ${name}`);

@@ -1,7 +1,7 @@
 ---
 description: Build "pages" of visual content and embed them in a Steam Workshop item description, beating the ~8,000-character cap.
 argument-hint: "[workshop fileId]"
-allowed-tools: mcp__rimagentic__capture_workshop_image, mcp__rimagentic__make_workshop_image, mcp__rimagentic__list_workshop_images, mcp__rimagentic__compose_workshop_bbcode, mcp__rimagentic__swh_get_item, mcp__rimagentic__swh_update_description, mcp__rimagentic__swh_open_item
+allowed-tools: mcp__rimagentic__capture_workshop_image, mcp__rimagentic__make_workshop_image, mcp__rimagentic__render_workshop_infographic, mcp__rimagentic__list_workshop_images, mcp__rimagentic__compose_workshop_bbcode, mcp__rimagentic__swh_get_item, mcp__rimagentic__swh_update_description, mcp__rimagentic__swh_open_item
 ---
 
 Embed image "pages" into a Steam Workshop description to pack far more than the ~8,000-character
@@ -13,10 +13,39 @@ URLs, and browsers forbid scripts from setting a file input, so the file upload 
 in Chrome** (`file_upload`), not an MCP tool. Do not try to upload via the extension bridge.
 
 ## 1. Produce the page images
+- **Generated infographics** (Vanilla-Expanded-style banners & feature panels), no screenshot needed:
+  `render_workshop_infographic { type, title, ... }`.
+  - `type: "header"` → a notched ribbon section banner (800x51) from `title` — use as a divider
+    (Overview, Features, FAQ, Credits, …).
+  - `type: "feature"` → a feature panel (800x300): `title` (ribbon subtitle), `flavor` (italic quote),
+    `body` (paragraph), `rows` (stat grid), `requirements` (chip), `icon` (left tile).
+  - **Stat-grid rows with real item icons** (VE "10 skill = steel" style): a row is
+    `{ k: "10 Animals skill", icon: "Things/Item/Resource/Fish" }` → renders `label = <texture>`. Each
+    row takes `k` (label) plus EITHER `v` (text) or `icon` (a real texture), and `v` can follow an icon
+    as a suffix.
+  - **Icon resolution** (`icon` on rows and the tile): a ref may be a file path, a RimWorld texPath
+    (`Things/Item/Resource/X`), or a bare name (`X`). It resolves against loose mod PNGs, mirroring
+    RimWorld's texPath rules (single `X.png`, else the front variant of an `X/` folder). Search order:
+    `iconRoots` (caller-supplied, e.g. your mod's project folder) → the icon library
+    `%LOCALAPPDATA%/RimAgentic/icons` → the local `Mods` folder → the 294100 Workshop tree only when
+    `searchWorkshop: true` (first call walks ~all subscribed mods, ~10s, then cached).
+    *Vanilla Core/DLC icons are packed in Unity asset bundles, not loose files* — so populate the
+    library once from a running game: launch with the harness active into a live map, then
+    `execute_game_tool { tool_name: "dump_item_icons" }` (defaults to official Core/DLC
+    items/weapons/apparel → `<defName>.png` in the library; pass `defNames` for a targeted set,
+    `everything`/`includeMods` to widen). After that, `icon: "Steel"` resolves with no extra args.
+    The render result lists `icons.resolved` / `icons.unresolved` so you can see what matched.
+  - `accent: "#rrggbb"` themes every image to your brand (highlight/shadow shades are derived). Keep
+    the same accent across a mod's images. A description is a header + several feature panels in order.
 - Screenshots of the mod in action: bring RimWorld to the foreground on the content, confirm with
   `get_open_windows`, then `capture_workshop_image { name }`. Repeat per page.
 - Or process existing images/rendered pages with `make_workshop_image { source, name, crop?, maxWidth? }`.
 - `list_workshop_images` shows what you've produced (paths under `%LOCALAPPDATA%/RimAgentic/workshop-images`).
+
+> **Hosting note:** Vanilla Expanded's own item descriptions embed `i.imgur.com` URLs that render fine,
+> so external hosts appear to work for *item descriptions* (the Steam-hosted requirement in step 2 was
+> the conservative assumption). Imgur is the simpler path — upload the PNG, use the direct `i.imgur.com`
+> link in `compose_workshop_bbcode`. Confirm it renders on the live item before relying on it.
 
 ## 2. Upload each JPEG to Steam (Claude in Chrome)
 Steam-hosted URLs are required. Using the `mcp__claude-in-chrome__*` tools:
