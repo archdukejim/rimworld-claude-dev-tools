@@ -391,6 +391,58 @@ async function resolveIconDataUri(ref: string, roots: string[]): Promise<{ path:
     return dataUri ? { path: p, dataUri } : null;
 }
 
+/** Build icon resolution roots: caller-supplied first, then the library + Mods (+ Workshop if asked). */
+function iconRootsFor(iconRoots: any, searchWorkshop: any): string[] {
+    const extra = Array.isArray(iconRoots) ? iconRoots.map((r: any) => String(r)).filter(Boolean) : [];
+    return [...extra, ...defaultIconRoots(!!searchWorkshop)];
+}
+
+/**
+ * Render one infographic spec (header or feature) to an SVG string, resolving any icon refs against
+ * `roots`. Shared by render_workshop_infographic (single) and compose_workshop_page (many), so both
+ * produce identical output. Returns the SVG plus which refs resolved / did not.
+ */
+async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: string[]):
+    Promise<{ svg: string; resolved: Record<string, string>; unresolved: string[] }> {
+    const type = String(spec?.type || "").toLowerCase();
+    const title = String(spec?.title || "");
+    const width = Number(spec?.width) > 0 ? Number(spec.width) : 800;
+    const resolved: Record<string, string> = {};
+    const unresolved: string[] = [];
+    const resolve = async (ref: string): Promise<string | null> => {
+        const hit = await resolveIconDataUri(ref, roots);
+        if (hit) { resolved[ref] = hit.path; return hit.dataUri; }
+        unresolved.push(ref); return null;
+    };
+
+    if (type === "header") {
+        const height = Number(spec?.height) > 0 ? Number(spec.height) : 51;
+        return { svg: renderHeaderSvg(title, theme, width, height), resolved, unresolved };
+    }
+
+    const height = Number(spec?.height) > 0 ? Number(spec.height) : 300;
+    let iconHref: string | null = null;
+    if (spec?.icon) iconHref = await resolve(String(spec.icon));
+    const rows: StatRow[] = [];
+    if (Array.isArray(spec?.rows)) {
+        for (const r of spec.rows) {
+            const row: StatRow = { k: r?.k ? String(r.k) : "", v: r?.v ? String(r.v) : "" };
+            if (r?.icon) row.iconHref = await resolve(String(r.icon));
+            rows.push(row);
+        }
+    }
+    const svg = renderFeatureSvg({
+        title,
+        flavor: spec?.flavor ? String(spec.flavor) : "",
+        body: spec?.body ? String(spec.body) : "",
+        rows,
+        requirements: spec?.requirements ? String(spec.requirements) : "",
+        iconHref,
+        width, height,
+    }, theme);
+    return { svg, resolved, unresolved };
+}
+
 export const workshopImageTools = [
     {
         name: "capture_workshop_image",
@@ -512,6 +564,61 @@ export const workshopImageTools = [
             },
             required: ["type", "title"]
         }
+    },
+    {
+        name: "compose_workshop_page",
+        description:
+            "Render a whole Vanilla-Expanded-style description page in one call: an ordered list of blocks " +
+            "(each a header banner or a feature panel, same fields as render_workshop_infographic) is rendered " +
+            "to numbered PNGs in the workshop-images folder, sharing one brand accent and one icon-resolution " +
+            "setup. Draft-first: it only generates local images + a manifest — it does NOT upload or change any " +
+            "Steam description. Returns { pages:[{order,type,name,path,...}], unresolved, note }. Then upload the " +
+            "PNGs in order and pass their URLs to compose_workshop_bbcode.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                blocks: {
+                    type: "array",
+                    description: "Ordered page blocks. Each: { type:'header'|'feature', title, and for feature: flavor?, body?, rows?, requirements?, icon?, width?, height? } — same shape as render_workshop_infographic.",
+                    items: { type: "object" }
+                },
+                accent: { type: "string", description: `Brand accent #rrggbb applied to every block (default ${DEFAULT_ACCENT}).` },
+                namePrefix: { type: "string", description: "Prefix for output file names, e.g. 'haulmod' → haulmod-01-header.png. Default 'page'." },
+                iconRoots: { type: "array", items: { type: "string" }, description: "Extra folders to resolve icon refs against, searched first (applied to all feature blocks)." },
+                searchWorkshop: { type: "boolean", description: "Also resolve icons against the 294100 Workshop tree. Default false." }
+            },
+            required: ["blocks"]
+        }
+    },
+    {
+        name: "list_item_icons",
+        description:
+            "List the icons available in the icon library (%LOCALAPPDATA%\\RimAgentic\\icons) that feature panels " +
+            "resolve against — i.e. what dump_item_icons has exported. Read-only. Use it to confirm a defName before " +
+            "referencing it as a row/tile icon.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                filter: { type: "string", description: "Case-insensitive substring to filter icon names (defNames)." },
+                limit: { type: "number", description: "Max names to return (default 200)." }
+            }
+        }
+    },
+    {
+        name: "resolve_item_icon",
+        description:
+            "Resolve a single icon ref (file path, RimWorld texPath, or bare defName/item name) to the PNG the " +
+            "infographic tools would use, without rendering anything. Read-only — for checking a stat-grid icon " +
+            "before composing a page. Returns { found, resolved, rootsSearched }.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                ref: { type: "string", description: "The icon ref to resolve: a file path, texPath (e.g. 'Things/Item/Resource/Steel'), or bare name (e.g. 'Steel')." },
+                iconRoots: { type: "array", items: { type: "string" }, description: "Extra folders to search first." },
+                searchWorkshop: { type: "boolean", description: "Also search the 294100 Workshop tree. Default false." }
+            },
+            required: ["ref"]
+        }
     }
 ];
 
@@ -603,58 +710,82 @@ export async function handleWorkshopImageTool(name: string, args: any) {
         if (!title) return errText("'title' is required.");
         try {
             const theme = buildTheme(args?.accent);
-            const outName = safePngName(args?.name);
-            const width = Number(args?.width) > 0 ? Number(args.width) : 800;
-            let svg: string;
-            if (type === "header") {
-                const height = Number(args?.height) > 0 ? Number(args.height) : 51;
-                svg = renderHeaderSvg(title, theme, width, height);
-            } else {
-                const height = Number(args?.height) > 0 ? Number(args.height) : 300;
-                // Icon resolution roots: caller-supplied first, then library + Mods (+ workshop if asked).
-                const extra = Array.isArray(args?.iconRoots) ? args.iconRoots.map((r: any) => String(r)).filter(Boolean) : [];
-                const roots = [...extra, ...defaultIconRoots(!!args?.searchWorkshop)];
-                const resolved: Record<string, string> = {};
-                const unresolved: string[] = [];
-                const resolve = async (ref: string): Promise<string | null> => {
-                    const hit = await resolveIconDataUri(ref, roots);
-                    if (hit) { resolved[ref] = hit.path; return hit.dataUri; }
-                    unresolved.push(ref); return null;
-                };
-
-                let iconHref: string | null = null;
-                if (args?.icon) iconHref = await resolve(String(args.icon));
-
-                const rows: StatRow[] = [];
-                if (Array.isArray(args?.rows)) {
-                    for (const r of args.rows) {
-                        const row: StatRow = { k: r?.k ? String(r.k) : "", v: r?.v ? String(r.v) : "" };
-                        if (r?.icon) row.iconHref = await resolve(String(r.icon));
-                        rows.push(row);
-                    }
-                }
-                svg = renderFeatureSvg({
-                    title,
-                    flavor: args?.flavor ? String(args.flavor) : "",
-                    body: args?.body ? String(args.body) : "",
-                    rows,
-                    requirements: args?.requirements ? String(args.requirements) : "",
-                    iconHref,
-                    width, height,
-                }, theme);
-                const res = await saveSvgPng(svg, outName);
-                return okText({
-                    ok: true, type, ...res, folder: imagesDir(),
-                    icons: { resolved, unresolved, rootsSearched: roots },
-                    note: unresolved.length
-                        ? `PNG saved, but ${unresolved.length} icon ref(s) did not resolve (shown as blank): ${unresolved.join(", ")}. Pass 'iconRoots' pointing at the mod's folder, set searchWorkshop:true, or drop the PNG into the icon library (${iconLibraryDir()}).`
-                        : "PNG saved. Upload it (imgur or Steam), then embed via compose_workshop_bbcode."
-                });
-            }
-            const res = await saveSvgPng(svg, outName);
-            return okText({ ok: true, type, ...res, folder: imagesDir(), note: "PNG saved. Upload it (imgur or Steam), then embed via compose_workshop_bbcode." });
+            const roots = iconRootsFor(args?.iconRoots, args?.searchWorkshop);
+            const { svg, resolved, unresolved } = await renderInfographicSpec(args, theme, roots);
+            const res = await saveSvgPng(svg, safePngName(args?.name));
+            return okText({
+                ok: true, type, ...res, folder: imagesDir(),
+                icons: { resolved, unresolved, rootsSearched: roots },
+                note: unresolved.length
+                    ? `PNG saved, but ${unresolved.length} icon ref(s) did not resolve (shown as blank): ${unresolved.join(", ")}. Pass 'iconRoots' at the mod's folder, set searchWorkshop:true, populate the library via dump_item_icons, or check the defName with list_item_icons.`
+                    : "PNG saved. Upload it (imgur or Steam), then embed via compose_workshop_bbcode."
+            });
         } catch (e: any) {
             return errText(`Failed to render infographic: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "compose_workshop_page") {
+        const blocks = Array.isArray(args?.blocks) ? args.blocks : [];
+        if (blocks.length === 0) return errText("Provide 'blocks': an ordered array of { type:'header'|'feature', title, ... }.");
+        try {
+            const theme = buildTheme(args?.accent);
+            const roots = iconRootsFor(args?.iconRoots, args?.searchWorkshop);
+            const prefix = (String(args?.namePrefix || "page").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")) || "page";
+            const pages: any[] = [];
+            const allUnresolved: string[] = [];
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i] || {};
+                const type = String(b?.type || "").toLowerCase();
+                if (type !== "header" && type !== "feature") return errText(`blocks[${i}].type must be 'header' or 'feature'.`);
+                if (!String(b?.title || "").trim()) return errText(`blocks[${i}].title is required.`);
+                const { svg, resolved, unresolved } = await renderInfographicSpec(b, theme, roots);
+                const outName = `${prefix}-${String(i + 1).padStart(2, "0")}-${type}.png`;
+                const saved = await saveSvgPng(svg, outName);
+                pages.push({ order: i + 1, type, title: b.title, ...saved, iconsResolved: Object.keys(resolved).length ? resolved : undefined });
+                allUnresolved.push(...unresolved);
+            }
+            return okText({
+                ok: true, count: pages.length, folder: imagesDir(), pages,
+                unresolved: allUnresolved,
+                note: "Draft-first: all page images were generated locally, in order. Next: upload them (imgur or Steam) keeping the order, " +
+                    "then compose_workshop_bbcode with the resulting URLs, then CONFIRM with the user before swh_update_description."
+                    + (allUnresolved.length ? ` Note: ${allUnresolved.length} icon ref(s) did not resolve: ${[...new Set(allUnresolved)].join(", ")}.` : "")
+            });
+        } catch (e: any) {
+            return errText(`Failed to compose workshop page: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "list_item_icons") {
+        try {
+            const dir = iconLibraryDir();
+            let entries: string[] = [];
+            try { entries = await fsp.readdir(dir); } catch { return okText({ count: 0, dir, icons: [], note: "Library is empty — populate it with dump_item_icons (from a running game)." }); }
+            let names = entries.filter(f => /\.png$/i.test(f)).map(f => f.replace(/\.png$/i, ""));
+            const filter = args?.filter ? String(args.filter).toLowerCase() : "";
+            if (filter) names = names.filter(n => n.toLowerCase().includes(filter));
+            names.sort((a, b) => a.localeCompare(b));
+            const total = names.length;
+            const limit = Number(args?.limit) > 0 ? Number(args.limit) : 200;
+            const shown = names.slice(0, limit);
+            return okText({ count: total, shown: shown.length, truncated: total > shown.length, dir, icons: shown });
+        } catch (e: any) {
+            return errText(`Failed to list item icons: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "resolve_item_icon") {
+        const ref = String(args?.ref || "").trim();
+        if (!ref) return errText("'ref' is required (a file path, texPath, or bare defName/item name).");
+        try {
+            const roots = iconRootsFor(args?.iconRoots, args?.searchWorkshop);
+            const p = await resolveIconPath(ref, roots);
+            return okText({ ref, found: !!p, resolved: p || null, rootsSearched: roots,
+                note: p ? "Use this ref as a row/tile icon in render_workshop_infographic or compose_workshop_page."
+                        : "Not found. Check the defName via list_item_icons, pass iconRoots at the mod's folder, set searchWorkshop:true, or run dump_item_icons." });
+        } catch (e: any) {
+            return errText(`Failed to resolve item icon: ${e?.message || e}`);
         }
     }
 
