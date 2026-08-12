@@ -251,15 +251,121 @@ function renderFeatureSvg(opts: FeatureOpts, t: InfographicTheme): string {
   </svg>`;
 }
 
-/** Render an SVG string to a PNG under imagesDir; returns saved path + dimensions. */
-async function saveSvgPng(svg: string, name: string) {
-    await fsp.mkdir(imagesDir(), { recursive: true });
+/** Render an SVG string to a PNG under `dir` (default imagesDir); returns saved path + dimensions. */
+async function saveSvgPng(svg: string, name: string, dir: string = imagesDir()) {
+    await fsp.mkdir(dir, { recursive: true });
     const S = sharp();
     const buf = await S(Buffer.from(svg)).png().toBuffer();
-    const out = path.join(imagesDir(), name);
+    const out = path.join(dir, name);
     await fsp.writeFile(out, buf);
     const meta = await S(out).metadata();
     return { path: out, name, width: meta.width || null, height: meta.height || null, bytes: buf.length };
+}
+
+interface MergeOpts { gap?: number; background?: string; maxHeightPx?: number; maxBytes?: number; chunks?: number; }
+interface TileMeta { path: string; w: number; h: number; bytes: number; }
+
+// Self-imposed performance target per merged image. It sits with margin below imgur's 1 MB anonymous
+// lossless line (so uploads stay pixel-perfect), and is also about where a single image starts to load
+// slowly and risk mobile-decoder downsampling. Long pages auto-split to stay under it.
+const PERF_TARGET_BYTES = 700_000;
+const IMGUR_LOSSY_ACCOUNT = 5_000_000;
+
+/** Split tiles into n groups of roughly equal stacked height (each group non-empty). */
+function evenGroupsByHeight(metas: TileMeta[], n: number): TileMeta[][] {
+    const total = metas.reduce((s, m) => s + m.h, 0);
+    const target = total / n;
+    const groups: TileMeta[][] = [];
+    let cur: TileMeta[] = []; let acc = 0; let made = 0;
+    for (let i = 0; i < metas.length; i++) {
+        cur.push(metas[i]); acc += metas[i].h;
+        const remainingTiles = metas.length - 1 - i;
+        const groupsLeftAfter = n - 1 - made;
+        if (groupsLeftAfter > 0 && acc >= target * (made + 1) && remainingTiles >= groupsLeftAfter) {
+            groups.push(cur); cur = []; made++;
+        }
+    }
+    if (cur.length) groups.push(cur);
+    return groups;
+}
+
+/** Greedily fill groups until adding the next tile would exceed the height or byte budget. */
+function fillGroups(metas: TileMeta[], maxH: number, maxBytes: number, gap: number): TileMeta[][] {
+    const groups: TileMeta[][] = [];
+    let cur: TileMeta[] = []; let curH = 0; let curB = 0;
+    for (const m of metas) {
+        const addH = m.h + (cur.length ? gap : 0);
+        if (cur.length && (curH + addH > maxH || curB + m.bytes > maxBytes)) {
+            groups.push(cur); cur = []; curH = 0; curB = 0;
+        }
+        cur.push(m); curH += (cur.length > 1 ? gap : 0) + m.h; curB += m.bytes;
+    }
+    if (cur.length) groups.push(cur);
+    return groups;
+}
+
+/**
+ * Stack PNG tiles vertically into one (or a few) tall images written to `dir`. Merging a whole page
+ * into ONE image means ONE hosted URL in the description — the URL is all that counts against Steam's
+ * ~8,000-char cap, so N tiles collapse to ~1 URL's worth of budget. To keep each image fast to load,
+ * pixel-perfect on imgur, and safe on mobile decoders, it splits: `chunks` = exactly N even halves;
+ * else fill each image up to `maxBytes` (default the 700 KB performance target) and/or `maxHeightPx`.
+ * Byte budgeting uses each source tile's file size (a slight over-estimate of the merged result, so it
+ * stays conservatively under target). Returns the saved image(s).
+ */
+async function mergeTilesVertical(paths: string[], dir: string, baseName: string, opts: MergeOpts = {}) {
+    await fsp.mkdir(dir, { recursive: true });
+    const S = sharp();
+    const gap = Math.max(0, Math.round(opts.gap ?? 0));
+    const bg = opts.background || "#1b2838";
+    const maxH = Number(opts.maxHeightPx) > 0 ? Math.round(opts.maxHeightPx as number) : Infinity;
+    const maxBytes = Number(opts.maxBytes) > 0 ? Math.round(opts.maxBytes as number) : Infinity;
+
+    const metas: TileMeta[] = [];
+    for (const p of paths) {
+        const m = await S(p).metadata();
+        let bytes = 0; try { bytes = (await fsp.stat(p)).size; } catch { /* ignore */ }
+        metas.push({ path: p, w: m.width || 0, h: m.height || 0, bytes });
+    }
+    if (!metas.length) return [];
+    const width = Math.max(1, ...metas.map(m => m.w));
+
+    const groups = (opts.chunks && opts.chunks >= 2)
+        ? evenGroupsByHeight(metas, Math.min(Math.round(opts.chunks), metas.length))
+        : fillGroups(metas, maxH, maxBytes, gap);
+
+    const outputs: { name: string; path: string; width: number; height: number; tiles: number; bytes: number }[] = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+        const grp = groups[gi];
+        const totalH = grp.reduce((s, m, idx) => s + m.h + (idx ? gap : 0), 0);
+        const composites: any[] = [];
+        let y = 0;
+        for (let idx = 0; idx < grp.length; idx++) {
+            const m = grp[idx];
+            composites.push({ input: m.path, top: y, left: Math.max(0, Math.round((width - m.w) / 2)) });
+            y += m.h + gap;
+        }
+        const buf = await S({ create: { width, height: totalH, channels: 4, background: bg } })
+            .composite(composites).png().toBuffer();
+        const name = groups.length > 1 ? `${baseName}-${String(gi + 1).padStart(2, "0")}.png` : `${baseName}.png`;
+        const outPath = path.join(dir, name);
+        await fsp.writeFile(outPath, buf);
+        outputs.push({ name, path: outPath, width, height: totalH, tiles: grp.length, bytes: buf.length });
+    }
+    return outputs;
+}
+
+/** Warn if any merged image exceeds the performance target; suggest chunks/maxBytes or an imgur account. */
+function imgurSizeWarning(outputs: { name: string; bytes: number }[]): string | undefined {
+    const over = outputs.filter(o => o.bytes > PERF_TARGET_BYTES);
+    if (!over.length) return undefined;
+    const over5 = outputs.filter(o => o.bytes > IMGUR_LOSSY_ACCOUNT);
+    const list = over.map(o => `${o.name}=${Math.round(o.bytes / 1024)}KB`).join(", ");
+    let msg = `${over.length} merged image(s) exceed the ${Math.round(PERF_TARGET_BYTES / 1000)} KB performance target (${list}). `
+        + `imgur recompresses non-animated uploads over 1 MB anonymously / 5 MB with an account (which blurs crisp text), and `
+        + `heavier images load slower and can be downsampled on mobile — split with 'chunks' or a smaller 'maxBytes', or upload via an imgur account.`;
+    if (over5.length) msg += ` ${over5.length} exceed 5 MB and would be converted to JPEG even with an account.`;
+    return msg;
 }
 
 /** Read an image file and return a data: URI for inline <image> embedding (for icon tiles). */
@@ -503,10 +609,12 @@ export const workshopImageTools = [
         name: "compose_workshop_bbcode",
         description:
             "Compose Steam Workshop description BBCode that embeds a set of images ('pages') with optional captions " +
-            "— the text you then pass to swh_update_description. The images must ALREADY be uploaded to Steam " +
-            "(Steam-hosted URLs); Steam strips [img] from non-Steam hosts. See the workshop-images workflow for " +
-            "uploading via Claude in Chrome. Combines an optional intro, the image blocks, and optionally your " +
-            "existing description (mode: append | prepend | replace).",
+            "— the text you then pass to swh_update_description. The images must ALREADY be hosted at a URL — prefer " +
+            "imgur (short i.imgur.com links that render in item descriptions, as Vanilla Expanded does); Steam-hosted " +
+            "URLs also work but are ~3x longer and burn more of the ~8,000-char cap. Tip: merge tiles into one tall " +
+            "image (merge_workshop_tiles) so a whole page is a single URL. Use 'intro' for a plain-text keyword/SEO " +
+            "block (the images aren't indexable). Combines intro + image blocks + optionally your existing " +
+            "description (mode: append | prepend | replace).",
         inputSchema: {
             type: "object",
             properties: {
@@ -584,6 +692,8 @@ export const workshopImageTools = [
                 },
                 accent: { type: "string", description: `Brand accent #rrggbb applied to every block (default ${DEFAULT_ACCENT}).` },
                 namePrefix: { type: "string", description: "Prefix for output file names, e.g. 'haulmod' → haulmod-01-header.png. Default 'page'." },
+                outDir: { type: "string", description: "Folder to write the tiles into (e.g. the mod's repo '<mod>/workshop-page'). Default the workshop-images folder." },
+                merge: { description: "Also stack the tiles into one tall image (one hosted URL for the whole page). true, or { chunks?, maxBytes?, maxHeight?, gap?, background? } to tune. By default auto-splits so each image stays under the 700 KB performance target; chunks:N forces N even halves.", oneOf: [{ type: "boolean" }, { type: "object", properties: { chunks: { type: "number" }, maxBytes: { type: "number" }, maxHeight: { type: "number" }, gap: { type: "number" }, background: { type: "string" } } }] },
                 iconRoots: { type: "array", items: { type: "string" }, description: "Extra folders to resolve icon refs against, searched first (applied to all feature blocks)." },
                 searchWorkshop: { type: "boolean", description: "Also resolve icons against the 294100 Workshop tree. Default false." }
             },
@@ -618,6 +728,29 @@ export const workshopImageTools = [
                 searchWorkshop: { type: "boolean", description: "Also search the 294100 Workshop tree. Default false." }
             },
             required: ["ref"]
+        }
+    },
+    {
+        name: "merge_workshop_tiles",
+        description:
+            "Stack PNG tiles vertically into one (or a few) tall 800px-wide images. Point this at the tiles from " +
+            "compose_workshop_page (or any PNGs) to collapse a whole page into a SINGLE image — so the description " +
+            "embeds one hosted URL instead of one per tile, which is what makes the ~8,000-char cap a non-issue. " +
+            "Long pages can split via 'maxHeight'. Returns the saved merged image(s). Draft-first: writes files " +
+            "only; upload the result to imgur yourself.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                images: { type: "array", items: { type: "string" }, description: "Ordered list of PNG file paths to stack, top to bottom." },
+                name: { type: "string", description: "Base output name (without extension). Default 'merged'. Chunks become name-01.png, name-02.png…" },
+                outDir: { type: "string", description: "Folder to write the merged image(s) into. Default the workshop-images folder." },
+                chunks: { type: "number", description: "Split into exactly N evenly-divided (by height) images, e.g. 2 for two halves. Overrides maxBytes/maxHeight." },
+                maxBytes: { type: "number", description: "Target max bytes per merged image; fills each up to it then starts a new one. Default 700000 (the 700 KB performance target). Ignored if 'chunks' is set." },
+                gap: { type: "number", description: "Vertical gap in px between tiles (default 0 — seamless, like VE)." },
+                maxHeight: { type: "number", description: "Max stacked height per image in px; exceeding it starts a new chunk. Combined with maxBytes; ignored if 'chunks' is set." },
+                background: { type: "string", description: "Fill colour behind the tiles / in gaps as #rrggbb (default the dark theme background)." }
+            },
+            required: ["images"]
         }
     }
 ];
@@ -732,6 +865,7 @@ export async function handleWorkshopImageTool(name: string, args: any) {
             const theme = buildTheme(args?.accent);
             const roots = iconRootsFor(args?.iconRoots, args?.searchWorkshop);
             const prefix = (String(args?.namePrefix || "page").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")) || "page";
+            const outDir = args?.outDir ? String(args.outDir) : imagesDir();
             const pages: any[] = [];
             const allUnresolved: string[] = [];
             for (let i = 0; i < blocks.length; i++) {
@@ -741,15 +875,31 @@ export async function handleWorkshopImageTool(name: string, args: any) {
                 if (!String(b?.title || "").trim()) return errText(`blocks[${i}].title is required.`);
                 const { svg, resolved, unresolved } = await renderInfographicSpec(b, theme, roots);
                 const outName = `${prefix}-${String(i + 1).padStart(2, "0")}-${type}.png`;
-                const saved = await saveSvgPng(svg, outName);
+                const saved = await saveSvgPng(svg, outName, outDir);
                 pages.push({ order: i + 1, type, title: b.title, ...saved, iconsResolved: Object.keys(resolved).length ? resolved : undefined });
                 allUnresolved.push(...unresolved);
             }
+
+            let merged: any[] | undefined;
+            if (args?.merge) {
+                const mo = (typeof args.merge === "object" && args.merge) ? args.merge : {};
+                const noExplicit = !mo.chunks && !mo.maxHeight && !mo.maxBytes;
+                merged = await mergeTilesVertical(pages.map(p => p.path), outDir, `${prefix}-merged`, {
+                    gap: mo.gap, background: mo.background || theme.bg,
+                    chunks: mo.chunks, maxHeightPx: mo.maxHeight,
+                    maxBytes: mo.maxBytes ?? (noExplicit ? PERF_TARGET_BYTES : undefined),
+                });
+            }
+
+            const mergeWarning = merged ? imgurSizeWarning(merged) : undefined;
             return okText({
-                ok: true, count: pages.length, folder: imagesDir(), pages,
+                ok: true, count: pages.length, folder: outDir, pages, merged,
+                warning: mergeWarning,
                 unresolved: allUnresolved,
-                note: "Draft-first: all page images were generated locally, in order. Next: upload them (imgur or Steam) keeping the order, " +
-                    "then compose_workshop_bbcode with the resulting URLs, then CONFIRM with the user before swh_update_description."
+                note: (merged && merged.length
+                    ? `Draft-first: ${pages.length} tiles + ${merged.length} merged image(s) written to ${outDir}. Next: upload the MERGED image(s) to imgur (one URL for the whole page), `
+                    : "Draft-first: all page images were generated locally, in order. Next: upload them (imgur) keeping the order, ")
+                    + "then compose_workshop_bbcode with the resulting URL(s) + a plain-text keyword intro, then CONFIRM with the user before swh_update_description."
                     + (allUnresolved.length ? ` Note: ${allUnresolved.length} icon ref(s) did not resolve: ${[...new Set(allUnresolved)].join(", ")}.` : "")
             });
         } catch (e: any) {
@@ -786,6 +936,31 @@ export async function handleWorkshopImageTool(name: string, args: any) {
                         : "Not found. Check the defName via list_item_icons, pass iconRoots at the mod's folder, set searchWorkshop:true, or run dump_item_icons." });
         } catch (e: any) {
             return errText(`Failed to resolve item icon: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "merge_workshop_tiles") {
+        const images = Array.isArray(args?.images) ? args.images.map((p: any) => String(p)).filter(Boolean) : [];
+        if (images.length === 0) return errText("Provide 'images': an ordered array of PNG file paths to stack.");
+        for (const p of images) { try { await fsp.access(p); } catch { return errText(`Tile not found: ${p}`); } }
+        try {
+            const outDir = args?.outDir ? String(args.outDir) : imagesDir();
+            const base = (String(args?.name || "merged").replace(/\.png$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")) || "merged";
+            const hasExplicit = Number(args?.chunks) > 0 || Number(args?.maxHeight) > 0 || Number(args?.maxBytes) > 0;
+            const outputs = await mergeTilesVertical(images, outDir, base, {
+                gap: Number(args?.gap) || 0,
+                chunks: Number(args?.chunks) || undefined,
+                maxHeightPx: Number(args?.maxHeight) || undefined,
+                maxBytes: Number(args?.maxBytes) || (hasExplicit ? undefined : PERF_TARGET_BYTES),
+                background: args?.background ? String(args.background) : undefined,
+            });
+            return okText({
+                ok: true, tilesMerged: images.length, images: outputs, folder: outDir,
+                warning: imgurSizeWarning(outputs),
+                note: "Draft-first: merged image(s) written. Upload to imgur (one URL per merged image), then embed via compose_workshop_bbcode with a plain-text keyword intro."
+            });
+        } catch (e: any) {
+            return errText(`Failed to merge tiles: ${e?.message || e}`);
         }
     }
 
