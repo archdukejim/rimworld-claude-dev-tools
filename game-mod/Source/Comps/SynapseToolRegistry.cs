@@ -163,6 +163,7 @@ namespace RimAgentic
             RegisterEnvironmentTools();
             RegisterWindowTools();
             RegisterApiDumpTools();
+            RegisterIconDumpTools();       // dump_item_icons (uiIcon -> PNG library for infographics)
             RegisterPerfTools();
             RegisterPerfScenarioTools();
             RegisterSaveTools();

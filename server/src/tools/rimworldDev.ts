@@ -1,8 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import { execSync, spawn } from "child_process";
 import { loadConfig, getSaveDataFolder } from "../config";
-import { resolveInstalledMods } from "./testing";
+import { resolveInstalledMods, checkModlistDrift, ModlistDrift } from "./testing";
 import { armGameWatchdog } from "../gameWatchdog";
 import { requestBridgeStatus, BridgeStatus } from "./gameIpc";
 
@@ -24,6 +25,71 @@ function isSteamRunning(): boolean {
         );
         return (parseInt(String(out).trim(), 10) || 0) > 0;
     } catch { return false; }
+}
+
+/** How many RimWorldWin64.exe processes are live right now. Used to tell a wrapper-returned launch
+ *  from a genuinely-exited game (G3): launch.ps1 can report `exited` while the detached game is still
+ *  alive, hung on a safe-mode dialog and holding a lock on Player.log. */
+function rimWorldProcessCount(): number {
+    try {
+        const out = execSync(
+            "powershell -NoProfile -Command \"(Get-Process -Name RimWorldWin64 -ErrorAction SilentlyContinue | Measure-Object).Count\"",
+            { encoding: "utf8" }
+        );
+        return parseInt(String(out).trim(), 10) || 0;
+    } catch { return 0; }
+}
+
+/** Fingerprint the compiled assemblies under <modDir>/Assemblies: a content hash over every .dll plus
+ *  the newest mtime. Used by deploy (did the binary actually change?) and launch (is the deployed copy
+ *  older than the repo build?) — the "harness reports success while the game runs a stale DLL" trap (G6). */
+function assemblyFingerprint(modDir: string): { dllCount: number; hash: string | null; newestMtimeMs: number } {
+    const asmDir = path.join(modDir, "Assemblies");
+    let files: string[] = [];
+    try { files = fs.readdirSync(asmDir).filter(f => f.toLowerCase().endsWith(".dll")).sort(); }
+    catch { return { dllCount: 0, hash: null, newestMtimeMs: 0 }; }
+    if (files.length === 0) return { dllCount: 0, hash: null, newestMtimeMs: 0 };
+    const h = crypto.createHash("sha1");
+    let newest = 0;
+    for (const f of files) {
+        const p = path.join(asmDir, f);
+        try {
+            h.update(fs.readFileSync(p));
+            const mt = fs.statSync(p).mtimeMs;
+            if (mt > newest) newest = mt;
+        } catch { /* skip unreadable dll */ }
+    }
+    return { dllCount: files.length, hash: h.digest("hex"), newestMtimeMs: newest };
+}
+
+/** Short hash for logs. */
+function shortHash(h: string | null): string { return h ? h.slice(0, 8) : "—"; }
+
+/**
+ * G6 (launch side) — warn when the mod copy the game will LOAD is older than the repo build. For each
+ * discovered repo mod that has a real (non-symlink) deployed copy under the game's Mods folder, compare
+ * assembly fingerprints: an older or byte-different deployed DLL means the game is running a stale
+ * binary and a validated fix never loaded. Symlinked/junctioned copies are the repo itself, so skipped.
+ */
+function deployedStalenessWarnings(modsDir: string | undefined): string {
+    if (!modsDir || !fs.existsSync(modsDir)) return "";
+    let out = "";
+    for (const mod of getModsMap()) {
+        if (!mod.hasCsharp) continue;
+        const repoFp = assemblyFingerprint(mod.src);
+        if (repoFp.dllCount === 0 || !repoFp.hash) continue; // nothing built to be stale against
+        const deployed = path.join(modsDir, mod.name);
+        if (!fs.existsSync(deployed)) continue;
+        if (isReparsePoint(deployed)) continue; // symlink/junction → live == repo, never stale
+        const liveFp = assemblyFingerprint(deployed);
+        if (liveFp.dllCount === 0 || !liveFp.hash) continue;
+        if (liveFp.hash === repoFp.hash) continue; // identical → up to date
+        const older = liveFp.newestMtimeMs < repoFp.newestMtimeMs;
+        out += `  WARN Mods/${mod.name} is a real copy running a ${older ? "STALE" : "different"} binary ` +
+            `(live hash ${shortHash(liveFp.hash)} vs repo ${shortHash(repoFp.hash)}` +
+            (older ? `, live DLL is older` : "") + `) — redeploy ${mod.dirName} or the game runs the wrong DLL.\n`;
+    }
+    return out;
 }
 
 // Junctions this tool mirrors into the local Mods folder are named with this prefix and recorded in
@@ -186,6 +252,17 @@ async function firstPassEnvironmentCheck(savedata: string, pid: number | null, r
         ? `Active modlist: ${activeMods.length} mod(s) (last: ${activeMods[activeMods.length - 1]}).\n`
         : `Could not read an active modlist from ${modsConfigPath}.\n`;
 
+    // G4 — the modlist read above is POST-launch, so if RimWorld reset ModsConfig to safe mode during
+    // this run (e.g. after a base-game-absent crash), the list shown is the recovery list, NOT what
+    // actually crashed. Say so, or a reader chases the wrong (post-recovery) mods.
+    const drift = checkModlistDrift(savedata);
+    if (drift.drifted) {
+        out += `NOTE: this modlist was RESET during the run — it is POST-recovery, not what first loaded. ` +
+            `RimWorld likely rewrote ModsConfig to safe mode after a startup crash. Re-run configure_active_mods.\n`;
+    } else if (drift.baseGameMissing) {
+        out += `NOTE: base game (ludeon.rimworld) is absent from the active modlist — RimWorld cannot load.\n`;
+    }
+
     // Startup log triage.
     const logPath = resolvePlayerLogPath(savedata);
     if (!logPath) {
@@ -194,12 +271,35 @@ async function firstPassEnvironmentCheck(savedata: string, pid: number | null, r
     }
 
     let report: ReturnType<typeof classifyLog>;
+    let logLines: string[] = [];
     try {
-        const lines = fs.readFileSync(logPath, "utf8").split(/\r?\n/);
-        report = classifyLog(lines, 10);
+        logLines = fs.readFileSync(logPath, "utf8").split(/\r?\n/);
+        report = classifyLog(logLines, 10);
     } catch (e: any) {
         out += `Could not read ${logPath}: ${e.message}\n`;
         return out;
+    }
+
+    // H2 — assert what actually loaded against what was intended. The game's own "Initializing new game
+    // with mods:" block is authoritative; if it collapsed to official-only while non-official mods were
+    // intended, RimWorld reset to safe mode and the run tested vanilla — a hard FAIL, not "clean".
+    const loaded = parseLoadedModsFromLog(logLines);
+    if (loaded && loaded.length) {
+        const loadedNonOfficial = loaded.filter(id => !isOfficialPackageId(id));
+        const intendedNonOfficial = activeMods.map(m => m.toLowerCase()).filter(id => !isOfficialPackageId(id));
+        if (intendedNonOfficial.length > 0 && loadedNonOfficial.length === 0) {
+            out += `FAIL: the run COLLAPSED to vanilla — the game initialized only official content ` +
+                `(${loaded.join(", ")}) while ${intendedNonOfficial.length} mod(s) were intended ` +
+                `(${intendedNonOfficial.slice(0, 8).join(", ")}${intendedNonOfficial.length > 8 ? ", …" : ""}). ` +
+                `RimWorld reset ModsConfig to safe mode after a load-time crash; nothing you meant to test loaded. ` +
+                `A "clean" result here is meaningless — fix the crash (see the diagnosis below) and re-run.\n`;
+        } else {
+            const missingFromRun = intendedNonOfficial.filter(id => !loaded.includes(id));
+            out += `Game initialized ${loaded.length} mod(s) per the log` +
+                (missingFromRun.length
+                    ? `; MISSING from the run: ${missingFromRun.join(", ")} (intended but not loaded — RimWorld dropped them).\n`
+                    : ` (matches the intended non-official set).\n`);
+        }
     }
 
     const c = report.counts;
@@ -215,6 +315,23 @@ async function firstPassEnvironmentCheck(savedata: string, pid: number | null, r
         out += `  Run read_rimworld_log for the full triage before trusting any test result.\n`;
     }
     if (c.versionWarning > 0) out += `  Note: ${c.versionWarning} version-mismatch warning(s).\n`;
+    // G7 — surface any known crash-signature diagnosis right here, so the fix is one line away.
+    for (const d of report.diagnosis || []) out += `  ${d}\n`;
+
+    // H3 — explicit bridge liveness. The rimagentic bridge polls from GameComponentUpdate, so it only
+    // registers once a Game exists; a safe-mode recovery (which disables the bridge mod) or an exit
+    // before a live map leaves it dead, and run_debug_action/execute_game_tool then time out. Report it
+    // now so an agent anticipates the timeout instead of discovering it call-by-call.
+    if (ready) {
+        out += `Bridge: rimagentic responding (map live) — run_debug_action/execute_game_tool are usable.\n`;
+    } else {
+        const bridge = await requestBridgeStatus(1500);
+        out += bridge
+            ? `Bridge: rimagentic responding${bridge.mapLive ? " (map live)" : " (no live map yet)"}.\n`
+            : `Bridge: rimagentic NOT responding — run_debug_action/execute_game_tool will time out. ` +
+              `If the log shows a safe-mode recovery above, the bridge mod was disabled by the reset; otherwise the ` +
+              `game may still be loading or exited before a live map.\n`;
+    }
     return out;
 }
 
@@ -566,8 +683,90 @@ export function classifyLog(lines: string[], maxPerCategory: number) {
         blockingCount: blocking,
         counts,
         categories: trimmed,
-        tests: { passed, failed, cases }
+        tests: { passed, failed, cases },
+        diagnosis: diagnoseCrashSignatures(lines)
     };
+}
+
+/**
+ * G7 — map known crash signatures to a one-line diagnosis, so a multi-hour "root-cause" hunt becomes
+ * a single hint. These are the traps that have actually cost sessions, seeded from the 2026-08-12
+ * base-game-absent incident. Returns [] when nothing matches — an empty diagnosis is not "healthy",
+ * it just means no *known* signature fired.
+ */
+export function diagnoseCrashSignatures(lines: string[]): string[] {
+    const joined = lines.join("\n");
+    const out: string[] = [];
+
+    // Base game / base defs inactive: RimWorld can't find the abstract parents every def inherits from.
+    // This is the SPECIFIC discriminator for a base-game-absent modlist. (The downstream
+    // ColoredText.ResetStaticData NRE is NOT keyed on here — per HEADLESS-TESTING-BLOCKERS.md that NRE
+    // is the generic play-data recovery path and fires even with the base game present, so it would
+    // misattribute; the recovery signature below covers it instead.)
+    const missingBaseParents = /could not find parent node ["']Base(?:MentalState|Storyteller|Pawn|Humanlike|Weapon|Building|Apparel|Plant|Thing|Def)["']/i.test(joined);
+    if (missingBaseParents) {
+        out.push(
+            `DIAGNOSIS: base game / base defs likely inactive — the abstract parents defs inherit from are missing. ` +
+            `Ensure 'ludeon.rimworld' is in the active modlist (re-run configure_active_mods).`
+        );
+    }
+
+    // Play-data recovery: RimWorld caught an exception during play-data load and reset ModsConfig to
+    // safe mode ("active mods other than Core" → official-DLC-only), disabling every non-official mod
+    // — Harmony, the mod under test, and the rimagentic bridge together. The run then "succeeds" as a
+    // vanilla game, which the first-pass check can misread as healthy. This is the single most
+    // important false-green signal for headless runs (HEADLESS-TESTING-BLOCKERS.md, both blockers).
+    const recovered = /Resetting mods config and trying again|Caught exception while loading play data but there are active mods other than Core|Successfully recovered from errors/i.test(joined);
+    if (recovered) {
+        out.push(
+            `DIAGNOSIS: RimWorld RECOVERED by resetting ModsConfig to safe mode during play-data load — the intended ` +
+            `modlist was DISCARDED and the run continued as vanilla. A 'clean'/passing result here tested nothing you ` +
+            `configured; the rimagentic bridge was disabled by the reset, so run_debug_action will time out. Root cause ` +
+            `is an exception thrown during load (often an NRE at ColoredText.ResetStaticData) — look at the first ` +
+            `patch/def error ABOVE the reset line for the mod at fault.`
+        );
+    }
+
+    // Stale cross-mod reference: a companion built against an older version of another RimSynapse mod
+    // fails to resolve a type at load. The assembly named is the one whose types moved.
+    if (/TypeLoadException/i.test(joined)) {
+        const m = joined.match(/could not (?:load|resolve) type ['"]?([^'"\n,]+?)['"]?[^\n]*?\bassembly ['"]?([A-Za-z0-9_.]+)/i);
+        out.push(m
+            ? `DIAGNOSIS: stale cross-mod reference — a mod references type '${m[1].trim()}' from assembly '${m[2].trim()}' ` +
+              `but was built against an older version of it. Rebuild/redeploy the referencing mod.`
+            : `DIAGNOSIS: TypeLoadException present — likely a stale cross-mod reference; rebuild/redeploy the referencing mod against the current assemblies.`);
+    }
+
+    return out;
+}
+
+/**
+ * Parse the modlist RimWorld actually loaded, from its own `Initializing new game with mods:` block in
+ * Player.log — the authoritative "what really loaded", independent of what ModsConfig.xml says on disk.
+ * Returns lowercased packageIds from the LAST such block, or null if the game never got that far.
+ * Used to catch a run that collapsed to vanilla after a safe-mode recovery (HEADLESS-TESTING-BLOCKERS.md
+ * blocker 1): ModsConfig may still list the intended mods, but this block shows only official content.
+ */
+export function parseLoadedModsFromLog(lines: string[]): string[] | null {
+    let startIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (/Initializing new game with mods/i.test(lines[i])) { startIdx = i; break; }
+    }
+    if (startIdx === -1) return null;
+    const mods: string[] = [];
+    for (let i = startIdx + 1; i < lines.length; i++) {
+        const m = lines[i].match(/^\s*-\s*([A-Za-z0-9_.]+)\s*$/);
+        if (m) mods.push(m[1].trim().toLowerCase());
+        else if (lines[i].trim() === "") continue; // tolerate a blank line inside the block
+        else break;                                 // first real non-entry line ends the block
+    }
+    return mods;
+}
+
+/** Is a packageId part of the official prefix (base game, its DLCs, or Harmony)? */
+function isOfficialPackageId(id: string): boolean {
+    const lc = id.toLowerCase();
+    return /^ludeon\.rimworld(\.|$)/.test(lc) || lc === "brrainz.harmony";
 }
 
 /**
@@ -690,6 +889,16 @@ export async function runStage(
         ["-Test", "-TimeoutSec", String(timeoutSec), "-SaveDataFolder", savedatafolder],
         (timeoutSec + 180) * 1000
     );
+    // G3 — launch.ps1 can report `exited` while the detached RimWorldWin64.exe is still alive (hung on
+    // a safe-mode dialog, holding a lock on Player.log). Reconcile the wrapper's word against the real
+    // process so a hang isn't mistaken for a clean exit.
+    if (launch && typeof launch === "object") {
+        const stillAlive = rimWorldProcessCount() > 0;
+        launch.rimworldStillAlive = stillAlive;
+        if (launch.exited === true && stillAlive) {
+            launch.processNote = "launch wrapper returned, but RimWorldWin64.exe is still alive — the game likely hung on a dialog (e.g. safe-mode recovery), not a clean exit.";
+        }
+    }
     // Read the log regardless of how the launch ended — a crash still leaves evidence.
     const log = await runHarness("readlog.ps1", [], 60 * 1000);
     return { launch, log };
@@ -697,16 +906,71 @@ export async function runStage(
 
 export async function runTestCycle(
     opts: TestCycleOptions
-): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any }> {
+): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any; configDrift?: ModlistDrift; collapsedToVanilla?: boolean; diagnosis?: string }> {
     const build = await buildStage(opts.repo);
     if (!build || build.ok !== true) {
         return { ok: false, stage: "build", build };
     }
+
+    // G5 — check for ModsConfig drift BEFORE launching. If RimWorld reset the config to safe mode after
+    // a prior crash, this run would load vanilla, run nothing, exit fast, and look like a clean pass.
+    const configDrift = checkModlistDrift(opts.savedatafolder);
+
     const { launch, log } = await runStage(opts.savedatafolder, opts.timeoutSec || 420);
-    // All three stages have to agree: the build produced binaries, the game got far enough to
-    // finish the suite, and the log carries no blocking entries and no shortfall in case count.
-    const ok = build?.ok === true && launch?.ok === true && log?.ok === true;
-    return { ok, stage: "complete", build, launch, log };
+
+    // H1/H2 — the harness readlog.ps1 does its own classification, so enrich it with the TS-side
+    // crash-signature and collapse-to-vanilla checks read straight from the Player.log. This is what
+    // catches a run that "recovered" to safe mode: it can pass every harness stage while having loaded
+    // nothing you configured (HEADLESS-TESTING-BLOCKERS.md).
+    let crashDiagnosis: string[] = [];
+    let collapsedToVanilla = false;
+    try {
+        const lp = resolvePlayerLogPath(opts.savedatafolder);
+        if (lp) {
+            const lines = fs.readFileSync(lp, "utf8").split(/\r?\n/);
+            crashDiagnosis = diagnoseCrashSignatures(lines);
+            const loaded = parseLoadedModsFromLog(lines);
+            const intended = (configDrift.expected.length ? configDrift.expected : configDrift.actual).map(m => m.toLowerCase());
+            if (loaded && loaded.length) {
+                const loadedNonOfficial = loaded.filter(id => !isOfficialPackageId(id));
+                const intendedNonOfficial = intended.filter(id => !isOfficialPackageId(id));
+                collapsedToVanilla = intendedNonOfficial.length > 0 && loadedNonOfficial.length === 0;
+            }
+        }
+    } catch { /* best-effort enrichment; never fail the cycle over log parsing */ }
+    const recovered = crashDiagnosis.some(d => /RECOVERED/.test(d));
+
+    // G2 — a green build is NOT evidence that tests ran. A run is only valid when the TestRunner
+    // actually reported a summary. Fold in the collapse/recovery signals so a run that loaded vanilla
+    // can never read as a pass, even if it happened to emit a summary.
+    const testsSeen = (log?.tests?.passed ?? 0) + (log?.tests?.failed ?? 0);
+    const parts: string[] = [];
+    if (collapsedToVanilla) {
+        parts.push(
+            "RUN COLLAPSED TO VANILLA — the game initialized only official content; the mods you configured " +
+            "were discarded when RimWorld reset ModsConfig to safe mode after a load-time crash. This tested nothing."
+        );
+    }
+    if (build?.ok === true && testsSeen === 0) {
+        parts.push(
+            "NO TESTS RAN — no [SYNAPSE-TEST] summary in the log. A green build does NOT mean tests ran. " +
+            "Likely causes: the TestRunner mod isn't active/loaded-last, the base game is missing so RimWorld " +
+            "reset to safe mode, or the game hung on a dialog."
+        );
+    }
+    if (configDrift.message) parts.push(`Drift check: ${configDrift.message}`);
+    parts.push(...crashDiagnosis);
+    if (parts.length) parts.push("Check the first-pass env report and read_rimworld_log before trusting this result.");
+    const diagnosis = parts.length ? parts.join(" ") : undefined;
+
+    // All three stages have to agree: the build produced binaries, the game got far enough to finish the
+    // suite, and the log carries no blocking entries and no shortfall in case count. A drifted config, an
+    // empty run, a collapse to vanilla, or a safe-mode recovery is never a pass — even if each harness
+    // stage returned ok.
+    const ok = build?.ok === true && launch?.ok === true && log?.ok === true &&
+        testsSeen > 0 && !configDrift.drifted && !configDrift.baseGameMissing &&
+        !collapsedToVanilla && !recovered;
+    return { ok, stage: "complete", build, launch, log, configDrift, collapsedToVanilla, diagnosis };
 }
 
 function copyFolderRecursiveSync(source: string, target: string) {
@@ -760,7 +1024,12 @@ export async function handleRimworldDevTool(name: string, args: any) {
             // 2. Package mod files
             const destPath = path.join(targetModsDir, mod.name);
             logs += `  Packaging release files to ${destPath}...\n`;
-            
+
+            // G6 — remember the binary that was live BEFORE this deploy, so we can say whether the
+            // deploy actually changed the DLL. A no-op build that "succeeds" while the live assembly is
+            // byte-identical is the classic false-green: a fix that built fine but isn't what runs.
+            const priorFp = assemblyFingerprint(destPath);
+
             try {
                 if (fs.existsSync(destPath)) {
                     const stats = fs.lstatSync(destPath);
@@ -817,6 +1086,18 @@ export async function handleRimworldDevTool(name: string, args: any) {
                 if (unexpected.length > 0) {
                     logs += `  NOT PACKAGED (not on the whitelist — intended?): ${unexpected.join(", ")}\n`;
                 }
+
+                // G6 — did the deployed binary actually change? Report hash/mtime so a no-op build can't
+                // masquerade as a fresh deploy.
+                const newFp = assemblyFingerprint(destPath);
+                if (newFp.dllCount === 0) {
+                    logs += `  Assemblies: none deployed (${mod.dirName} ships no DLL).\n`;
+                } else if (priorFp.hash && priorFp.hash === newFp.hash) {
+                    logs += `  Assemblies UNCHANGED (${newFp.dllCount} DLL, hash ${shortHash(newFp.hash)}) — no binary delta since last deploy; a source fix may not have compiled.\n`;
+                } else {
+                    logs += `  Assemblies updated (${newFp.dllCount} DLL, hash ${shortHash(priorFp.hash)}→${shortHash(newFp.hash)}, built ${new Date(newFp.newestMtimeMs).toISOString()}).\n`;
+                }
+
                 logs += `  Deployment successful.\n`;
             } catch (err: any) {
                 logs += `  Deployment FAILED: ${err.message}\n`;
@@ -946,6 +1227,16 @@ export async function handleRimworldDevTool(name: string, args: any) {
         // so mirror each active Workshop mod (Harmony above all) into local Mods as a junction; when Steam
         // is signed in, tear those junctions back down. Self-cleaning via a tracked manifest.
         logs += ensureActiveWorkshopModsLoadable(config.rimworldModsDir, savedata);
+
+        // G5 — did RimWorld clobber ModsConfig back to safe mode since it was configured? A drifted or
+        // base-game-less list means the game will load vanilla (or nothing) and any "pass" is empty.
+        const preLaunchDrift = checkModlistDrift(savedata);
+        if (preLaunchDrift.message) logs += `WARNING (modlist drift): ${preLaunchDrift.message}\n`;
+
+        // G6 — is any deployed mod copy the game will load older than the repo build? Warn before we
+        // spend a whole launch cycle running a stale binary.
+        const staleWarnings = deployedStalenessWarnings(config.rimworldModsDir);
+        if (staleWarnings) logs += `Stale deployed binaries detected:\n${staleWarnings}`;
 
         const params: string[] = [
             `-savedatafolder=${savedata}`,

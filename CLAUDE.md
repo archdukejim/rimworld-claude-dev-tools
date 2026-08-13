@@ -140,6 +140,13 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 - **`run_rimworld_tests` can run a stale binary** — it builds to `<repo>/Assemblies`
   but does **not** redeploy to the Steam `Mods/` folder the game loads from. Run
   `deploy_rimworld_mods` first, or the test launches whatever binary was last deployed.
+  (Deploy now reports whether the assembly hash actually changed, and launch warns when a
+  real deployed copy is older than the repo build — but redeploying first is still the fix.)
+- **The harness guards against false-green runs** — base-game-less modlists, ModsConfig drift
+  to safe mode, stale/collapsed-to-vanilla runs, and empty runs are detected and refused rather
+  than reported as clean. The durable reference (what's enforced, the known-good test modlist,
+  and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
+  **`docs/HARNESS-RELIABILITY.md`**.
 
 ## GitHub auth & release ops (rules)
 
