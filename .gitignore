@@ -7,6 +7,10 @@ rimtoolkit.mcpb
 # harness runtime state
 harness/.logmarker
 
+# harness modlist backups (rewritten by the harness on every run)
+harness/modlists/_previous.xml
+harness/modlists/*.bak
+
 # harmony release-notes auto-refresh (machine-generated; corpus regenerates from these + the
 # git-tracked harmony-corpus.jsonl). See harmony-knowledge/refresh-harmony-releases.cjs.
 harmony-knowledge/harmony-releases.auto.jsonl

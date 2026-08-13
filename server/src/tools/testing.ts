@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import * as fs from "fs";
+import * as crypto from "crypto";
 import { graphql } from "@octokit/graphql";
 import * as path from "path";
 import { execSync, spawn } from "child_process";
@@ -427,6 +428,104 @@ export function resolveModLoadOrder(
     const missingDependencies = findMissingDependencies(deduped, config);
 
     return { resolved, cycles, ambiguous, uninstalled, missingDependencies };
+}
+
+/** The base game's packageId. Absent from an active list, RimWorld loads nothing and resets to safe mode. */
+export const BASE_GAME_PACKAGE_ID = "ludeon.rimworld";
+
+/**
+ * Where the modlist fingerprint lives — next to the ModsConfig.xml it describes, so a per-savedata
+ * launch and the configure step agree on the same file. A dotfile so RimWorld never scans it.
+ */
+function modlistFingerprintPath(savedata: string): string {
+    return path.join(savedata, "Config", ".rimagentic-modlist.json");
+}
+
+/** Read the active packageIds (lowercased, in order) from a ModsConfig.xml. Empty if unreadable. */
+export function readActiveModsFromConfig(savedata: string): string[] {
+    try {
+        const xml = fs.readFileSync(path.join(savedata, "Config", "ModsConfig.xml"), "utf8");
+        const block = /<activeMods>([\s\S]*?)<\/activeMods>/i.exec(xml)?.[1] ?? "";
+        return Array.from(block.matchAll(/<li>([^<]+)<\/li>/gi)).map(m => m[1].trim().toLowerCase());
+    } catch {
+        return [];
+    }
+}
+
+/** Order-independent fingerprint of a modlist — the set of packageIds is what determines whether the
+ *  same mods load; load-order is validated separately. */
+function fingerprintModlist(mods: string[]): string {
+    const norm = Array.from(new Set(mods.map(m => m.trim().toLowerCase()))).sort();
+    return crypto.createHash("sha1").update(norm.join("\n")).digest("hex");
+}
+
+/**
+ * Record what `configure_active_mods` just wrote, so a later launch can tell whether RimWorld
+ * clobbered ModsConfig back to safe mode between the configure and the run (the drift that made a
+ * crashing first pass look like a clean second pass). Best-effort — a missing fingerprint just
+ * disables the drift check, it is never fatal.
+ */
+export function writeModlistFingerprint(savedata: string, activeMods: string[]): void {
+    try {
+        fs.writeFileSync(
+            modlistFingerprintPath(savedata),
+            JSON.stringify({ hash: fingerprintModlist(activeMods), mods: activeMods, writtenAtMs: Date.now() }, null, 2),
+            "utf8"
+        );
+    } catch { /* convenience only */ }
+}
+
+export interface ModlistDrift {
+    /** Was a fingerprint from a prior configure_active_mods available to compare against? */
+    hasFingerprint: boolean;
+    /** True when the on-disk modlist no longer matches what was last configured. */
+    drifted: boolean;
+    /** True when the base game is absent from the on-disk list — a guaranteed no-load. */
+    baseGameMissing: boolean;
+    expected: string[];
+    actual: string[];
+    message?: string;
+}
+
+/**
+ * Compare the on-disk ModsConfig.xml to the last modlist `configure_active_mods` wrote (G5/G4).
+ * A mismatch almost always means RimWorld reset the config to safe mode after a prior crash, so the
+ * next run would silently load vanilla and "pass" by doing nothing. Also flags an absent base game
+ * outright, since that is the specific reset RimWorld performs.
+ */
+export function checkModlistDrift(savedata: string): ModlistDrift {
+    const actual = readActiveModsFromConfig(savedata);
+    const baseGameMissing = actual.length > 0 && !actual.includes(BASE_GAME_PACKAGE_ID);
+
+    let stored: { hash?: string; mods?: string[] } | null = null;
+    try { stored = JSON.parse(fs.readFileSync(modlistFingerprintPath(savedata), "utf8")); } catch { stored = null; }
+
+    if (!stored || !stored.hash) {
+        return {
+            hasFingerprint: false,
+            drifted: false,
+            baseGameMissing,
+            expected: [],
+            actual,
+            message: baseGameMissing
+                ? `ModsConfig.xml has no '${BASE_GAME_PACKAGE_ID}' — RimWorld cannot load and will reset to safe mode. Re-run configure_active_mods.`
+                : undefined
+        };
+    }
+
+    const drifted = fingerprintModlist(actual) !== stored.hash;
+    let message: string | undefined;
+    if (drifted) {
+        message =
+            `ModsConfig.xml changed since it was configured (${(stored.mods || []).length} mods → ${actual.length}). ` +
+            `RimWorld most likely reset it to safe mode after a prior crash — the list now on disk is NOT what you configured. ` +
+            `Re-run configure_active_mods before trusting a run.` +
+            (baseGameMissing ? ` It is also missing the base game (${BASE_GAME_PACKAGE_ID}).` : "");
+    } else if (baseGameMissing) {
+        message = `ModsConfig.xml is missing the base game (${BASE_GAME_PACKAGE_ID}) — RimWorld cannot load. Re-run configure_active_mods.`;
+    }
+
+    return { hasFingerprint: true, drifted, baseGameMissing, expected: stored.mods || [], actual, message };
 }
 
 export const testingTools = [
@@ -878,6 +977,21 @@ export async function handleTestingTool(
         // fails deep in startup; the load-order sort alone never noticed an absent prerequisite,
         // so a missing dependency was silently dropped (the recent miss this fixes). Installed
         // prerequisites are activated for their dependents; ones not installed at all are reported.
+        // G1 — the base game is mandatory and the highest-leverage gate here. The load-order resolver
+        // orders the official block but never *injects* ludeon.rimworld, and any active DLC implies it.
+        // A list without the base game loads nothing: RimWorld crashes at play-data load
+        // (Could not find parent node "BaseMentalState"/"BaseStoryteller", ColoredText.ResetStaticData
+        // NRE) and silently resets ModsConfig to safe mode — which then reads as a phantom code bug.
+        // Inject it here, before ordering, so the resolver places it canonically at the front.
+        const dlcImpliesBase =
+            (Array.isArray(args.enableDlc) && args.enableDlc.length > 0) ||
+            activeList.some(m => /^ludeon\.rimworld\./i.test(m.trim()));
+        let baseGameInjected = false;
+        if (!activeList.some(m => m.trim().toLowerCase() === BASE_GAME_PACKAGE_ID)) {
+            activeList.push(BASE_GAME_PACKAGE_ID);
+            baseGameInjected = true;
+        }
+
         const autoAddDeps = args.autoAddDependencies !== false;
         let autoAdded: Array<{ dependency: string; requiredBy: string }> = [];
         if (autoAddDeps) {
@@ -911,12 +1025,28 @@ export async function handleTestingTool(
 
         fs.writeFileSync(configPath, content, "utf8");
 
+        // Record what we just wrote so a later launch can detect if RimWorld clobbers it back to safe
+        // mode between now and the run (G5/G4 drift check reads this fingerprint).
+        writeModlistFingerprint(savedata, activeList);
+
+        // The official block, called out explicitly so a caller can see at a glance that the base game
+        // is present (G1). `OFFICIAL_ORDER` is harmony-then-base-then-DLCs; harmony isn't "official" in
+        // the base-game sense but shares the prefix, so report the ludeon.* members here.
+        const officialActive = activeList.filter(m => /^ludeon\.rimworld(\.|$)/i.test(m.trim()));
+
         // Say what was written, where, and what is wrong with it. A modlist naming a mod that is
         // not installed used to be accepted in silence: RimWorld drops the entry, the mod's own
         // "not detected" branch logs, and the run looks like evidence about that mod when it is
         // only evidence that it was never loaded. `missing` comes from the resolver above.
         const notes: string[] = [];
         notes.push(`Wrote ${configPath}`);
+        if (baseGameInjected) {
+            notes.push(
+                `Auto-added ${BASE_GAME_PACKAGE_ID} (base game) — it was missing and RimWorld cannot load without it` +
+                (dlcImpliesBase ? " (an active DLC requires it)" : "") + "."
+            );
+        }
+        notes.push(`Official block: [${officialActive.join(", ")}]`);
         if (autoAdded.length > 0) {
             notes.push(`Auto-activated ${autoAdded.length} installed hard dependency(ies): ` +
                 autoAdded.map(a => `${a.dependency} (required by ${a.requiredBy})`).join(", "));
