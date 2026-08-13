@@ -271,12 +271,35 @@ async function firstPassEnvironmentCheck(savedata: string, pid: number | null, r
     }
 
     let report: ReturnType<typeof classifyLog>;
+    let logLines: string[] = [];
     try {
-        const lines = fs.readFileSync(logPath, "utf8").split(/\r?\n/);
-        report = classifyLog(lines, 10);
+        logLines = fs.readFileSync(logPath, "utf8").split(/\r?\n/);
+        report = classifyLog(logLines, 10);
     } catch (e: any) {
         out += `Could not read ${logPath}: ${e.message}\n`;
         return out;
+    }
+
+    // H2 — assert what actually loaded against what was intended. The game's own "Initializing new game
+    // with mods:" block is authoritative; if it collapsed to official-only while non-official mods were
+    // intended, RimWorld reset to safe mode and the run tested vanilla — a hard FAIL, not "clean".
+    const loaded = parseLoadedModsFromLog(logLines);
+    if (loaded && loaded.length) {
+        const loadedNonOfficial = loaded.filter(id => !isOfficialPackageId(id));
+        const intendedNonOfficial = activeMods.map(m => m.toLowerCase()).filter(id => !isOfficialPackageId(id));
+        if (intendedNonOfficial.length > 0 && loadedNonOfficial.length === 0) {
+            out += `FAIL: the run COLLAPSED to vanilla — the game initialized only official content ` +
+                `(${loaded.join(", ")}) while ${intendedNonOfficial.length} mod(s) were intended ` +
+                `(${intendedNonOfficial.slice(0, 8).join(", ")}${intendedNonOfficial.length > 8 ? ", …" : ""}). ` +
+                `RimWorld reset ModsConfig to safe mode after a load-time crash; nothing you meant to test loaded. ` +
+                `A "clean" result here is meaningless — fix the crash (see the diagnosis below) and re-run.\n`;
+        } else {
+            const missingFromRun = intendedNonOfficial.filter(id => !loaded.includes(id));
+            out += `Game initialized ${loaded.length} mod(s) per the log` +
+                (missingFromRun.length
+                    ? `; MISSING from the run: ${missingFromRun.join(", ")} (intended but not loaded — RimWorld dropped them).\n`
+                    : ` (matches the intended non-official set).\n`);
+        }
     }
 
     const c = report.counts;
@@ -294,6 +317,21 @@ async function firstPassEnvironmentCheck(savedata: string, pid: number | null, r
     if (c.versionWarning > 0) out += `  Note: ${c.versionWarning} version-mismatch warning(s).\n`;
     // G7 — surface any known crash-signature diagnosis right here, so the fix is one line away.
     for (const d of report.diagnosis || []) out += `  ${d}\n`;
+
+    // H3 — explicit bridge liveness. The rimagentic bridge polls from GameComponentUpdate, so it only
+    // registers once a Game exists; a safe-mode recovery (which disables the bridge mod) or an exit
+    // before a live map leaves it dead, and run_debug_action/execute_game_tool then time out. Report it
+    // now so an agent anticipates the timeout instead of discovering it call-by-call.
+    if (ready) {
+        out += `Bridge: rimagentic responding (map live) — run_debug_action/execute_game_tool are usable.\n`;
+    } else {
+        const bridge = await requestBridgeStatus(1500);
+        out += bridge
+            ? `Bridge: rimagentic responding${bridge.mapLive ? " (map live)" : " (no live map yet)"}.\n`
+            : `Bridge: rimagentic NOT responding — run_debug_action/execute_game_tool will time out. ` +
+              `If the log shows a safe-mode recovery above, the bridge mod was disabled by the reset; otherwise the ` +
+              `game may still be loading or exited before a live map.\n`;
+    }
     return out;
 }
 
@@ -660,15 +698,32 @@ export function diagnoseCrashSignatures(lines: string[]): string[] {
     const joined = lines.join("\n");
     const out: string[] = [];
 
-    // Base game inactive: RimWorld can't find the abstract parents every def inherits from, then NREs
-    // resetting static colored-text data, then rewrites ModsConfig to safe mode. Either half is a
-    // strong signal on its own; together they are conclusive.
-    const missingBaseParents = /could not find parent node ["'](Base(?:MentalState|Storyteller|Pawn|Humanlike|Weapon|Building|Apparel|Plant|Thing|Def))["']/i.test(joined);
-    const coloredTextNre = /ColoredText\.ResetStaticData/i.test(joined);
-    if (missingBaseParents || coloredTextNre) {
+    // Base game / base defs inactive: RimWorld can't find the abstract parents every def inherits from.
+    // This is the SPECIFIC discriminator for a base-game-absent modlist. (The downstream
+    // ColoredText.ResetStaticData NRE is NOT keyed on here — per HEADLESS-TESTING-BLOCKERS.md that NRE
+    // is the generic play-data recovery path and fires even with the base game present, so it would
+    // misattribute; the recovery signature below covers it instead.)
+    const missingBaseParents = /could not find parent node ["']Base(?:MentalState|Storyteller|Pawn|Humanlike|Weapon|Building|Apparel|Plant|Thing|Def)["']/i.test(joined);
+    if (missingBaseParents) {
         out.push(
-            `DIAGNOSIS: base game likely inactive — ensure '${"ludeon.rimworld"}' is in the active modlist. ` +
-            `(RimWorld may have reset ModsConfig to safe mode after a prior crash; re-run configure_active_mods.)`
+            `DIAGNOSIS: base game / base defs likely inactive — the abstract parents defs inherit from are missing. ` +
+            `Ensure 'ludeon.rimworld' is in the active modlist (re-run configure_active_mods).`
+        );
+    }
+
+    // Play-data recovery: RimWorld caught an exception during play-data load and reset ModsConfig to
+    // safe mode ("active mods other than Core" → official-DLC-only), disabling every non-official mod
+    // — Harmony, the mod under test, and the rimagentic bridge together. The run then "succeeds" as a
+    // vanilla game, which the first-pass check can misread as healthy. This is the single most
+    // important false-green signal for headless runs (HEADLESS-TESTING-BLOCKERS.md, both blockers).
+    const recovered = /Resetting mods config and trying again|Caught exception while loading play data but there are active mods other than Core|Successfully recovered from errors/i.test(joined);
+    if (recovered) {
+        out.push(
+            `DIAGNOSIS: RimWorld RECOVERED by resetting ModsConfig to safe mode during play-data load — the intended ` +
+            `modlist was DISCARDED and the run continued as vanilla. A 'clean'/passing result here tested nothing you ` +
+            `configured; the rimagentic bridge was disabled by the reset, so run_debug_action will time out. Root cause ` +
+            `is an exception thrown during load (often an NRE at ColoredText.ResetStaticData) — look at the first ` +
+            `patch/def error ABOVE the reset line for the mod at fault.`
         );
     }
 
@@ -683,6 +738,35 @@ export function diagnoseCrashSignatures(lines: string[]): string[] {
     }
 
     return out;
+}
+
+/**
+ * Parse the modlist RimWorld actually loaded, from its own `Initializing new game with mods:` block in
+ * Player.log — the authoritative "what really loaded", independent of what ModsConfig.xml says on disk.
+ * Returns lowercased packageIds from the LAST such block, or null if the game never got that far.
+ * Used to catch a run that collapsed to vanilla after a safe-mode recovery (HEADLESS-TESTING-BLOCKERS.md
+ * blocker 1): ModsConfig may still list the intended mods, but this block shows only official content.
+ */
+export function parseLoadedModsFromLog(lines: string[]): string[] | null {
+    let startIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (/Initializing new game with mods/i.test(lines[i])) { startIdx = i; break; }
+    }
+    if (startIdx === -1) return null;
+    const mods: string[] = [];
+    for (let i = startIdx + 1; i < lines.length; i++) {
+        const m = lines[i].match(/^\s*-\s*([A-Za-z0-9_.]+)\s*$/);
+        if (m) mods.push(m[1].trim().toLowerCase());
+        else if (lines[i].trim() === "") continue; // tolerate a blank line inside the block
+        else break;                                 // first real non-entry line ends the block
+    }
+    return mods;
+}
+
+/** Is a packageId part of the official prefix (base game, its DLCs, or Harmony)? */
+function isOfficialPackageId(id: string): boolean {
+    const lc = id.toLowerCase();
+    return /^ludeon\.rimworld(\.|$)/.test(lc) || lc === "brrainz.harmony";
 }
 
 /**
@@ -822,7 +906,7 @@ export async function runStage(
 
 export async function runTestCycle(
     opts: TestCycleOptions
-): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any; configDrift?: ModlistDrift; diagnosis?: string }> {
+): Promise<{ ok: boolean; stage: string; build: any; launch?: any; log?: any; configDrift?: ModlistDrift; collapsedToVanilla?: boolean; diagnosis?: string }> {
     const build = await buildStage(opts.repo);
     if (!build || build.ok !== true) {
         return { ok: false, stage: "build", build };
@@ -834,28 +918,59 @@ export async function runTestCycle(
 
     const { launch, log } = await runStage(opts.savedatafolder, opts.timeoutSec || 420);
 
+    // H1/H2 — the harness readlog.ps1 does its own classification, so enrich it with the TS-side
+    // crash-signature and collapse-to-vanilla checks read straight from the Player.log. This is what
+    // catches a run that "recovered" to safe mode: it can pass every harness stage while having loaded
+    // nothing you configured (HEADLESS-TESTING-BLOCKERS.md).
+    let crashDiagnosis: string[] = [];
+    let collapsedToVanilla = false;
+    try {
+        const lp = resolvePlayerLogPath(opts.savedatafolder);
+        if (lp) {
+            const lines = fs.readFileSync(lp, "utf8").split(/\r?\n/);
+            crashDiagnosis = diagnoseCrashSignatures(lines);
+            const loaded = parseLoadedModsFromLog(lines);
+            const intended = (configDrift.expected.length ? configDrift.expected : configDrift.actual).map(m => m.toLowerCase());
+            if (loaded && loaded.length) {
+                const loadedNonOfficial = loaded.filter(id => !isOfficialPackageId(id));
+                const intendedNonOfficial = intended.filter(id => !isOfficialPackageId(id));
+                collapsedToVanilla = intendedNonOfficial.length > 0 && loadedNonOfficial.length === 0;
+            }
+        }
+    } catch { /* best-effort enrichment; never fail the cycle over log parsing */ }
+    const recovered = crashDiagnosis.some(d => /RECOVERED/.test(d));
+
     // G2 — a green build is NOT evidence that tests ran. A run is only valid when the TestRunner
-    // actually reported a summary. When the build passed but no cases were seen, lead with a hard
-    // diagnosis instead of a reassuring build.ok, and point at the usual causes.
+    // actually reported a summary. Fold in the collapse/recovery signals so a run that loaded vanilla
+    // can never read as a pass, even if it happened to emit a summary.
     const testsSeen = (log?.tests?.passed ?? 0) + (log?.tests?.failed ?? 0);
-    let diagnosis: string | undefined;
+    const parts: string[] = [];
+    if (collapsedToVanilla) {
+        parts.push(
+            "RUN COLLAPSED TO VANILLA — the game initialized only official content; the mods you configured " +
+            "were discarded when RimWorld reset ModsConfig to safe mode after a load-time crash. This tested nothing."
+        );
+    }
     if (build?.ok === true && testsSeen === 0) {
-        diagnosis =
+        parts.push(
             "NO TESTS RAN — no [SYNAPSE-TEST] summary in the log. A green build does NOT mean tests ran. " +
             "Likely causes: the TestRunner mod isn't active/loaded-last, the base game is missing so RimWorld " +
-            "reset to safe mode, or the game hung on a dialog. " +
-            (configDrift.message ? `Drift check: ${configDrift.message} ` : "") +
-            "Check the first-pass env report and read_rimworld_log before trusting this result.";
-    } else if (configDrift.drifted || configDrift.baseGameMissing) {
-        diagnosis = configDrift.message;
+            "reset to safe mode, or the game hung on a dialog."
+        );
     }
+    if (configDrift.message) parts.push(`Drift check: ${configDrift.message}`);
+    parts.push(...crashDiagnosis);
+    if (parts.length) parts.push("Check the first-pass env report and read_rimworld_log before trusting this result.");
+    const diagnosis = parts.length ? parts.join(" ") : undefined;
 
-    // All three stages have to agree: the build produced binaries, the game got far enough to
-    // finish the suite, and the log carries no blocking entries and no shortfall in case count.
-    // A drifted config or an empty run is never a pass, even if the harness stages each returned ok.
+    // All three stages have to agree: the build produced binaries, the game got far enough to finish the
+    // suite, and the log carries no blocking entries and no shortfall in case count. A drifted config, an
+    // empty run, a collapse to vanilla, or a safe-mode recovery is never a pass — even if each harness
+    // stage returned ok.
     const ok = build?.ok === true && launch?.ok === true && log?.ok === true &&
-        testsSeen > 0 && !configDrift.drifted && !configDrift.baseGameMissing;
-    return { ok, stage: "complete", build, launch, log, configDrift, diagnosis };
+        testsSeen > 0 && !configDrift.drifted && !configDrift.baseGameMissing &&
+        !collapsedToVanilla && !recovered;
+    return { ok, stage: "complete", build, launch, log, configDrift, collapsedToVanilla, diagnosis };
 }
 
 function copyFolderRecursiveSync(source: string, target: string) {
