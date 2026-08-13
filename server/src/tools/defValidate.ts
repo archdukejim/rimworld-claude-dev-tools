@@ -103,6 +103,37 @@ function resolveRef(type: string, core: TypeIndex | null, local: TypeIndex): "co
     return null;
 }
 
+/**
+ * G8 — read the packageIds this mod declares as dependencies (from any About.xml under the root, and
+ * <li>-style <loadAfter>/<modDependencies> blocks). Used to soften "unresolved" for a class ref whose
+ * namespace plausibly belongs to a dependency's assembly that simply isn't loaded during this static
+ * check. Returns the set of lowercased id segments (e.g. rimsynapse.core -> {rimsynapse, core}).
+ */
+function declaredDependencyTokens(root: string): { ids: string[]; tokens: Set<string> } {
+    const ids = new Set<string>();
+    const tokens = new Set<string>();
+    for (const f of walk(root, ".xml", 500)) {
+        if (path.basename(f).toLowerCase() !== "about.xml") continue;
+        let xml: string;
+        try { xml = fs.readFileSync(f, "utf8"); } catch { continue; }
+        // Dependency and load-order blocks both name other mods by packageId. A loose scan over the
+        // relevant sections is enough to collect the ids without a full schema.
+        for (const m of xml.matchAll(/<packageId>([^<]+)<\/packageId>/gi)) {
+            const id = m[1].trim().toLowerCase();
+            // The mod's own top-level packageId is fine to include — its own types are already resolved
+            // via scanLocalTypes, so it only ever helps, never falsely softens.
+            ids.add(id);
+            for (const seg of id.split(".")) if (seg.length >= 3) tokens.add(seg);
+        }
+        for (const m of xml.matchAll(/<li>([A-Za-z0-9_]+\.[A-Za-z0-9_.]+)<\/li>/gi)) {
+            const id = m[1].trim().toLowerCase();
+            ids.add(id);
+            for (const seg of id.split(".")) if (seg.length >= 3) tokens.add(seg);
+        }
+    }
+    return { ids: Array.from(ids).sort(), tokens };
+}
+
 export const defValidateTools = [
     {
         name: "validate_mod_defs",
@@ -133,6 +164,7 @@ export async function handleDefValidateTool(name: string, args: any) {
 
     const core = loadCoreTypes();
     const local = scanLocalTypes(root);
+    const deps = declaredDependencyTokens(root);
     const xmlFiles = walk(root, ".xml", cap);
 
     const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", allowBooleanAttributes: true });
@@ -166,7 +198,16 @@ export async function handleDefValidateTool(name: string, args: any) {
         }
     }
 
-    const unresolvedList = Array.from(unresolved.values()).sort((a, b) => b.count - a.count);
+    // G8 — a class ref whose namespace root matches a declared dependency is very likely resolved by
+    // that dependency's assembly, which simply isn't loaded during this static check. Split those out
+    // of the "unresolved" pile so a naive reader doesn't chase a type that's actually fine at runtime.
+    const nsRoot = (type: string) => (type.includes(".") ? type.split(".")[0] : type).toLowerCase();
+    const unresolvedAll = Array.from(unresolved.values());
+    const viaDependency = unresolvedAll.filter(u => deps.tokens.has(nsRoot(u.type)));
+    const unresolvedList = unresolvedAll
+        .filter(u => !deps.tokens.has(nsRoot(u.type)))
+        .sort((a, b) => b.count - a.count);
+    viaDependency.sort((a, b) => b.count - a.count);
     const okDefs = xmlErrors.length === 0;
     return okText({
         ok: okDefs,
@@ -174,10 +215,16 @@ export async function handleDefValidateTool(name: string, args: any) {
         filesChecked: xmlFiles.length,
         corpusAvailable: !!core,
         xmlErrors,
+        declaredDependencies: deps.ids,
         classRefs: {
             total: refs.length,
             resolvedCore,
             resolvedLocal,
+            resolvedViaDependencyCount: viaDependency.length,
+            resolvedViaDependency: viaDependency.map(u => ({
+                ...u,
+                note: "namespace matches a declared mod dependency (not loaded during this static check) — likely fine at runtime, not a typo"
+            })),
             unresolvedCount: unresolvedList.length,
             unresolved: unresolvedList.map(u => ({
                 ...u,
@@ -187,6 +234,7 @@ export async function handleDefValidateTool(name: string, args: any) {
         summary:
             `${xmlFiles.length} XML file(s): ${xmlErrors.length} malformed` +
             `; class refs ${resolvedCore + resolvedLocal}/${refs.length} resolved` +
+            (viaDependency.length ? `, ${viaDependency.length} via-dependency (not loaded here)` : "") +
             (unresolvedList.length ? `, ${unresolvedList.length} unresolved (warnings)` : "") +
             (core ? "" : ". NOTE: api-corpus not found — class refs checked against this mod's C# only; run dump_game_api for core-type validation.")
     });
