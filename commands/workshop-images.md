@@ -45,6 +45,14 @@ PNGs on imgur and hands the links back.
     manifest. Draft-first — it generates local images only, never uploads or edits the description.
   - **Icon discovery:** `list_item_icons { filter? }` shows what the library holds; `resolve_item_icon
     { ref }` reports what a single ref resolves to — use it to confirm a defName before composing.
+  - **Feature-panel tile art:** each feature block's left tile is filled from `tile` — `{ glyph:"gear" }`
+    (built-in symbols: box, broom, backpack, venn, check, book, wrench, bolt, gear) or `{ image:"<path>" }`
+    (external / AI-generated art). Each tile is written as its own `<prefix>-tile-NN.png` and reused if it
+    already exists — the **override gate**: drop custom/AI art at that path (or `render_tile`) and it wins;
+    pass `regenerateTiles:true` to rebuild from the spec. `render_tile { glyph|image }` makes one on its own.
+  - **Screenshots go inline, not in the tile:** add an `{ type:"image", source:"<png>", caption? }` block
+    right after the feature it illustrates — it's framed full-width on the page background and merges in
+    with everything else. Capture gameplay with `capture_workshop_image` first, then reference the file.
 - Screenshots of the mod in action: bring RimWorld to the foreground on the content, confirm with
   `get_open_windows`, then `capture_workshop_image { name }`. Repeat per page.
 - Or process existing images/rendered pages with `make_workshop_image { source, name, crop?, maxWidth? }`.

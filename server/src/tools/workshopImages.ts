@@ -549,6 +549,132 @@ async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: 
     return { svg, resolved, unresolved };
 }
 
+/* ------------------------------------------------------------------------ *
+ * Feature-panel tile art + inline screenshot blocks.
+ *
+ * Each feature panel has a ~150px left tile. Fill it with a rendered GLYPH (a
+ * small built-in symbol set) or with EXTERNAL art (AI-generated / hand-made):
+ * the tile is written as its own PNG next to the page, and if that file already
+ * exists it is reused as-is — the "gate" where custom/AI art drops in, and what
+ * makes a page cheap to regenerate (swap one tile PNG, re-compose).
+ *
+ * Screenshots are NOT crammed into the tile — they go inline as their own
+ * full-width page blocks (type "image"/"screenshot"), placed right where the
+ * feature is described in the text.
+ * ------------------------------------------------------------------------ */
+
+const TILE_SIZE = 150;
+
+// Gear is built from 8 radial teeth; kept as a prebuilt string like the others.
+const GEAR_GLYPH = (() => {
+    let teeth = "";
+    for (let k = 0; k < 8; k++) {
+        const a = k * Math.PI / 4;
+        const x1 = 50 + 15 * Math.cos(a), y1 = 50 + 15 * Math.sin(a);
+        const x2 = 50 + 27 * Math.cos(a), y2 = 50 + 27 * Math.sin(a);
+        teeth += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="COL" stroke-width="7" stroke-linecap="round"/>`;
+    }
+    return `<circle cx="50" cy="50" r="15" fill="none" stroke="COL" stroke-width="6"/><circle cx="50" cy="50" r="5" fill="COL"/>${teeth}`;
+})();
+
+// On-brand line glyphs drawn in a 100x100 box; COL is replaced with a colour at render time.
+const TILE_GLYPHS: Record<string, string> = {
+    box: `<rect x="24" y="30" width="52" height="44" rx="3" fill="none" stroke="COL" stroke-width="6"/><path d="M24 46 H76 M50 30 V74" stroke="COL" stroke-width="5"/>`,
+    broom: `<line x1="66" y1="20" x2="44" y2="52" stroke="COL" stroke-width="6" stroke-linecap="round"/><path d="M32 52 H56 L62 80 H26 Z" fill="none" stroke="COL" stroke-width="6" stroke-linejoin="round"/><path d="M34 64 V80 M42 64 V80 M50 64 V80" stroke="COL" stroke-width="3"/>`,
+    backpack: `<rect x="30" y="36" width="40" height="42" rx="9" fill="none" stroke="COL" stroke-width="6"/><path d="M40 36 v-4 a10 10 0 0 1 20 0 v4" fill="none" stroke="COL" stroke-width="6"/><rect x="42" y="50" width="16" height="16" rx="3" fill="none" stroke="COL" stroke-width="4"/>`,
+    venn: `<circle cx="42" cy="52" r="17" fill="none" stroke="COL" stroke-width="6"/><circle cx="58" cy="52" r="17" fill="none" stroke="COL" stroke-width="6"/>`,
+    check: `<circle cx="50" cy="50" r="26" fill="none" stroke="COL" stroke-width="6"/><path d="M37 51 l9 9 l18 -20" fill="none" stroke="COL" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
+    book: `<path d="M50 32 C43 27 31 27 25 30 V72 C31 69 43 69 50 74 C57 69 69 69 75 72 V30 C69 27 57 27 50 32 Z" fill="none" stroke="COL" stroke-width="5" stroke-linejoin="round"/><path d="M50 32 V74" stroke="COL" stroke-width="4"/>`,
+    wrench: `<path d="M63 22 a16 16 0 0 0 -14 24 L26 69 a7 7 0 0 0 10 10 L59 56 a16 16 0 0 0 20 -22 l-11 11 l-9 -9 z" fill="none" stroke="COL" stroke-width="5" stroke-linejoin="round"/>`,
+    bolt: `<path d="M54 18 L28 54 H46 L42 82 L72 44 H52 Z" fill="none" stroke="COL" stroke-width="6" stroke-linejoin="round"/>`,
+    gear: GEAR_GLYPH,
+};
+const TILE_GLYPH_NAMES = Object.keys(TILE_GLYPHS);
+
+/** Render a 150px tile card: a rendered glyph, or an external art image sliced to fill. */
+function renderTileCardSvg(theme: InfographicTheme, opts: { glyph?: string; imageHref?: string }, size = TILE_SIZE): string {
+    let content = "";
+    if (opts.imageHref) {
+        content = `<image href="${opts.imageHref}" x="0" y="0" width="${size}" height="${size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#tileClip)"/>`;
+    } else if (opts.glyph && TILE_GLYPHS[opts.glyph]) {
+        const pad = Math.round(size * 0.22);
+        const g = size - 2 * pad;
+        content = `<g transform="translate(${pad},${pad}) scale(${(g / 100).toFixed(4)})">${TILE_GLYPHS[opts.glyph].replace(/COL/g, theme.head)}</g>`;
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+      <defs><clipPath id="tileClip"><rect width="${size}" height="${size}" rx="6"/></clipPath></defs>
+      <rect width="${size}" height="${size}" rx="6" fill="${theme.chip}" stroke="${theme.panelEdge}" stroke-width="2"/>
+      ${content}
+      <rect width="${size}" height="${size}" rx="6" fill="none" stroke="${theme.panelEdge}" stroke-width="2"/>
+    </svg>`;
+}
+
+/** A feature block's tile source: an external art file, or a built-in glyph name. */
+function normalizeTileSpec(block: any): { glyph?: string; image?: string } | null {
+    const t = block?.tile;
+    if (t && typeof t === "object") {
+        if (t.image) return { image: String(t.image) };
+        if (t.glyph) return { glyph: String(t.glyph) };
+    }
+    if (typeof t === "string" && t) {
+        return TILE_GLYPHS[t] ? { glyph: t } : { image: t };
+    }
+    return null;
+}
+
+async function fileExists(p: string): Promise<boolean> { try { await fsp.access(p); return true; } catch { return false; } }
+
+/**
+ * Ensure a feature block's tile PNG exists at `<outDir>/<tileName>`. Override gate: if the file is
+ * already there (custom / AI art), it is reused untouched unless `regen`. Otherwise it is rendered
+ * from the block's `tile` spec (glyph or external image). Returns the tile path, or null if there is
+ * nothing to draw (no spec and no existing file).
+ */
+async function ensureTilePng(block: any, outDir: string, tileName: string, theme: InfographicTheme, regen: boolean): Promise<string | null> {
+    const tilePath = path.join(outDir, tileName);
+    const exists = await fileExists(tilePath);
+    if (exists && !regen) return tilePath;
+    const spec = normalizeTileSpec(block);
+    if (!spec) return exists ? tilePath : null;
+    let imageHref: string | undefined;
+    if (spec.image) {
+        const uri = await fileToDataUri(spec.image);
+        if (!uri) return exists ? tilePath : null;
+        imageHref = uri;
+    }
+    const svg = renderTileCardSvg(theme, { glyph: spec.glyph, imageHref });
+    await saveSvgPng(svg, tileName, outDir);
+    return tilePath;
+}
+
+/** Render a full-width screenshot/image block: the image framed on the page background, + caption. */
+async function renderScreenshotSvg(source: string, theme: InfographicTheme, opts: { width?: number; caption?: string }): Promise<string | null> {
+    const S = sharp();
+    let meta: any;
+    try { meta = await S(source).metadata(); } catch { return null; }
+    const uri = await fileToDataUri(source);
+    if (!uri) return null;
+    const W = opts.width && opts.width > 0 ? Math.round(opts.width) : 800;
+    const pad = 12;
+    const innerW = W - pad * 2;
+    const ar = (meta.height || 1) / (meta.width || 1);
+    const imgH = Math.max(1, Math.round(innerW * ar));
+    const cap = opts.caption ? String(opts.caption) : "";
+    const capH = cap ? 30 : 0;
+    const H = pad * 2 + imgH + capH;
+    const capEl = cap
+        ? `<text x="${W / 2}" y="${pad + imgH + 21}" text-anchor="middle" font-family="${theme.serif}" font-style="italic" font-size="14" fill="${theme.flavor}">${xmlEsc(cap)}</text>`
+        : "";
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+      ${svgDefs(theme)}
+      <rect width="${W}" height="${H}" fill="url(#bg)"/>
+      ${contourTexture(W, H)}
+      <image href="${uri}" x="${pad}" y="${pad}" width="${innerW}" height="${imgH}" preserveAspectRatio="xMidYMid meet"/>
+      <rect x="${pad}" y="${pad}" width="${innerW}" height="${imgH}" fill="none" stroke="${theme.panelEdge}" stroke-width="2"/>
+      ${capEl}
+    </svg>`;
+}
+
 export const workshopImageTools = [
     {
         name: "capture_workshop_image",
@@ -687,10 +813,13 @@ export const workshopImageTools = [
             properties: {
                 blocks: {
                     type: "array",
-                    description: "Ordered page blocks. Each: { type:'header'|'feature', title, and for feature: flavor?, body?, rows?, requirements?, icon?, width?, height? } — same shape as render_workshop_infographic.",
+                    description: "Ordered page blocks. header: { type:'header', title }. feature: { type:'feature', title, flavor?, body?, rows?, requirements?, width?, height?, " +
+                        "tile? } where tile is the left-tile art — { glyph:'<name>' } (built-in: " + TILE_GLYPH_NAMES.join(", ") + ") or { image:'<path>' } (external/AI art), or a string (glyph name or file path). " +
+                        "image/screenshot: { type:'image', source:'<png path>', caption?, width? } — a full-width framed screenshot placed inline where a feature is described.",
                     items: { type: "object" }
                 },
                 accent: { type: "string", description: `Brand accent #rrggbb applied to every block (default ${DEFAULT_ACCENT}).` },
+                regenerateTiles: { type: "boolean", description: "Re-render tile art even if a tile PNG already exists (default false — existing tile files, e.g. dropped-in AI art, are reused untouched)." },
                 namePrefix: { type: "string", description: "Prefix for output file names, e.g. 'haulmod' → haulmod-01-header.png. Default 'page'." },
                 outDir: { type: "string", description: "Folder to write the tiles into (e.g. the mod's repo '<mod>/workshop-page'). Default the workshop-images folder." },
                 merge: { description: "Also stack the tiles into one tall image (one hosted URL for the whole page). true, or { chunks?, maxBytes?, maxHeight?, gap?, background? } to tune. By default auto-splits so each image stays under the 700 KB performance target; chunks:N forces N even halves.", oneOf: [{ type: "boolean" }, { type: "object", properties: { chunks: { type: "number" }, maxBytes: { type: "number" }, maxHeight: { type: "number" }, gap: { type: "number" }, background: { type: "string" } } }] },
@@ -728,6 +857,24 @@ export const workshopImageTools = [
                 searchWorkshop: { type: "boolean", description: "Also search the 294100 Workshop tree. Default false." }
             },
             required: ["ref"]
+        }
+    },
+    {
+        name: "render_tile",
+        description:
+            "Render one feature-panel tile card (150x150) as a PNG — from a built-in GLYPH or from an EXTERNAL art " +
+            "image (AI-generated / hand-made). Save it next to a page as <prefix>-tile-NN.png and compose_workshop_page " +
+            "picks it up via the override gate. Built-in glyphs: " + TILE_GLYPH_NAMES.join(", ") + ".",
+        inputSchema: {
+            type: "object",
+            properties: {
+                glyph: { type: "string", description: `A built-in glyph name: ${TILE_GLYPH_NAMES.join(", ")}.` },
+                image: { type: "string", description: "Path to an external art image (AI-generated / custom) to fit into the tile instead of a glyph." },
+                name: { type: "string", description: "Output file name without extension (e.g. 'haulmod-tile-02'). Generated if omitted." },
+                outDir: { type: "string", description: "Folder to write the tile PNG into. Default the workshop-images folder." },
+                accent: { type: "string", description: `Brand accent #rrggbb (default ${DEFAULT_ACCENT}).` },
+                size: { type: "number", description: `Tile size in px (default ${TILE_SIZE}).` }
+            }
         }
     },
     {
@@ -868,15 +1015,37 @@ export async function handleWorkshopImageTool(name: string, args: any) {
             const outDir = args?.outDir ? String(args.outDir) : imagesDir();
             const pages: any[] = [];
             const allUnresolved: string[] = [];
+            const regenTiles = !!args?.regenerateTiles;
             for (let i = 0; i < blocks.length; i++) {
-                const b = blocks[i] || {};
+                let b = blocks[i] || {};
                 const type = String(b?.type || "").toLowerCase();
-                if (type !== "header" && type !== "feature") return errText(`blocks[${i}].type must be 'header' or 'feature'.`);
+                const seq = String(i + 1).padStart(2, "0");
+
+                // Inline screenshot / image block: framed full-width on the page background.
+                if (type === "image" || type === "screenshot") {
+                    const src = String(b?.source || b?.image || "");
+                    if (!src) return errText(`blocks[${i}] (image) needs a 'source' file path.`);
+                    const svg = await renderScreenshotSvg(src, theme, { width: Number(b?.width) || 800, caption: b?.caption });
+                    if (!svg) return errText(`blocks[${i}] image not readable: ${src}`);
+                    const saved = await saveSvgPng(svg, `${prefix}-${seq}-image.png`, outDir);
+                    pages.push({ order: i + 1, type: "image", source: src, ...saved });
+                    continue;
+                }
+
+                if (type !== "header" && type !== "feature") return errText(`blocks[${i}].type must be 'header', 'feature', or 'image'.`);
                 if (!String(b?.title || "").trim()) return errText(`blocks[${i}].title is required.`);
+
+                // Feature tile art: render/reuse a separate tile PNG (glyph or external/AI art) via the gate.
+                let tileArt: string | undefined;
+                if (type === "feature") {
+                    const tilePath = await ensureTilePng(b, outDir, `${prefix}-tile-${seq}.png`, theme, regenTiles);
+                    if (tilePath) { b = { ...b, icon: tilePath }; tileArt = tilePath; }
+                }
+
                 const { svg, resolved, unresolved } = await renderInfographicSpec(b, theme, roots);
-                const outName = `${prefix}-${String(i + 1).padStart(2, "0")}-${type}.png`;
+                const outName = `${prefix}-${seq}-${type}.png`;
                 const saved = await saveSvgPng(svg, outName, outDir);
-                pages.push({ order: i + 1, type, title: b.title, ...saved, iconsResolved: Object.keys(resolved).length ? resolved : undefined });
+                pages.push({ order: i + 1, type, title: b.title, ...saved, tile: tileArt, iconsResolved: Object.keys(resolved).length ? resolved : undefined });
                 allUnresolved.push(...unresolved);
             }
 
@@ -936,6 +1105,29 @@ export async function handleWorkshopImageTool(name: string, args: any) {
                         : "Not found. Check the defName via list_item_icons, pass iconRoots at the mod's folder, set searchWorkshop:true, or run dump_item_icons." });
         } catch (e: any) {
             return errText(`Failed to resolve item icon: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "render_tile") {
+        const glyph = args?.glyph ? String(args.glyph) : "";
+        const image = args?.image ? String(args.image) : "";
+        if (!glyph && !image) return errText(`Provide 'glyph' (${TILE_GLYPH_NAMES.join(", ")}) or 'image' (a path to art).`);
+        if (glyph && !TILE_GLYPHS[glyph]) return errText(`Unknown glyph '${glyph}'. Built-in: ${TILE_GLYPH_NAMES.join(", ")}.`);
+        try {
+            const theme = buildTheme(args?.accent);
+            const size = Number(args?.size) > 0 ? Number(args.size) : TILE_SIZE;
+            let imageHref: string | undefined;
+            if (image) {
+                imageHref = (await fileToDataUri(image)) || undefined;
+                if (!imageHref) return errText(`Art image not found or unreadable: ${image}`);
+            }
+            const svg = renderTileCardSvg(theme, { glyph: glyph || undefined, imageHref }, size);
+            const outDir = args?.outDir ? String(args.outDir) : imagesDir();
+            const outName = safePngName(args?.name || (glyph ? `tile-${glyph}` : "tile"));
+            const res = await saveSvgPng(svg, outName, outDir);
+            return okText({ ok: true, ...res, folder: outDir, note: "Tile PNG saved. Reference it from a feature block's tile:{image} or let compose_workshop_page pick it up as <prefix>-tile-NN.png (override gate)." });
+        } catch (e: any) {
+            return errText(`Failed to render tile: ${e?.message || e}`);
         }
     }
 
