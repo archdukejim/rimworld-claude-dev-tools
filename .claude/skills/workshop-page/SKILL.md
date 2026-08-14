@@ -64,3 +64,21 @@ with the resulting URLs in order, show the final BBCode, **confirm again**, then
 The MCP registered. For Phase 5, Chrome with the Steam Workshop Helper extension and logged
 into Steam. For icon dumping, RimWorld running with the `archdukejim.rimagentic` harness at a
 live map. If a precondition is missing, say so and stop — don't guess.
+
+## Where to run this (central skill, per-mod target, outputs in the mod repo)
+This skill and the MCP live in the **dev-tools repo**; the mods are **separate content repos**.
+Don't copy the skill into each mod repo — that just drifts. The pattern:
+
+- **Run it from a dev-tools session.** That's the one place both this skill (`.claude/skills/`)
+  and the `rimworld-claude-dev-tools` MCP are guaranteed registered. (If you routinely work
+  *inside* a mod repo's own session and want the skill there too, install it at **user level**
+  `~/.claude/skills/workshop-page/` — but the dev-tools MCP still has to be registered in that
+  session, or the tools won't exist.)
+- **Point at the mod, don't move it.** Read the target mod's own `About/About.xml` for copy, and
+  resolve its own item icons with `iconRoots: ["<path to that mod's folder>"]`. The vanilla/DLC
+  icon library (`%LOCALAPPDATA%\RimAgentic\icons`) is **global** — populate it once with
+  `dump_item_icons`; every mod's page reuses it.
+- **Persist outputs into the mod's own repo.** Pass `outDir: "<mod>/workshop-page/"` to
+  `compose_workshop_page` so the numbered PNGs + manifest land next to the mod they advertise,
+  version-controlled and re-renderable — then commit them **in that mod's repo, on its own
+  branch/PR**, never in dev-tools. The `%LOCALAPPDATA%\RimAgentic\workshop-images` copy is scratch.
