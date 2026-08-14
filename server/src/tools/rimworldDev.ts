@@ -3,7 +3,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { execSync, spawn } from "child_process";
 import { loadConfig, getSaveDataFolder } from "../config";
-import { resolveInstalledMods, checkModlistDrift, ModlistDrift } from "./testing";
+import { resolveInstalledMods, checkModlistDrift, ModlistDrift, assertLaunchModlist } from "./testing";
 import { armGameWatchdog } from "../gameWatchdog";
 import { requestBridgeStatus, BridgeStatus } from "./gameIpc";
 
@@ -425,6 +425,10 @@ export const rimworldDevTools = [
                 readyTimeoutSec: {
                     type: "number",
                     description: "Max seconds to wait for the map to become live when waitForReady is on (default 120)."
+                },
+                allowUnsafeModlist: {
+                    type: "boolean",
+                    description: "Skip the pre-launch modlist gate. By default the launch REFUSES if the active modlist is missing the base game (ludeon.rimworld) or the toolkit bridge mod (archdukejim.rimagentic) — a game the agent can't drive/verify. Set true only for a deliberate vanilla/bare launch. Default false."
                 }
             }
         }
@@ -916,6 +920,14 @@ export async function runTestCycle(
     // a prior crash, this run would load vanilla, run nothing, exit fast, and look like a clean pass.
     const configDrift = checkModlistDrift(opts.savedatafolder);
 
+    // Pre-launch modlist gate — refuse to spend a whole test cycle on a modlist that can't run the
+    // suite: no base game (safe-mode reset) or no toolkit bridge (no TestRunner/IPC). Short-circuit
+    // with a clear diagnosis instead of launching into a guaranteed empty run.
+    const modlistGate = assertLaunchModlist(opts.savedatafolder);
+    if (modlistGate.blocking) {
+        return { ok: false, stage: "modlist", build, configDrift, diagnosis: modlistGate.message };
+    }
+
     const { launch, log } = await runStage(opts.savedatafolder, opts.timeoutSec || 420);
 
     // H1/H2 — the harness readlog.ps1 does its own classification, so enrich it with the TS-side
@@ -1117,6 +1129,27 @@ export async function handleRimworldDevTool(name: string, args: any) {
         const pidFilePath = path.join(__dirname, "..", "..", "dev_instance_pid.txt");
 
         let logs = `Launching RimWorld directly...\n`;
+
+        // PRE-LAUNCH MODLIST GATE — always fires, before we kill the running game or spawn a new one.
+        // A modlist missing the base game (safe-mode reset) or the archdukejim.rimagentic bridge (dead
+        // tool/debug channel) means the agent launched a game it cannot drive or verify — the exact
+        // "toolkit wasn't checked before launch" trap. Refuse unless the caller explicitly opts out
+        // with allowUnsafeModlist (a deliberate vanilla/bare launch). Placed first so a refusal never
+        // tears down whatever is already running.
+        if (args.allowUnsafeModlist !== true) {
+            const gate = assertLaunchModlist(savedata);
+            if (gate.blocking) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text",
+                        text: `${gate.message}\n(Active: ${gate.active.join(", ") || "none"})\n` +
+                            `Nothing was launched. Run configure_active_mods first, or re-call with allowUnsafeModlist:true.`
+                    }]
+                };
+            }
+            logs += gate.message + "\n";
+        }
 
         // Resolve loadSave (string slot | true = newest save) into a concrete save name to autoload.
         // The game side reads RIMAGENTIC_AUTOLOAD_SAVE at the main menu and loads it. Resuming a save
