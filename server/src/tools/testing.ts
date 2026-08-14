@@ -528,6 +528,50 @@ export function checkModlistDrift(savedata: string): ModlistDrift {
     return { hasFingerprint: true, drifted, baseGameMissing, expected: stored.mods || [], actual, message };
 }
 
+export interface LaunchModlistCheck {
+    /** Safe to launch as-is (no override needed). */
+    ok: boolean;
+    /** A hard problem that should refuse a launch unless explicitly overridden. */
+    blocking: boolean;
+    baseGameMissing: boolean;
+    toolkitMissing: boolean;
+    /** The modlist couldn't be read at all (no ModsConfig / empty). */
+    unreadable: boolean;
+    active: string[];
+    /** Human-readable summary, always set. */
+    message: string;
+}
+
+/**
+ * Pre-launch modlist gate — assert, BEFORE spawning the game, that the modlist RimWorld will load is
+ * one the agent can actually drive. Two things make a launch a waste:
+ *   - the base game (`ludeon.rimworld`) is absent → RimWorld resets to safe mode and loads vanilla;
+ *   - the toolkit bridge mod (`archdukejim.rimagentic`) is absent → no in-game tool/debug bridge, so
+ *     no `run_debug_action`/`execute_game_tool` works and the agent can neither drive nor verify the run.
+ * The second is the "the toolkit didn't get checked before launch" trap. Callers refuse a blocking
+ * result unless the user passes `allowUnsafeModlist:true` (a deliberate vanilla/bare launch).
+ */
+export function assertLaunchModlist(savedata: string): LaunchModlistCheck {
+    const configPath = path.join(savedata, "Config", "ModsConfig.xml");
+    const active = readActiveModsFromConfig(savedata); // lowercased, in order
+    const unreadable = !fs.existsSync(configPath) || active.length === 0;
+    const baseGameMissing = !unreadable && !active.includes(BASE_GAME_PACKAGE_ID);
+    const toolkitMissing = !unreadable && !active.some(id => TOOLKIT_PACKAGE_IDS.has(id));
+
+    const problems: string[] = [];
+    if (unreadable) problems.push(`no readable active modlist at ${configPath}`);
+    if (baseGameMissing) problems.push(`base game (${BASE_GAME_PACKAGE_ID}) is not active — RimWorld will reset to safe mode`);
+    if (toolkitMissing) problems.push(`the toolkit bridge mod (archdukejim.rimagentic) is not active — no in-game tool/debug bridge, so the agent cannot drive or verify the session`);
+
+    const blocking = unreadable || baseGameMissing || toolkitMissing;
+    const message = blocking
+        ? `PRE-LAUNCH MODLIST CHECK FAILED: ${problems.join("; ")}. ` +
+          `Run configure_active_mods first (it writes the base game + the toolkit bridge + your mods), ` +
+          `or pass allowUnsafeModlist:true to launch anyway (e.g. a deliberate vanilla/bare launch).`
+        : `Pre-launch modlist check OK: base game + toolkit bridge active (${active.length} mods).`;
+    return { ok: !blocking, blocking, baseGameMissing, toolkitMissing, unreadable, active, message };
+}
+
 export const testingTools = [
     {
         name: "create_testing_plan_issues",
@@ -548,7 +592,8 @@ export const testingTools = [
         inputSchema: {
             type: "object",
             properties: {
-                quicktest: { type: "boolean", description: "If true, restarts with -quicktest enabled. Defaults to true." }
+                quicktest: { type: "boolean", description: "If true, restarts with -quicktest enabled. Defaults to true." },
+                allowUnsafeModlist: { type: "boolean", description: "Skip the pre-launch modlist gate (base game + archdukejim.rimagentic toolkit bridge must be active). Set true only for a deliberate vanilla/bare relaunch. Default false." }
             }
         }
     },
@@ -816,6 +861,23 @@ export async function handleTestingTool(
         const config = loadConfig();
         const savedata = args.savedatafolder || config.savedatafolder || getSaveDataFolder();
         const pidFilePath = path.join(__dirname, "..", "..", "dev_instance_pid.txt");
+
+        // PRE-LAUNCH MODLIST GATE — same guard as launch_rimworld: don't tear down and relaunch into a
+        // modlist with no base game or no toolkit bridge, which the agent can't drive. Checked before
+        // the kill so a refusal leaves the current session intact. Override with allowUnsafeModlist.
+        if (args.allowUnsafeModlist !== true) {
+            const gate = assertLaunchModlist(savedata);
+            if (gate.blocking) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text",
+                        text: `${gate.message}\n(Active: ${gate.active.join(", ") || "none"})\n` +
+                            `The running game was left as-is. Run configure_active_mods first, or re-call with allowUnsafeModlist:true.`
+                    }]
+                };
+            }
+        }
 
         // 1. Safe Kill: terminate only tracked dev PID or processes running with custom savedatafolder
         let killMsg = "No active dev instance found to close.";

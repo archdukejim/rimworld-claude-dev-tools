@@ -10,6 +10,7 @@ regression" and the RP2 × R&T recovery cases) live in git history; the knowledg
 
 | Guard | What it does | Where |
 |---|---|---|
+| **Pre-launch modlist gate** | `launch_rimworld` / `launch_quicktest` / `restart_game` / `run_rimworld_tests` **refuse to launch** when the active modlist lacks the base game or the `archdukejim.rimagentic` toolkit bridge — a game the agent can't drive or verify. Override with `allowUnsafeModlist:true` for a deliberate vanilla/bare launch. | `tools/testing.ts` (`assertLaunchModlist`), `tools/rimworldDev.ts` |
 | **Base game mandatory** | `configure_active_mods` injects `ludeon.rimworld` when absent (any DLC implies it), reports the official block, and writes a modlist fingerprint. | `tools/testing.ts` |
 | **Modlist drift** | `checkModlistDrift` compares on-disk `ModsConfig.xml` to that fingerprint; launch + test runner warn before launching when RimWorld reset it to safe mode. | `tools/testing.ts`, `tools/rimworldDev.ts` |
 | **Deploy / loaded staleness** | Deploy reports whether the deployed assembly hash actually changed; launch warns when a real (non-symlink) deployed copy is older than the repo build. | `tools/rimworldDev.ts` |

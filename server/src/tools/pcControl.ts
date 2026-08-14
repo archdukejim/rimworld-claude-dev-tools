@@ -119,7 +119,8 @@ export const pcControlTools = [
         savedatafolder: { type: "string", description: "Optional override for -savedatafolder (ignored when bare). Defaults to the configured dev save folder — the same one configure_active_mods writes." },
         developer: { type: "boolean", description: "Force developer mode enabled (default: true)." },
         nosound: { type: "boolean", description: "Mute game audio via -nosound (default: true)." },
-        idleTimeoutMin: { type: "number", description: "Minutes with no MCP tool call before the idle watchdog closes the game, so it never runs unattended overnight. 0 disables it. Default: RIMAGENTIC_GAME_IDLE_TIMEOUT_MIN (30)." }
+        idleTimeoutMin: { type: "number", description: "Minutes with no MCP tool call before the idle watchdog closes the game, so it never runs unattended overnight. 0 disables it. Default: RIMAGENTIC_GAME_IDLE_TIMEOUT_MIN (30)." },
+        allowUnsafeModlist: { type: "boolean", description: "Skip the pre-launch modlist gate on the guarded path (passed through to launch_rimworld). By default a guarded launch REFUSES when the base game or the archdukejim.rimagentic toolkit bridge is not active. Ignored when bare:true (bare already bypasses config). Default false." }
       }
     }
   },
