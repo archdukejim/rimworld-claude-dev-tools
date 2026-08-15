@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Steam Workshop Helper",
-  "version": "0.3.1",
-  "description": "Programmatic API for managing Steam Workshop item descriptions, titles, and comments. Driven by Claude in Chrome or the local MCP server over a loopback bridge.",
+  "version": "0.4.0",
+  "description": "Programmatic API for managing Steam Workshop item descriptions, titles, and comments, plus tab-group hygiene for the RimAgentic Chrome profile. Driven by Claude in Chrome or the local MCP server over a loopback bridge.",
   "homepage_url": "https://github.com/archdukejim/steam-workshop-helper",
-  "permissions": ["storage", "cookies", "alarms", "tabs"],
+  "permissions": ["storage", "cookies", "alarms", "tabs", "tabGroups"],
   "host_permissions": [
     "https://steamcommunity.com/*",
     "https://api.steampowered.com/*",
