@@ -186,6 +186,26 @@
       "description": "Remove a stored showcase item by id (deletes the manifest entry and its JPEG)."
     },
     {
+      "name": "imgur_login",
+      "description": "Authorize this server against your imgur account (OAuth2) so generated images can be hosted for Steam Workshop descriptions, or store a bare Client-ID for anonymous uploads. Opens the browser, catches the loopback redirect, saves tokens to the local keyring."
+    },
+    {
+      "name": "imgur_status",
+      "description": "Report imgur auth state: active account or anonymous mode, access-token validity and expiry, remaining upload quota, and local ledger size."
+    },
+    {
+      "name": "imgur_upload",
+      "description": "Upload local images (explicit paths, or showcase items by mod/id) to imgur and return hosted URLs plus a ready-made {url, caption} list for compose_workshop_bbcode. Deduplicated by file content hash; supports albums."
+    },
+    {
+      "name": "imgur_list_uploads",
+      "description": "List images uploaded to imgur from this machine (link, id, deletehash, source file, caption, mod, album), filterable by mod or album."
+    },
+    {
+      "name": "imgur_delete",
+      "description": "Delete an uploaded imgur image by deletehash, id, or i.imgur.com link, and drop it from the local ledger. Irreversible."
+    },
+    {
       "name": "validate_mod_defs",
       "description": "Pre-launch Def check: reports malformed XML (file + line) and C# class references (Class=\"...\" / <*Class>) that don't resolve to a real type, validated against the api-corpus plus the mod's own C# — catches typos before a wasted launch cycle."
     },

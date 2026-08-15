@@ -94,10 +94,13 @@ either throw (Claude sees the error) or return an error string in `text`.
 ## Adding a new tool / tool family (checklist)
 
 1. Create `server/src/tools/<family>.ts` following the pattern above.
-2. Wire it into `server/src/index.ts` in **three** places:
+2. Wire it into `server/src/index.ts` in **four** places:
    - `import { <family>Tools, handle<Family>Tool } from "./tools/<family>";`
    - spread `...<family>Tools` into the `ALL_TOOLS` array.
-   - add a dispatch block: `if (<family>Tools.some(t => t.name === name)) return await handle<Family>Tool(name, args);`
+   - add a dispatch block to the `CallToolRequestSchema` handler (stdio):
+     `if (<family>Tools.some(t => t.name === name)) return await handle<Family>Tool(name, args);`
+   - add the **same branch to the SSE `app.post("/api/tools/:name")` chain** further down — it is a
+     separate `else if` ladder, and a family wired only into the stdio path 404s over SSE.
 3. If the tool needs a GitHub token, add its name to the `GITHUB_BACKED_TOOLS`
    set. Token is optional server-wide and checked per-call — non-GitHub families
    (RimWorld, pc-control, wiki, factions, psychology) must stay usable with no token.
@@ -118,7 +121,35 @@ loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
 curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
 `set_active_key`; multiple labelled keys per service, active-key resolution),
+`imgur` (host generated images for Workshop descriptions — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
+
+### Image hosting for Workshop descriptions (`imgur`)
+
+Steam BBCode embeds images by URL only, so nothing this server generates
+(`capture_*`, `render_workshop_infographic`, `merge_workshop_tiles`, the
+`showcase` gallery) is usable in a description until it's hosted. The pipeline is:
+
+```
+showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_bbcode → swh_update_description
+```
+
+- **One-time setup:** register an app at <https://api.imgur.com/oauth2/addclient>
+  ("OAuth 2 authorization with a callback URL", callback exactly
+  `http://localhost:8788/imgur/callback`), then `imgur_login { clientId, clientSecret }`.
+  It opens the browser, catches the loopback redirect, and stores tokens in the same
+  keyring as the GitHub PATs (service `imgur`, JSON blob; multiple accounts via `label`).
+  `imgur_login { clientId, anonymousOnly: true }` skips OAuth entirely — uploads then
+  aren't tied to an account and are only deletable via the deletehash in the local ledger.
+- **`imgur_upload` is idempotent** — it dedups on file *content* hash against a local ledger
+  (`%LOCALAPPDATA%\RimAgentic\imgur\uploads.json`), so rebuilding a workshop page reuses
+  existing links instead of burning imgur's daily quota. `force: true` overrides.
+- It returns a ready-made `bbcodeImages: [{url, caption}]` — pass it straight to
+  `compose_workshop_bbcode` as `images`. Uploading by `mod` pulls from the showcase gallery
+  and carries each item's caption through, so passing UI-test evidence becomes a description
+  with no manual step.
+- Tests: `cd server && npm run test:imgur` (stub API + temp `LOCALAPPDATA`; touches neither
+  imgur nor your real keyring). The OAuth round-trip itself isn't covered — it needs real credentials.
 
 ## Build / run
 
