@@ -122,7 +122,38 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
 `set_active_key`; multiple labelled keys per service, active-key resolution),
 `imgur` (host generated images for Workshop descriptions — see below),
+`chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
+
+### The RimAgentic Chrome (`chromeCtl`)
+
+`launch_chrome` starts a Chrome the agent owns, so browser-driven work never depends on the
+user having a browser open. Key facts, each of which cost a debugging cycle to establish:
+
+- **Dedicated profile**, `%LOCALAPPDATA%\RimAgentic\chrome-profile` — never the user's. Chrome
+  can't add a debugging port to an *already running* instance, so sharing the default profile
+  would mean the launcher only works when Chrome happens to be closed. Sessions persist, so you
+  sign into Steam/imgur there once.
+- **`--load-extension` is ignored by Chrome 137+** (anti-malware hardening) — and it fails
+  *silently*. The extension is installed over CDP via `Extensions.loadUnpacked`, which needs
+  `--enable-unsafe-extension-debugging` at launch and a **forward-slash** path (a Windows
+  backslash path returns "File path cannot be resolved"). This is per-session, so the launcher
+  re-installs on every launch — which also means the running extension is always current.
+- **Don't detect the extension by sniffing for any `chrome-extension://` service worker** —
+  Chrome runs its own component extensions and you'll get a false positive. Match the background
+  script path (`/src/background.js`), and treat the bridge connection as the real liveness signal:
+  MV3 service workers spin down when idle.
+- `close_chrome` only kills processes whose command line matches `--user-data-dir=<our profile>`
+  anchored at a word boundary — a bare substring match would also catch sibling profiles.
+
+**Tab groups** (`chrome_tabs`, `chrome_tidy`) are not a DevTools concept — `chrome.tabGroups` is
+extension-only — so they route through the loopback bridge to the service worker
+(`extension/src/tabs.js`, exposed as `tabsInventory` / `tabsTidy`). `chrome_tidy` is deliberately
+aggressive (closes duplicates + idle tabs, dissolves singleton/empty groups, regroups by site with
+stable names and colours, collapses inactive groups) because every tab in that profile belongs to
+automation. Guard rails: pinned, active, and `keep`-matching tabs are never closed, and one tab
+always survives. Run it at the end of any browser task. Tests: `npm run test:chrome` (needs a real
+browser; it self-launches).
 
 ### Image hosting for Workshop descriptions (`imgur`)
 
@@ -137,8 +168,12 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
 - **One-time setup:** register an app at <https://api.imgur.com/oauth2/addclient>
   ("OAuth 2 authorization with a callback URL", callback exactly
   `http://localhost:8788/imgur/callback`), then `imgur_login { clientId, clientSecret }`.
-  It opens the browser, catches the loopback redirect, and stores tokens in the same
+  It opens the consent page in the **RimAgentic Chrome** (launching it if needed — see
+  `chromeCtl` above), catches the loopback redirect, and stores tokens in the same
   keyring as the GitHub PATs (service `imgur`, JSON blob; multiple accounts via `label`).
+  A registered client id is unavoidable: imgur ships its web client id inside a webpack
+  bundle, so there is no registration-free upload path that isn't reverse-engineering
+  their site — don't go looking for one again.
   `imgur_login { clientId, anonymousOnly: true }` skips OAuth entirely — uploads then
   aren't tied to an account and are only deletable via the deletehash in the local ledger.
 - **`imgur_upload` is idempotent** — it dedups on file *content* hash against a local ledger

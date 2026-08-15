@@ -2,8 +2,8 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 import * as http from "http";
 import { createHash, randomBytes } from "crypto";
-import { execFile } from "child_process";
 import { addKey, getActiveKey, listKeys } from "../keystore";
+import { openUrl } from "./chromeCtl";
 
 /*
  * Imgur uploads — turn locally generated images into hosted URLs for Steam Workshop descriptions.
@@ -221,9 +221,10 @@ export const imgurTools = [
         name: "imgur_login",
         description:
             "Authorize this server against YOUR imgur account (OAuth2) so uploads land in your account and can be " +
-            "albumed/managed — or store a bare Client-ID for anonymous uploads. Opens your browser to imgur's consent " +
-            "page, catches the redirect on a loopback port, and saves the tokens to the local keyring (never shown in " +
-            "chat, never committed); the refresh token is reused automatically so this is a one-time step. " +
+            "albumed/managed — or store a bare Client-ID for anonymous uploads. Opens imgur's consent page in the " +
+            "RimAgentic Chrome (launching it if needed, so you don't have to open a browser), catches the redirect on a " +
+            "loopback port, and saves the tokens to the local keyring (never shown in chat, never committed); the " +
+            "refresh token is reused automatically so this is a one-time step. " +
             "FIRST TIME: register an app at https://api.imgur.com/oauth2/addclient — pick 'OAuth 2 authorization with " +
             "a callback URL' and set the callback to exactly http://localhost:8788/imgur/callback — then pass the " +
             "clientId + clientSecret it gives you. Supports multiple accounts via `label` (switch with set_active_key).",
@@ -432,8 +433,11 @@ function awaitCallback(port: number, state: string, authUrl: string): Promise<st
 
         // 127.0.0.1 only — nothing is exposed to the network, same posture as the Steam bridge.
         server.listen(port, "127.0.0.1", () => {
-            execFile("cmd", ["/c", "start", "", authUrl.replace(/&/g, "^&")], { windowsHide: true }, err => {
-                if (err) console.error("[imgur] couldn't open a browser automatically:", err.message);
+            // Consent goes through the RimAgentic Chrome (launching it if it isn't up) so the user
+            // never has to open a browser themselves, and so the imgur session lands in the same
+            // profile the browser-driven tools use. Falls back to the default browser.
+            openUrl(authUrl).then(r => {
+                if (!r.ok) console.error("[imgur] couldn't open a browser automatically:", r.error);
             });
         });
     });

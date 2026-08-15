@@ -206,6 +206,26 @@
       "description": "Delete an uploaded imgur image by deletehash, id, or i.imgur.com link, and drop it from the local ledger. Irreversible."
     },
     {
+      "name": "launch_chrome",
+      "description": "Launch (or reuse) the RimAgentic Chrome instance on its own profile with the repo extension installed over CDP and remote debugging enabled, so browser-driven tools work without you opening a browser. Never touches your normal Chrome profile."
+    },
+    {
+      "name": "chrome_status",
+      "description": "Report the RimAgentic Chrome instance: running state, debugging port, pids, whether the extension's service worker is alive, bridge connectivity, and the current tab list."
+    },
+    {
+      "name": "close_chrome",
+      "description": "Close the RimAgentic Chrome instance — only processes running against its dedicated profile, never your normal windows."
+    },
+    {
+      "name": "chrome_tabs",
+      "description": "List the RimAgentic Chrome instance's tabs and tab groups (title, colour, collapsed state, members), plus ungrouped tabs and duplicate URLs. Read-only."
+    },
+    {
+      "name": "chrome_tidy",
+      "description": "Aggressively tidy the RimAgentic Chrome tabs and groups: close duplicates and idle tabs, dissolve singleton/empty groups, re-group survivors by site with stable names, and collapse inactive groups. Supports dryRun."
+    },
+    {
       "name": "validate_mod_defs",
       "description": "Pre-launch Def check: reports malformed XML (file + line) and C# class references (Class=\"...\" / <*Class>) that don't resolve to a real type, validated against the api-corpus plus the mod's own C# — catches typos before a wasted launch cycle."
     },

@@ -24,6 +24,7 @@ import { perfTools, handlePerfTool } from "./tools/perf";
 import { workshopImageTools, handleWorkshopImageTool } from "./tools/workshopImages";
 import { showcaseTools, handleShowcaseTool } from "./tools/showcase";
 import { imgurTools, handleImgurTool } from "./tools/imgur";
+import { chromeCtlTools, handleChromeCtlTool } from "./tools/chromeCtl";
 import { defValidateTools, handleDefValidateTool } from "./tools/defValidate";
 import { defCorpusTools, handleDefCorpusTool } from "./tools/defCorpus";
 import { corpusRegistryTools, handleCorpusRegistryTool } from "./tools/corpusRegistry";
@@ -79,6 +80,7 @@ const ALL_TOOLS = [
     ...workshopImageTools,
     ...showcaseTools,
     ...imgurTools,
+    ...chromeCtlTools,
     ...defValidateTools,
     ...defCorpusTools,
     ...corpusRegistryTools,
@@ -170,6 +172,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (imgurTools.some(t => t.name === name)) {
         return await handleImgurTool(name, args);
+    }
+
+    // Chrome launcher + tab-group hygiene. Tab/group calls need the extension, so the bridge is passed
+    // through; launch/status/close work with or without it.
+    if (chromeCtlTools.some(t => t.name === name)) {
+        return await handleChromeCtlTool(name, args, bridge);
     }
 
     if (defValidateTools.some(t => t.name === name)) {
@@ -359,6 +367,8 @@ async function main() {
                     result = await handleShowcaseTool(name, args);
                 } else if (imgurTools.some(t => t.name === name)) {
                     result = await handleImgurTool(name, args);
+                } else if (chromeCtlTools.some(t => t.name === name)) {
+                    result = await handleChromeCtlTool(name, args, bridge);
                 } else if (defValidateTools.some(t => t.name === name)) {
                     result = await handleDefValidateTool(name, args);
                 } else if (defCorpusTools.some(t => t.name === name)) {
