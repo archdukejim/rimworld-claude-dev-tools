@@ -55,7 +55,11 @@ The server is TypeScript, compiled to `server/build/`, and also packaged as an
 - `docs/` — `API.md` (Steam Workshop `window.SWH` API), `MCP-PHASE2.md`,
   `SCHEDULING.md`, `COMMENT-TRIAGE.md`, `CLAUDE-USAGE.md`.
 - `extension/` — the Steam Workshop Helper browser extension.
-- `.claude/skills/` — includes `steam-comment-triage`.
+- `.claude/skills/` — includes `steam-comment-triage`, `ui-test`, `workshop-page`.
+- `.claude/agents/` — project subagents. `rimworld-isolation-tester` proves a specific
+  *gameplay behavior* fires in a controlled in-game environment (precondition gate →
+  `perf_watch` funnel → verdict). Use it for "does X actually work in-game / why isn't
+  X firing", not for load-time or compile checks.
 
 ## Tool-family pattern (the important convention)
 
