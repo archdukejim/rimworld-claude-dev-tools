@@ -928,6 +928,28 @@ export async function runTestCycle(
         return { ok: false, stage: "modlist", build, configDrift, diagnosis: modlistGate.message };
     }
 
+    // G6 (test-cycle) — buildStage wrote fresh binaries to each repo's Assemblies/, but the game loads
+    // from the Mods/ folder, and nothing between build and launch deploys them. A real (non-junction)
+    // deployed copy that byte-differs from the fresh build means the suite would run a STALE binary: a
+    // green build, and even a full [SYNAPSE-TEST] summary, would reflect code you did NOT just build —
+    // the trap that silently ran a days-old TestRunner while the fix sat unbuilt in Mods, and can pass
+    // every stage while your new cases never execute (a false green). Fail closed and name the redeploy
+    // BEFORE spending a launch cycle. Junctioned copies are the repo itself and are skipped. This mirrors
+    // the same check the standalone launch_rimworld handler already runs, which the test cycle bypassed.
+    let staleDeploy = "";
+    try { staleDeploy = deployedStalenessWarnings(loadConfig().rimworldModsDir); }
+    catch { /* best-effort; a config-read failure must never block a run */ }
+    if (staleDeploy) {
+        return {
+            ok: false, stage: "stale-deploy", build, configDrift,
+            diagnosis:
+                "STALE DEPLOYED BINARY — the game would load a Mods/ copy that differs from the freshly " +
+                "built repo assemblies, so the suite would run code you did not just build (a green build " +
+                "here is not evidence your change ran). Deploy the repo(s) to the game's Mods folder with " +
+                "deploy_rimworld_mods and re-run.\n" + staleDeploy
+        };
+    }
+
     const { launch, log } = await runStage(opts.savedatafolder, opts.timeoutSec || 420);
 
     // H1/H2 — the harness readlog.ps1 does its own classification, so enrich it with the TS-side

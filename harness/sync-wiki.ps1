@@ -47,12 +47,28 @@ foreach ($mod in $targets) {
     $clone = Join-Path $work $name
     if (Test-Path $clone) { Remove-Item $clone -Recurse -Force }
 
-    # SSH, matching how the mod repos authenticate — an HTTPS wiki clone pushes to a
-    # credential prompt that cannot be answered non-interactively.
-    $null = git clone --quiet "git@github.com:RimSynapse/$name.wiki.git" $clone 2>&1
+    # Clone the wiki. CI runners have no SSH key, so prefer HTTPS with a PAT
+    # (WIKI_PAT, falling back to GH_TOKEN / GITHUB_TOKEN) which authenticates
+    # non-interactively; fall back to SSH for local runs where a key is present.
+    # The token is only ever embedded in the throwaway clone's remote URL and the
+    # clone output is discarded, so it is never printed. The same URL carries the
+    # push credential below, so no separate auth step is needed.
+    $pat = @($env:WIKI_PAT, $env:GH_TOKEN, $env:GITHUB_TOKEN) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+    $wikiUrl = if ($pat) {
+        "https://x-access-token:$pat@github.com/RimSynapse/$name.wiki.git"
+    } else {
+        "git@github.com:RimSynapse/$name.wiki.git"
+    }
+    git clone --quiet $wikiUrl $clone 2>&1 | Out-Null
+    # A failed clone leaves a non-zero $LASTEXITCODE; clear it so it cannot leak into
+    # this script's exit status (GitHub's pwsh wrapper exits the step with $LASTEXITCODE).
+    # Failure is detected by the missing .git dir below instead.
+    $global:LASTEXITCODE = 0
     if (-not (Test-Path (Join-Path $clone '.git'))) {
-        # GitHub does not create the wiki repo until the first page exists.
-        $skipped += @{ repo=$name; reason='wiki not initialised — create a first page in the GitHub UI, then re-run' }
+        # GitHub creates the wiki repo only after the first page exists; a missing
+        # credential lands here too, so name both causes.
+        $skipped += @{ repo=$name; reason='wiki clone failed — wiki not initialised, or no wiki credentials (set WIKI_PAT)' }
         continue
     }
 
@@ -108,4 +124,8 @@ foreach ($mod in $targets) {
 
 $ok = ($problems.Count -eq 0)
 RS-Json @{ ok=$ok; synced=$synced; skipped=$skipped; problems=$problems }
+# Exit explicitly on the success path too: a git call earlier (e.g. a failed wiki
+# clone) can leave $LASTEXITCODE non-zero, and GitHub's pwsh wrapper would otherwise
+# fail the step on that stale code even though nothing is actually wrong.
 if (-not $ok) { exit 1 }
+exit 0
