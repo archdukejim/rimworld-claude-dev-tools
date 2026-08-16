@@ -4,6 +4,7 @@ import * as http from "http";
 import { createHash, randomBytes } from "crypto";
 import { addKey, getActiveKey, listKeys } from "../keystore";
 import { openUrl } from "./chromeCtl";
+import { sharp } from "./pc/native";
 
 /*
  * Imgur uploads — turn locally generated images into hosted URLs for Steam Workshop descriptions.
@@ -124,7 +125,9 @@ async function authorize(anonymous: boolean): Promise<{ header: string; mode: "a
     if (!creds) {
         throw new Error(
             "No imgur credentials stored. Run imgur_login (see its description for the 60-second app registration), " +
-            "or imgur_login { clientId, anonymousOnly: true } for anonymous uploads with no account."
+            "or imgur_login { clientId, anonymousOnly: true } for anonymous uploads with no account. " +
+            "Do NOT fall back to driving the imgur website in a browser — its drag-drop upload UI is agent-hostile; " +
+            "fix the credentials and use imgur_upload."
         );
     }
     if (!anonymous && creds.refreshToken) {
@@ -275,16 +278,40 @@ export const imgurTools = [
     {
         name: "imgur_list_uploads",
         description:
-            "List images this server has uploaded to imgur (the local ledger): link, imgur id, deletehash, source file, " +
-            "caption, mod, album, and when. Filter by mod or album. This is the record of what a Workshop description " +
-            "points at — and the only way to recover an anonymous upload's deletehash. Read-only.",
+            "List images this server has uploaded to imgur (the local ledger): direct .link, imgur id, deletehash, " +
+            "source file + filename, dimensions, byte size, caption, mod, album, and upload time. Filter by mod or " +
+            "album, or free-text `search` across filename/caption/title/link/id. This is the ZERO-NETWORK way to " +
+            "recover the direct URL of anything uploaded through imgur_upload — check here (or imgur_resolve) before " +
+            "fetching any imgur page. Also the only way to recover an anonymous upload's deletehash. Read-only.",
         inputSchema: {
             type: "object",
             properties: {
                 mod: { type: "string", description: "Only uploads tagged with this mod." },
                 album: { type: "string", description: "Only uploads filed under this album id or title." },
+                search: { type: "string", description: "Case-insensitive substring match across filename, source path, caption, title, link, and imgur id." },
                 limit: { type: "number", description: "Max rows to return, newest first (default 50)." }
             }
+        }
+    },
+    {
+        name: "imgur_resolve",
+        description:
+            "Turn ANY imgur reference — album URL, gallery URL, image page URL, direct i.imgur.com URL, or bare " +
+            "hash — into direct, embeddable full-size image URLs. Resolution order: the local upload ledger " +
+            "(zero network calls when the image went through imgur_upload), then the imgur API (authoritative — " +
+            "full-size links plus width/height for free), then an HTML scrape with a browser User-Agent (imgur " +
+            "403s some default agents) with mandatory normalisation: strip query strings, strip the one-char " +
+            "resize suffix (an 8-char hash ending in s/b/t/m/l/h is a resized variant of its first 7 chars — " +
+            "never blind-strip), prefer .png over the re-encoded .jpg, dedup by base hash. NEVER hand-roll this " +
+            "with a page fetch: scrapes surface thumbnail variants first, and WebFetch is blocked for imgur.com " +
+            "in this harness. Read-only.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                ref: { type: "string", description: "Album URL, gallery URL, image page URL, direct URL, or bare imgur hash." },
+                verify: { type: "boolean", description: "For scraped results, GET each candidate and return real dimensions/bytes/format — catches a silently downscaled or re-encoded upload before it reaches a published page (default true). Ledger/API hits already carry dimensions and skip this." }
+            },
+            required: ["ref"]
         }
     },
     {
@@ -310,6 +337,7 @@ export async function handleImgurTool(name: string, args: any) {
     if (name === "imgur_status") return await status();
     if (name === "imgur_upload") return await upload(args || {});
     if (name === "imgur_list_uploads") return await listUploads(args || {});
+    if (name === "imgur_resolve") return await resolveRef(args || {});
     if (name === "imgur_delete") return await deleteImage(args || {});
     throw new Error(`Unknown imgur tool: ${name}`);
 }
@@ -619,18 +647,185 @@ async function listUploads(args: any) {
     const modKey = args.mod ? String(args.mod).toLowerCase() : null;
     const albumKey = args.album ? String(args.album).toLowerCase() : null;
     const albumId = albumKey ? (ledger.albums[albumKey]?.id ?? String(args.album)) : null;
+    const q = args.search ? String(args.search).toLowerCase() : null;
     const limit = Number(args.limit) > 0 ? Math.round(Number(args.limit)) : 50;
 
     const rows = ledger.uploads
         .filter(u => !modKey || String(u.mod || "").toLowerCase() === modKey)
         .filter(u => !albumId || u.album === albumId)
+        .filter(u => !q || [u.source, u.link, u.id, u.caption, u.title, u.mod, path.basename(u.source || "")]
+            .some(v => v && String(v).toLowerCase().includes(q)))
         .slice()
         .reverse()
-        .slice(0, limit);
+        .slice(0, limit)
+        .map(u => ({ filename: path.basename(u.source || ""), ...u }));
 
     return okText({
         count: rows.length, total: ledger.uploads.length, ledger: ledgerPath(),
         albums: Object.values(ledger.albums), uploads: rows
+    });
+}
+
+// ---------------------------------------------------------------------------- imgur_resolve
+
+/* Turn any imgur reference into direct, embeddable image URLs. Agents kept hand-rolling this
+ * with an HTML scrape and shipping the thumbnail variant; this encodes the whole resolution
+ * order — ledger (zero network) -> API (authoritative) -> scrape + normalise (+ verify). */
+
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+const RESIZE_SUFFIXES = "sbtmlh"; // s=90² b=160² t=160² m=320² l=640² h=1024²
+
+/** Strip imgur's one-char resize suffix. Hashes are 7 chars (8 with a suffix), so only an
+ *  8-char hash ending in [sbtmlh] is a variant of its first 7 — never blind-strip the last
+ *  character, a legitimate 7-char hash may itself end in one of those letters. */
+function imgurBaseHash(h: string): string {
+    return h.length === 8 && RESIZE_SUFFIXES.includes(h[h.length - 1]) ? h.slice(0, 7) : h;
+}
+
+interface ResolvedImage { url: string; hash: string; width?: number; height?: number; bytes?: number; format?: string; }
+
+/** Classify a ref: album/gallery page, image (page or direct link), or a bare ambiguous hash. */
+function parseImgurRef(raw: string): { kind: "album" | "image" | "hash"; hash: string } | null {
+    const s = raw.trim();
+    if (/^[A-Za-z0-9]{5,10}$/.test(s)) return { kind: "hash", hash: s };
+    let u: URL;
+    try { u = new URL(s.includes("://") ? s : `https://${s}`); } catch { return null; }
+    if (!/(^|\.)imgur\.com$/i.test(u.hostname)) return null;
+    const segs = u.pathname.split("/").filter(Boolean);
+    if (!segs.length) return null;
+    // Query strings (og:image often ends "?fb") die here: we only ever look at the pathname.
+    const token = segs[segs.length - 1].replace(/\.[A-Za-z0-9]+$/, "");
+    const id = token.split("-").pop() || token; // "/a/slug-title-hash" -> trailing token
+    if (!/^[A-Za-z0-9]{5,10}$/.test(id)) return null;
+    if (segs[0] === "a" || segs[0] === "gallery" || segs[0] === "t") return { kind: "album", hash: id };
+    if (/^i\./i.test(u.hostname)) return { kind: "image", hash: imgurBaseHash(id) };
+    return { kind: "image", hash: id };
+}
+
+/** GET a direct i.imgur.com URL and report its real dimensions/bytes/format. */
+async function verifyDirect(url: string): Promise<ResolvedImage> {
+    const res = await fetch(url, { headers: { "User-Agent": BROWSER_UA } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const out: ResolvedImage = {
+        url,
+        hash: url.match(/i\.imgur\.com\/([A-Za-z0-9]+)/)?.[1] || "",
+        bytes: buf.length,
+        format: (res.headers.get("content-type") || "").replace(/^image\//, "") || undefined
+    };
+    try {
+        const meta = await sharp()(buf).metadata();
+        out.width = meta.width; out.height = meta.height;
+        out.format = meta.format || out.format;
+    } catch { /* sharp unavailable — header format + bytes still stand */ }
+    return out;
+}
+
+async function resolveRef(args: any) {
+    const ref = String(args.ref || "").trim();
+    if (!ref) return errText("'ref' is required — an album/gallery/image-page/direct URL or a bare imgur hash.");
+    const verify = args.verify !== false;
+    const parsed = parseImgurRef(ref);
+    if (!parsed) return errText(`Not an imgur reference: ${ref}`);
+
+    // 1) Local ledger — zero network calls for anything uploaded through imgur_upload.
+    //    Dimensions were recorded from imgur's API response at upload time.
+    const ledger = await readLedger();
+    const fmtOf = (link: string) => link.match(/\.([A-Za-z0-9]+)$/)?.[1]?.toLowerCase();
+    const ledgerHits = ledger.uploads.filter(u => {
+        const linkHash = u.link?.match(/i\.imgur\.com\/([A-Za-z0-9]+)/)?.[1];
+        return u.id === parsed.hash || (linkHash && imgurBaseHash(linkHash) === parsed.hash) || u.album === parsed.hash;
+    });
+    if (ledgerHits.length) {
+        return okText({
+            source: "ledger",
+            albumId: parsed.kind === "album" ? parsed.hash : ledgerHits[0].album,
+            images: ledgerHits.map(u => ({ url: u.link, hash: u.id, width: u.width, height: u.height, bytes: u.bytes, format: fmtOf(u.link || "") })),
+            note: "Resolved from the local upload ledger — zero network calls."
+        });
+    }
+
+    // 2) imgur API — authoritative: full-size links, no thumbnail ambiguity, dimensions for free.
+    let apiErr: string | undefined;
+    try {
+        const { header } = await authorize(true); // Client-ID is enough for read endpoints
+        const tryAlbum = async () => (await imgurCall(`/3/album/${encodeURIComponent(parsed.hash)}/images`, { method: "GET", header })).json?.data;
+        const tryImage = async () => (await imgurCall(`/3/image/${encodeURIComponent(parsed.hash)}`, { method: "GET", header })).json?.data;
+        let data: any = null;
+        let albumId: string | undefined;
+        if (parsed.kind === "album") {
+            try { data = await tryAlbum(); albumId = parsed.hash; }
+            catch { data = await tryImage(); }
+        } else {
+            try { data = await tryImage(); }
+            catch { data = await tryAlbum(); albumId = parsed.hash; } // bare hashes are ambiguous
+        }
+        const arr: any[] = Array.isArray(data) ? data : (data ? [data] : []);
+        if (arr.length) {
+            return okText({
+                source: "api",
+                albumId,
+                images: arr.map(d => ({
+                    url: d.link, hash: d.id, width: d.width, height: d.height, bytes: d.size,
+                    format: String(d.type || "").replace(/^image\//, "") || undefined
+                })),
+                note: "Resolved via the imgur API — links are authoritative full-size URLs."
+            });
+        }
+        apiErr = "the API returned no images for this ref";
+    } catch (e: any) {
+        apiErr = e?.message || String(e);
+    }
+
+    // 3) HTML scrape fallback (no credentials / API refused). Browser UA — imgur 403s some
+    //    default agents. The scrape surfaces thumbnails first, so normalisation is mandatory.
+    const pageUrl = ref.includes("://") && !/i\.imgur\.com/i.test(ref) ? ref.split("?")[0]
+        : parsed.kind === "album" ? `https://imgur.com/a/${parsed.hash}`
+            : `https://imgur.com/${parsed.hash}`;
+    let hashes: string[] = [];
+    let scrapeErr: string | undefined;
+    try {
+        const res = await fetch(pageUrl, { headers: { "User-Agent": BROWSER_UA, Accept: "text/html" } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const html = await res.text();
+        const found = new Set<string>();
+        for (const m of html.matchAll(/(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/g)) found.add(m[1]);
+        for (const m of html.matchAll(/content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image|twitter:image)["']/g)) found.add(m[1]);
+        for (const m of html.matchAll(/https?:\/\/i\.imgur\.com\/[A-Za-z0-9]+\.(?:png|jpe?g|gif|webp)/g)) found.add(m[0]);
+        // NORMALISE: strip query -> extract hash -> strip resize suffix -> dedup by base hash.
+        const seen = new Set<string>();
+        for (const u of found) {
+            const mm = u.split("?")[0].match(/i\.imgur\.com\/([A-Za-z0-9]+)\.[A-Za-z0-9]+$/);
+            if (mm) seen.add(imgurBaseHash(mm[1]));
+        }
+        hashes = [...seen];
+    } catch (e: any) {
+        scrapeErr = e?.message || String(e);
+    }
+    if (!hashes.length) {
+        return errText(`Could not resolve ${ref}. API: ${apiErr}. Scrape of ${pageUrl}: ${scrapeErr || "no i.imgur.com images found in the page"}.`);
+    }
+
+    // Prefer .png over .jpg for the same hash — imgur serves both and the JPEG is re-encoded.
+    let images: ResolvedImage[] = hashes.map(h => ({ url: `https://i.imgur.com/${h}.png`, hash: h }));
+    if (verify) {
+        const verified: ResolvedImage[] = [];
+        const dead: string[] = [];
+        for (const im of images) {
+            try { verified.push(await verifyDirect(im.url)); }
+            catch (e: any) { dead.push(`${im.url} (${e?.message || e})`); }
+        }
+        if (!verified.length) return errText(`Scrape found ${images.length} candidate(s) but none verified: ${dead.join("; ")}`);
+        images = verified;
+        return okText({
+            source: "scrape", albumId: parsed.kind === "album" ? parsed.hash : undefined, images,
+            ...(dead.length ? { unverified: dead } : {}),
+            note: "Resolved by scraping + normalising; each URL was fetched and its real dimensions measured."
+        });
+    }
+    return okText({
+        source: "scrape", albumId: parsed.kind === "album" ? parsed.hash : undefined, images,
+        note: "Resolved by scraping + normalising (verify:false — dimensions not checked)."
     });
 }
 

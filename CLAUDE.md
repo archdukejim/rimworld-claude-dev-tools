@@ -183,6 +183,15 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   `compose_workshop_bbcode` as `images`. Uploading by `mod` pulls from the showcase gallery
   and carries each item's caption through, so passing UI-test evidence becomes a description
   with no manual step.
+- **Never drive the imgur website in a browser to upload** — its drag-drop UI is agent-hostile
+  and every attempt has failed. If `imgur_upload` reports missing credentials, fix that
+  (`imgur_login`), don't fall back to the browser.
+- **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
+  into direct full-size image URLs: local ledger first (zero network for anything uploaded via
+  `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings
+  and the one-char resize suffix, prefers .png, dedups by base hash, optionally verifies real
+  dimensions). Never hand-roll this with a page fetch — scrapes surface thumbnails first, and
+  WebFetch is blocked for imgur.com.
 - Tests: `cd server && npm run test:imgur` (stub API + temp `LOCALAPPDATA`; touches neither
   imgur nor your real keyring). The OAuth round-trip itself isn't covered — it needs real credentials.
 
