@@ -14,6 +14,28 @@ function Test-IsModFolder {
     return ($Dir -and (Test-Path (Join-Path $Dir 'About\About.xml')))
 }
 
+# The tooling repo (this checkout) is NOT a mod workspace, even though it looks like one.
+#
+# The generic-toolkit pivot added game-mod\ — the RimAgentic toolkit, a real mod with a real
+# About\About.xml — inside this repo. That made the upward walk below stop here: "a folder with a mod
+# child" describes the workspace AND describes this repo. Every gate then inspected a single phantom
+# mod named after its folder ("game-mod") and never saw Core, Factions or the other ten. Recognise
+# this repo by its own tooling and walk past it; -Root still wins if you genuinely mean to target it.
+function Test-IsToolingRepo {
+    param([string]$Dir)
+    return ($Dir -and
+            (Test-Path (Join-Path $Dir 'harness\lib.ps1')) -and
+            (Test-Path (Join-Path $Dir 'server\package.json')))
+}
+
+function Test-IsWorkspace {
+    param([string]$Dir)
+    if (-not $Dir -or (Test-IsToolingRepo $Dir)) { return $false }
+    return [bool](Get-ChildItem $Dir -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { Test-IsModFolder $_.FullName } |
+                  Select-Object -First 1)
+}
+
 function Resolve-WorkspaceRoot {
     param([string]$Root)
 
@@ -36,16 +58,44 @@ function Resolve-WorkspaceRoot {
         return $resolved
     }
 
-    # Walk upward for a workspace, or for a single repo that is itself a mod.
+    # Walk upward for a workspace, or for a single repo that is itself a mod, stepping over this
+    # tooling checkout (see Test-IsToolingRepo) so its bundled game-mod can't masquerade as one.
+    $toolingRepo = $null
     $dir = $PSScriptRoot
     for ($i = 0; $i -lt 4 -and $dir; $i++) {
-        if (Test-IsModFolder $dir) { return $dir }
-        if (Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-IsModFolder $_.FullName }) { return $dir }
+        if (Test-IsToolingRepo $dir) {
+            $toolingRepo = $dir
+        } else {
+            if (Test-IsModFolder $dir) { return $dir }
+            if (Test-IsWorkspace $dir) { return $dir }
+        }
         $dir = Split-Path -Parent $dir
     }
+
+    # Long-standing pin for the RimSynapse dev box, kept ahead of the sibling scan so this machine
+    # resolves the same way from a worktree as from the main checkout.
     if (Test-Path 'C:\github\rimsynapse\Core\About\About.xml') { return 'C:\github\rimsynapse' }
-    throw "Could not locate a RimSynapse mod or workspace. Set RIMSYNAPSE_ROOT or pass -Root."
+
+    # The workspace usually sits BESIDE the tooling repo rather than above it, and the upward walk
+    # never looks sideways. Deliberately no "pick the first one": a dev box can hold several real
+    # workspaces (here, an 11-mod personal collection next to the 12-mod suite), and choosing between
+    # them by sort order is how a gate ends up reporting success over the wrong twelve mods. More
+    # than one candidate is a configuration question only the caller can answer.
+    if ($toolingRepo) {
+        $siblings = @(Get-ChildItem (Split-Path -Parent $toolingRepo) -Directory -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -ne $toolingRepo -and (Test-IsWorkspace $_.FullName) } |
+                      Sort-Object Name)
+        if ($siblings.Count -eq 1) { return $siblings[0].FullName }
+        if ($siblings.Count -gt 1) {
+            throw ("Several mod workspaces sit beside the tooling checkout and none was chosen: " +
+                   ($siblings.FullName -join ', ') +
+                   ". Pass -Root, or set RIMAGENTIC_ROOT, to say which one this gate should inspect.")
+        }
+    }
+
+    throw ("Could not locate a RimSynapse mod or workspace. Set RIMAGENTIC_ROOT/RIMSYNAPSE_ROOT or pass -Root. " +
+           "(The tooling checkout$(if($toolingRepo){" at '$toolingRepo'"}) is skipped on purpose — its game-mod\ is the " +
+           "toolkit mod, not a workspace member.)")
 }
 
 <#
