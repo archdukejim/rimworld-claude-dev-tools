@@ -66,105 +66,82 @@ async function toWorkshopJpeg(srcPath: string, name: string, maxWidth: number, q
 }
 
 /* ------------------------------------------------------------------------ *
- * Infographic renderer (roadmap #3): generate Vanilla-Expanded-style banners
- * and feature panels as PNGs, entirely from structured input via SVG -> sharp
- * (no headless browser / canvas needed). Two components mirror the VE layout
- * language: a notched "ribbon" section header, and a feature panel with an
- * icon tile + gray content panel (ribbon subtitle, italic flavor quote, body,
- * and an optional key/value stat grid). Themeable via a brand accent colour so
- * an author's images read as their own brand, not a VE clone.
+ * Infographic renderer: description panels as SVG at 800px wide, rasterised
+ * to PNG (via sharp; no headless browser / canvas). Real font rendering,
+ * never screenshots. Panel heights are derived from content — never fixed.
+ * One swappable brand token (ACCENT); everything else is a fixed neutral
+ * ramp, so every mod's page shares one visual system.
  * ------------------------------------------------------------------------ */
 
-const DEFAULT_ACCENT = "#b9622b"; // warm amber brand accent (VE itself uses ~#a83a3a red)
+const DEFAULT_ACCENT = "#c8873a"; // ACCENT — the one swappable brand token
 
 interface InfographicTheme {
-    bg: string; bgEdge: string;
-    accent: string; accentHi: string; accentSh: string;
-    panel: string; panelEdge: string; chip: string;
-    head: string; body: string; flavor: string;
-    serif: string; sans: string;
-}
-
-/** Clamp+shade a #rrggbb colour by `amt` in [-1,1] (negative darkens, positive lightens). */
-function shade(hex: string, amt: number): string {
-    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
-    const n = m ? parseInt(m[1], 16) : 0xb9622b;
-    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(c => {
-        const v = amt >= 0 ? c + (255 - c) * amt : c * (1 + amt);
-        return Math.max(0, Math.min(255, Math.round(v)));
-    });
-    return "#" + ch.map(c => c.toString(16).padStart(2, "0")).join("");
+    accent: string;                               // the swappable brand token
+    bg: string; panel: string; panelEdge: string; // fixed neutral ramp
+    title: string; body: string; muted: string;
+    onAccent: string;                             // text sitting on accent fills
+    font: string;
 }
 
 function buildTheme(accent?: string): InfographicTheme {
     const a = /^#?[0-9a-f]{6}$/i.test(String(accent || "")) ? (accent!.startsWith("#") ? accent! : "#" + accent) : DEFAULT_ACCENT;
     return {
-        bg: "#1b2838", bgEdge: "#12202e",
-        accent: a, accentHi: shade(a, 0.18), accentSh: shade(a, -0.28),
-        panel: "#4a4f55", panelEdge: "#2b2f34", chip: "#3a3f45",
-        head: "#ffffff", body: "#e7e9ec", flavor: "#b9bcc0",
-        serif: "Georgia, 'Times New Roman', serif",
-        sans: "'Segoe UI', Verdana, sans-serif",
+        accent: a,
+        bg: "#17181a", panel: "#232527", panelEdge: "#34373b",
+        title: "#f0ece3", body: "#b6b2a8", muted: "#8b877d", onAccent: "#1a1409",
+        font: "Segoe UI, Arial, sans-serif",
     };
 }
 
 const xmlEsc = (s: any) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** Greedy word-wrap by estimated glyph width (avg = fraction of font-size per char). */
-function wrapText(text: string, fontSize: number, maxW: number, avg = 0.53): string[] {
+/* SVG has no auto-wrap: wrapping is manual, by per-character advance as a fraction of font
+ * size. Row values are placed after the measured label width with the same table, so measure
+ * and render agree. */
+const ADV_NARROW = new Set("iljI!.,;:'|`");
+const ADV_THIN = new Set("ft()[]{}/\\-r");
+const ADV_WIDE = new Set("mwMW@");
+function charAdvance(ch: string): number {
+    if (ADV_NARROW.has(ch)) return 0.27;
+    if (ADV_THIN.has(ch)) return 0.35;
+    if (ADV_WIDE.has(ch)) return 0.83;
+    if (ch === " ") return 0.26;
+    if (ch >= "A" && ch <= "Z") return 0.63;
+    if (ch >= "0" && ch <= "9") return 0.55;
+    return 0.52;
+}
+function measureText(text: string, fontSize: number, bold = false): number {
+    let units = 0;
+    for (const ch of String(text || "")) units += charAdvance(ch);
+    return units * fontSize * (bold ? 1.06 : 1);
+}
+function wrapText(text: string, fontSize: number, maxW: number, bold = false): string[] {
     const words = String(text || "").split(/\s+/).filter(Boolean);
-    const cw = fontSize * avg;
     const lines: string[] = []; let cur = "";
     for (const w of words) {
         const test = cur ? cur + " " + w : w;
-        if (test.length * cw > maxW && cur) { lines.push(cur); cur = w; }
+        if (measureText(test, fontSize, bold) > maxW && cur) { lines.push(cur); cur = w; }
         else cur = test;
     }
     if (cur) lines.push(cur);
     return lines;
 }
 
-/** Faint topographic contour texture (low-opacity wavy lines) matching the VE background. */
-function contourTexture(w: number, h: number): string {
-    let p = "";
-    for (let y = -20; y < h + 20; y += 26) {
-        let d = `M -20 ${y}`;
-        for (let x = 0; x <= w + 40; x += 80) {
-            const off = ((x / 80 + y) % 3) * 6 - 6;
-            d += ` Q ${x - 40} ${y + off} ${x} ${y - off * 0.5}`;
-        }
-        p += `<path d="${d}" fill="none" stroke="#ffffff" stroke-opacity="0.03" stroke-width="1.2"/>`;
-    }
-    return p;
-}
+const PAGE_W = 800;
 
-/** Notched ribbon-flag path (points inward on the right, like VE section banners). */
-function ribbonPath(x: number, y: number, w: number, h: number, notch = 18): string {
-    const r = x + w;
-    return `M ${x} ${y} L ${r} ${y} L ${r - notch} ${y + h / 2} L ${r} ${y + h} L ${x} ${y + h} Z`;
-}
-
-function svgDefs(t: InfographicTheme): string {
-    return `<defs>
-    <linearGradient id="rib" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${t.accentHi}"/><stop offset="1" stop-color="${t.accentSh}"/>
-    </linearGradient>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${t.bg}"/><stop offset="1" stop-color="${t.bgEdge}"/>
-    </linearGradient>
-    <clipPath id="iconClip"><rect x="12" y="12" width="150" height="150" rx="6"/></clipPath>
-  </defs>`;
-}
-
-/** Section header banner (default 800x51). */
-function renderHeaderSvg(title: string, t: InfographicTheme, width = 800, height = 51): string {
-    const rw = Math.min(width - 40, 200 + String(title).length * 13);
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    ${svgDefs(t)}
-    <rect width="${width}" height="${height}" fill="url(#bg)"/>
-    ${contourTexture(width, height)}
-    <path d="${ribbonPath(6, 6, rw, height - 12)}" fill="url(#rib)" stroke="${t.accentSh}" stroke-width="1"/>
-    <text x="24" y="${height / 2 + 8}" font-family="${t.serif}" font-size="24" fill="${t.head}">${xmlEsc(title)}</text>
+/** Section header ribbon (800x74): a notched-hexagon bar with a centred uppercase title.
+ *  Section dividers only — no body copy, no icons. */
+function renderHeaderSvg(title: string, t: InfographicTheme): string {
+    const W = PAGE_W, H = 74, rh = 46, y = 14, m = 6, notch = 22;
+    const pts = [
+        [m + notch, y], [W - m - notch, y], [W - m, y + rh / 2],
+        [W - m - notch, y + rh], [m + notch, y + rh], [m, y + rh / 2],
+    ].map(p => p.join(",")).join(" ");
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+    <rect width="${W}" height="${H}" fill="${t.bg}"/>
+    <polygon points="${pts}" fill="${t.accent}"/>
+    <text x="${W / 2}" y="${y + rh / 2 + 8}" text-anchor="middle" font-family="${t.font}" font-size="23"
+      font-weight="700" letter-spacing="2.5" fill="${t.onAccent}">${xmlEsc(String(title).toUpperCase())}</text>
   </svg>`;
 }
 
@@ -172,90 +149,122 @@ interface StatRow { k?: string; v?: string; iconHref?: string | null; }
 interface FeatureOpts {
     title: string; flavor?: string; body?: string; rows?: StatRow[];
     requirements?: string; iconHref?: string | null;
-    width?: number; height?: number;
 }
 
-/** Feature panel (default 800x300): icon tile + gray content panel. */
+/* Feature panel geometry (800 wide; HEIGHT DERIVED FROM CONTENT — never fixed):
+ * outer pad 22, tile 158, gap 20 -> content panel x=200 w=578, inner pad 20, wrap 538.
+ * Vertical rhythm inside the panel: top 18 / subtitle +12 / flavor pitch 22.5 (block +8) /
+ * body pitch 22.5 (block +6) / rows +10 before at 26 pitch / bottom 18.
+ * Type roles (the only three): subtitle 21/700 TITLE; flavor 16.5 italic ACCENT (the one
+ * italic line); body 15.5 BODY; rows 15 with bold TITLE label + regular MUTED value. */
+const F = {
+    pad: 22, tile: 158,
+    panelX: 200, panelW: 578, innerPad: 20, wrapW: 538,
+    top: 18, bottom: 18,
+    subtitleSize: 21, subtitleGap: 12,
+    flavorSize: 16.5, flavorPitch: 22.5, flavorGap: 8,
+    bodySize: 15.5, bodyPitch: 22.5, bodyGap: 6,
+    rowSize: 15, rowPitch: 26, rowsGap: 10, maxRows: 5,
+    chipH: 26, chipGap: 8, chipSize: 11.5,
+};
+
 function renderFeatureSvg(opts: FeatureOpts, t: InfographicTheme): string {
-    const width = opts.width || 800, height = opts.height || 300;
-    const pad = 12, iconSize = 150;
-    const iconX = pad, iconY = pad;
-    const panelX = iconX + iconSize + 14;
-    const panelW = width - panelX - pad;
-    const panelY = pad, panelH = height - pad * 2;
+    const W = PAGE_W;
+    const tx = F.panelX + F.innerPad; // text left edge
 
-    const title = String(opts.title || "");
-    const ribH = 40, ribW = Math.min(panelW - 20, 150 + title.length * 12);
-    let y = panelY + 14;
-    let content = "";
+    const subtitle = String(opts.title || "");
+    const flavorLines = opts.flavor ? wrapText(opts.flavor, F.flavorSize, F.wrapW) : [];
+    const bodyLines = opts.body ? wrapText(opts.body, F.bodySize, F.wrapW) : [];
+    const rows = (Array.isArray(opts.rows) ? opts.rows : []).slice(0, F.maxRows);
 
-    content += `<path d="${ribbonPath(panelX + 14, y, ribW, ribH)}" fill="url(#rib)" stroke="${t.accentSh}"/>`;
-    content += `<text x="${panelX + 32}" y="${y + ribH / 2 + 8}" font-family="${t.serif}" font-size="22" fill="${t.head}">${xmlEsc(title)}</text>`;
-    y += ribH + 16;
-
-    for (const l of wrapText(opts.flavor || "", 15, panelW - 40, 0.5)) {
-        content += `<text x="${panelX + 20}" y="${y}" font-family="${t.serif}" font-style="italic" font-size="15" fill="${t.flavor}">${xmlEsc(l)}</text>`;
-        y += 20;
+    // ---- measure: walk the rhythm once to derive the content height ----
+    let y = F.top;
+    const subtitleTop = y;
+    y += F.subtitleSize;
+    if (flavorLines.length || bodyLines.length || rows.length) y += F.subtitleGap;
+    const flavorTop = y;
+    if (flavorLines.length) {
+        y += flavorLines.length * F.flavorPitch;
+        if (bodyLines.length || rows.length) y += F.flavorGap;
     }
-    if (opts.flavor) y += 6;
-    for (const l of wrapText(opts.body || "", 16, panelW - 40, 0.52)) {
-        content += `<text x="${panelX + 20}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(l)}</text>`;
-        y += 21;
+    const bodyTop = y;
+    if (bodyLines.length) {
+        y += bodyLines.length * F.bodyPitch;
+        if (rows.length) y += F.bodyGap;
     }
-    if (Array.isArray(opts.rows) && opts.rows.length) {
-        y += 6;
-        const hasIcon = opts.rows.some(r => r?.iconHref);
-        const step = hasIcon ? 30 : 22;
-        const ico = 26;
-        for (const r of opts.rows) {
-            content += `<text x="${panelX + 20}" y="${y}" font-family="${t.sans}" font-size="15" font-weight="bold" fill="${t.head}">${xmlEsc(r?.k || "")}</text>`;
-            if (r?.iconHref) {
-                // VE-style "<label> = <icon>" grid row.
-                content += `<text x="${panelX + 150}" y="${y}" font-family="${t.sans}" font-size="16" fill="${t.body}">=</text>`;
-                content += `<image href="${r.iconHref}" x="${panelX + 172}" y="${y - ico + 6}" width="${ico}" height="${ico}" preserveAspectRatio="xMidYMid meet"/>`;
-                if (r?.v) content += `<text x="${panelX + 172 + ico + 8}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(r.v)}</text>`;
-            } else {
-                content += `<text x="${panelX + 150}" y="${y}" font-family="${t.sans}" font-size="15" fill="${t.body}">${xmlEsc(r?.v || "")}</text>`;
-            }
-            y += step;
+    let rowsTop = y;
+    if (rows.length) { rowsTop = y + F.rowsGap; y = rowsTop + rows.length * F.rowPitch; }
+    const contentH = Math.round(y + F.bottom);
+
+    // Tile column and content panel are centred vertically INDEPENDENTLY of each other —
+    // that is what keeps a page of varying-length panels from looking ragged.
+    const tileBlockH = F.tile + (opts.requirements ? F.chipGap + F.chipH : 0);
+    const H = Math.max(contentH + 2 * F.pad, tileBlockH + 2 * F.pad);
+    const panelY = Math.round((H - contentH) / 2);
+    const tileY = Math.round((H - tileBlockH) / 2);
+
+    // ---- render ----
+    let out = `<rect width="${W}" height="${H}" fill="${t.bg}"/>`;
+    out += `<rect x="${F.panelX}" y="${panelY}" width="${F.panelW}" height="${contentH}" rx="8" fill="${t.panel}" stroke="${t.panelEdge}"/>`;
+
+    // Subtitle tab: 5px accent bar at the inner left edge, text 14px right of it.
+    const stY = panelY + subtitleTop;
+    out += `<rect x="${tx}" y="${stY + 1}" width="5" height="${F.subtitleSize}" rx="2.5" fill="${t.accent}"/>`;
+    out += `<text x="${tx + 5 + 14}" y="${(stY + F.subtitleSize * 0.8).toFixed(1)}" font-family="${t.font}" font-size="${F.subtitleSize}" font-weight="700" fill="${t.title}">${xmlEsc(subtitle)}</text>`;
+
+    flavorLines.forEach((l, i) => {
+        const by = panelY + flavorTop + i * F.flavorPitch + F.flavorSize * 0.8;
+        out += `<text x="${tx}" y="${by.toFixed(1)}" font-family="${t.font}" font-style="italic" font-size="${F.flavorSize}" fill="${t.accent}">${xmlEsc(l)}</text>`;
+    });
+    bodyLines.forEach((l, i) => {
+        const by = panelY + bodyTop + i * F.bodyPitch + F.bodySize * 0.8;
+        out += `<text x="${tx}" y="${by.toFixed(1)}" font-family="${t.font}" font-size="${F.bodySize}" fill="${t.body}">${xmlEsc(l)}</text>`;
+    });
+    rows.forEach((r, i) => {
+        const rowTop = panelY + rowsTop + i * F.rowPitch;
+        const baseline = rowTop + F.rowPitch / 2 + F.rowSize * 0.3; // centred in the pitch
+        const label = String(r?.k || "");
+        out += `<circle cx="${tx + 3}" cy="${(baseline - F.rowSize * 0.32).toFixed(1)}" r="3" fill="${t.accent}"/>`;
+        const labelX = tx + 14;
+        out += `<text x="${labelX}" y="${baseline.toFixed(1)}" font-family="${t.font}" font-size="${F.rowSize}" font-weight="700" fill="${t.title}">${xmlEsc(label)}</text>`;
+        let vx = labelX + measureText(label, F.rowSize, true) + 10;
+        if (r?.iconHref) { // optional real item texture between label and value
+            const ico = 20;
+            out += `<image href="${r.iconHref}" x="${vx.toFixed(1)}" y="${(baseline - ico + 4).toFixed(1)}" width="${ico}" height="${ico}" preserveAspectRatio="xMidYMid meet"/>`;
+            vx += ico + 8;
         }
-    }
+        if (r?.v) out += `<text x="${vx.toFixed(1)}" y="${baseline.toFixed(1)}" font-family="${t.font}" font-size="${F.rowSize}" fill="${t.muted}">${xmlEsc(r.v)}</text>`;
+    });
 
-    // Icon tile: embed the supplied image (as a data URI) clipped to the tile, else a neutral chip.
-    let iconEl = `<rect x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" rx="6" fill="${t.chip}" stroke="${t.panelEdge}" stroke-width="2"/>`;
+    // Tile: rx10 panel card with a 2px accent border; art (tile PNG or resolved icon) fills it.
+    let defs = "";
+    out += `<rect x="${F.pad}" y="${tileY}" width="${F.tile}" height="${F.tile}" rx="10" fill="${t.panel}"/>`;
     if (opts.iconHref) {
-        iconEl += `<image href="${opts.iconHref}" x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid slice" clip-path="url(#iconClip)"/>`;
-        iconEl += `<rect x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" rx="6" fill="none" stroke="${t.panelEdge}" stroke-width="2"/>`;
+        defs = `<defs><clipPath id="tileR"><rect x="${F.pad}" y="${tileY}" width="${F.tile}" height="${F.tile}" rx="10"/></clipPath></defs>`;
+        out += `<image href="${opts.iconHref}" x="${F.pad}" y="${tileY}" width="${F.tile}" height="${F.tile}" preserveAspectRatio="xMidYMid slice" clip-path="url(#tileR)"/>`;
     }
-    // Optional requirements chip is drawn as body text under the icon when there's no icon overlap.
-    let reqEl = "";
+    out += `<rect x="${F.pad}" y="${tileY}" width="${F.tile}" height="${F.tile}" rx="10" fill="none" stroke="${t.accent}" stroke-width="2"/>`;
+
+    // Requires chip under the tile, same width: "Requires: " MUTED + value ACCENT/600, centred.
     if (opts.requirements) {
-        const reqLines = wrapText(opts.requirements, 12, iconSize - 12, 0.5);
-        const chipH = 20 + reqLines.length * 15;
-        const chipY = height - pad - chipH;
-        reqEl += `<rect x="${iconX}" y="${chipY}" width="${iconSize}" height="${chipH}" rx="4" fill="${t.chip}" fill-opacity="0.92" stroke="${t.panelEdge}"/>`;
-        let ry = chipY + 16;
-        reqEl += `<text x="${iconX + 8}" y="${ry}" font-family="${t.sans}" font-size="12" font-weight="bold" fill="${t.head}">Requires:</text>`;
-        ry += 15;
-        for (const l of reqLines) { reqEl += `<text x="${iconX + 8}" y="${ry}" font-family="${t.sans}" font-size="12" fill="${t.body}">${xmlEsc(l)}</text>`; ry += 15; }
+        const chipY = tileY + F.tile + F.chipGap;
+        const label = "Requires:", val = String(opts.requirements);
+        const spaceW = 4; // explicit dx — SVG collapses a trailing space inside a tspan
+        const totalW = measureText(label, F.chipSize) + spaceW + measureText(val, F.chipSize, true);
+        const startX = F.pad + Math.max(6, (F.tile - totalW) / 2);
+        out += `<rect x="${F.pad}" y="${chipY}" width="${F.tile}" height="${F.chipH}" rx="5" fill="${t.panel}" stroke="${t.panelEdge}"/>`;
+        out += `<text x="${startX.toFixed(1)}" y="${(chipY + F.chipH / 2 + F.chipSize * 0.32).toFixed(1)}" font-family="${t.font}" font-size="${F.chipSize}">`
+            + `<tspan fill="${t.muted}">${xmlEsc(label)}</tspan><tspan dx="${spaceW}" font-weight="600" fill="${t.accent}">${xmlEsc(val)}</tspan></text>`;
     }
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    ${svgDefs(t)}
-    <rect width="${width}" height="${height}" fill="url(#bg)"/>
-    ${contourTexture(width, height)}
-    ${iconEl}
-    ${reqEl}
-    <rect x="${panelX}" y="${panelY}" width="${panelW}" height="${panelH}" rx="4" fill="${t.panel}" fill-opacity="0.72" stroke="${t.panelEdge}"/>
-    ${content}
-  </svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${defs}${out}</svg>`;
 }
 
 /** Render an SVG string to a PNG under `dir` (default imagesDir); returns saved path + dimensions. */
 async function saveSvgPng(svg: string, name: string, dir: string = imagesDir()) {
     await fsp.mkdir(dir, { recursive: true });
     const S = sharp();
-    const buf = await S(Buffer.from(svg)).png().toBuffer();
+    const buf = await S(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
     const out = path.join(dir, name);
     await fsp.writeFile(out, buf);
     const meta = await S(out).metadata();
@@ -317,7 +326,7 @@ async function mergeTilesVertical(paths: string[], dir: string, baseName: string
     await fsp.mkdir(dir, { recursive: true });
     const S = sharp();
     const gap = Math.max(0, Math.round(opts.gap ?? 0));
-    const bg = opts.background || "#1b2838";
+    const bg = opts.background || "#17181a";
     const maxH = Number(opts.maxHeightPx) > 0 ? Math.round(opts.maxHeightPx as number) : Infinity;
     const maxBytes = Number(opts.maxBytes) > 0 ? Math.round(opts.maxBytes as number) : Infinity;
 
@@ -346,7 +355,7 @@ async function mergeTilesVertical(paths: string[], dir: string, baseName: string
             y += m.h + gap;
         }
         const buf = await S({ create: { width, height: totalH, channels: 4, background: bg } })
-            .composite(composites).png().toBuffer();
+            .composite(composites).png({ compressionLevel: 9 }).toBuffer();
         const name = groups.length > 1 ? `${baseName}-${String(gi + 1).padStart(2, "0")}.png` : `${baseName}.png`;
         const outPath = path.join(dir, name);
         await fsp.writeFile(outPath, buf);
@@ -512,7 +521,6 @@ async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: 
     Promise<{ svg: string; resolved: Record<string, string>; unresolved: string[] }> {
     const type = String(spec?.type || "").toLowerCase();
     const title = String(spec?.title || "");
-    const width = Number(spec?.width) > 0 ? Number(spec.width) : 800;
     const resolved: Record<string, string> = {};
     const unresolved: string[] = [];
     const resolve = async (ref: string): Promise<string | null> => {
@@ -521,12 +529,8 @@ async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: 
         unresolved.push(ref); return null;
     };
 
-    if (type === "header") {
-        const height = Number(spec?.height) > 0 ? Number(spec.height) : 51;
-        return { svg: renderHeaderSvg(title, theme, width, height), resolved, unresolved };
-    }
+    if (type === "header") return { svg: renderHeaderSvg(title, theme), resolved, unresolved };
 
-    const height = Number(spec?.height) > 0 ? Number(spec.height) : 300;
     let iconHref: string | null = null;
     if (spec?.icon) iconHref = await resolve(String(spec.icon));
     const rows: StatRow[] = [];
@@ -544,7 +548,6 @@ async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: 
         rows,
         requirements: spec?.requirements ? String(spec.requirements) : "",
         iconHref,
-        width, height,
     }, theme);
     return { svg, resolved, unresolved };
 }
@@ -563,49 +566,63 @@ async function renderInfographicSpec(spec: any, theme: InfographicTheme, roots: 
  * feature is described in the text.
  * ------------------------------------------------------------------------ */
 
-const TILE_SIZE = 150;
+const TILE_SIZE = 158;
 
 // Gear is built from 8 radial teeth; kept as a prebuilt string like the others.
 const GEAR_GLYPH = (() => {
     let teeth = "";
     for (let k = 0; k < 8; k++) {
         const a = k * Math.PI / 4;
-        const x1 = 50 + 15 * Math.cos(a), y1 = 50 + 15 * Math.sin(a);
-        const x2 = 50 + 27 * Math.cos(a), y2 = 50 + 27 * Math.sin(a);
-        teeth += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="COL" stroke-width="7" stroke-linecap="round"/>`;
+        const x1 = 50 + 17 * Math.cos(a), y1 = 50 + 17 * Math.sin(a);
+        const x2 = 50 + 30 * Math.cos(a), y2 = 50 + 30 * Math.sin(a);
+        teeth += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
     }
-    return `<circle cx="50" cy="50" r="15" fill="none" stroke="COL" stroke-width="6"/><circle cx="50" cy="50" r="5" fill="COL"/>${teeth}`;
+    return `<circle cx="50" cy="50" r="17"/><circle cx="50" cy="50" r="5" fill="COL" stroke="none"/>${teeth}`;
 })();
 
-// On-brand line glyphs drawn in a 100x100 box; COL is replaced with a colour at render time.
+/* Monoline glyphs in a 100x100 box. Stroke/width/caps come from the wrapping <g> (ACCENT, 5,
+ * round, fill none) at render time. Allowed exceptions: a small solid accent dot as a focal
+ * point (fill="COL" stroke="none") and a fill-opacity 0.18 accent wash to suggest mass.
+ * PNL fills with the panel colour (to knock a knob out of a line). Each glyph literally
+ * depicts its feature rather than gesturing at the category; gear/check are the fallback of
+ * last resort. Draw new ones per mod feature — no emoji, stock icons, or clip art. */
 const TILE_GLYPHS: Record<string, string> = {
-    box: `<rect x="24" y="30" width="52" height="44" rx="3" fill="none" stroke="COL" stroke-width="6"/><path d="M24 46 H76 M50 30 V74" stroke="COL" stroke-width="5"/>`,
-    broom: `<line x1="66" y1="20" x2="44" y2="52" stroke="COL" stroke-width="6" stroke-linecap="round"/><path d="M32 52 H56 L62 80 H26 Z" fill="none" stroke="COL" stroke-width="6" stroke-linejoin="round"/><path d="M34 64 V80 M42 64 V80 M50 64 V80" stroke="COL" stroke-width="3"/>`,
-    backpack: `<rect x="30" y="36" width="40" height="42" rx="9" fill="none" stroke="COL" stroke-width="6"/><path d="M40 36 v-4 a10 10 0 0 1 20 0 v4" fill="none" stroke="COL" stroke-width="6"/><rect x="42" y="50" width="16" height="16" rx="3" fill="none" stroke="COL" stroke-width="4"/>`,
-    venn: `<circle cx="42" cy="52" r="17" fill="none" stroke="COL" stroke-width="6"/><circle cx="58" cy="52" r="17" fill="none" stroke="COL" stroke-width="6"/>`,
-    check: `<circle cx="50" cy="50" r="26" fill="none" stroke="COL" stroke-width="6"/><path d="M37 51 l9 9 l18 -20" fill="none" stroke="COL" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
-    book: `<path d="M50 32 C43 27 31 27 25 30 V72 C31 69 43 69 50 74 C57 69 69 69 75 72 V30 C69 27 57 27 50 32 Z" fill="none" stroke="COL" stroke-width="5" stroke-linejoin="round"/><path d="M50 32 V74" stroke="COL" stroke-width="4"/>`,
-    wrench: `<path d="M63 22 a16 16 0 0 0 -14 24 L26 69 a7 7 0 0 0 10 10 L59 56 a16 16 0 0 0 20 -22 l-11 11 l-9 -9 z" fill="none" stroke="COL" stroke-width="5" stroke-linejoin="round"/>`,
-    bolt: `<path d="M54 18 L28 54 H46 L42 82 L72 44 H52 Z" fill="none" stroke="COL" stroke-width="6" stroke-linejoin="round"/>`,
+    crosshair: `<circle cx="50" cy="50" r="28"/><path d="M50 10 V26 M50 74 V90 M10 50 H26 M74 50 H90"/><circle cx="50" cy="50" r="4.5" fill="COL" stroke="none"/>`,
+    standoff: `<circle cx="26" cy="50" r="5" fill="COL" stroke="none"/><path d="M46 32 a26 26 0 0 1 0 36 M58 23 a39 39 0 0 1 0 54 M70 14 a52 52 0 0 1 0 72"/>`,
+    bipod: `<rect x="42" y="12" width="16" height="22" rx="3"/><path d="M50 34 V52 M50 52 L30 84 M50 52 L70 84 M22 84 H38 M62 84 H78"/>`,
+    tracks: `<path d="M18 30 H82 M18 50 H82 M18 70 H82"/><circle cx="60" cy="30" r="7" fill="PNL"/><circle cx="34" cy="50" r="7" fill="PNL"/><circle cx="70" cy="70" r="7" fill="PNL"/>`,
+    box: `<rect x="24" y="30" width="52" height="44" rx="3"/><path d="M24 46 H76 M50 30 V74"/>`,
+    broom: `<line x1="66" y1="20" x2="44" y2="52"/><path d="M32 52 H56 L62 80 H26 Z"/><path d="M36 64 V80 M44 64 V80 M52 64 V80"/>`,
+    backpack: `<rect x="30" y="36" width="40" height="42" rx="9"/><path d="M40 36 v-4 a10 10 0 0 1 20 0 v4"/><rect x="42" y="50" width="16" height="16" rx="3"/>`,
+    venn: `<circle cx="42" cy="52" r="17"/><circle cx="58" cy="52" r="17"/>`,
+    check: `<circle cx="50" cy="50" r="26"/><path d="M37 51 l9 9 l18 -20"/>`,
+    book: `<path d="M50 32 C43 27 31 27 25 30 V72 C31 69 43 69 50 74 C57 69 69 69 75 72 V30 C69 27 57 27 50 32 Z"/><path d="M50 32 V74"/>`,
+    wrench: `<path d="M63 22 a16 16 0 0 0 -14 24 L26 69 a7 7 0 0 0 10 10 L59 56 a16 16 0 0 0 20 -22 l-11 11 l-9 -9 z"/>`,
+    bolt: `<path d="M54 18 L28 54 H46 L42 82 L72 44 H52 Z"/>`,
     gear: GEAR_GLYPH,
 };
 const TILE_GLYPH_NAMES = Object.keys(TILE_GLYPHS);
 
-/** Render a 150px tile card: a rendered glyph, or an external art image sliced to fill. */
+/** Substitute theme colours into a glyph string (COL = accent, PNL = panel). */
+function glyphWithTheme(glyph: string, theme: InfographicTheme): string {
+    return glyph.replace(/COL/g, theme.accent).replace(/PNL/g, theme.panel);
+}
+
+/** Render a tile card (158x158): rx10 panel with a 2px accent border and a monoline glyph
+ *  centred in a 100x100 box, or an external art image sliced to fill. */
 function renderTileCardSvg(theme: InfographicTheme, opts: { glyph?: string; imageHref?: string }, size = TILE_SIZE): string {
     let content = "";
     if (opts.imageHref) {
         content = `<image href="${opts.imageHref}" x="0" y="0" width="${size}" height="${size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#tileClip)"/>`;
     } else if (opts.glyph && TILE_GLYPHS[opts.glyph]) {
-        const pad = Math.round(size * 0.22);
-        const g = size - 2 * pad;
-        content = `<g transform="translate(${pad},${pad}) scale(${(g / 100).toFixed(4)})">${TILE_GLYPHS[opts.glyph].replace(/COL/g, theme.head)}</g>`;
+        const pad = ((size - 100) / 2).toFixed(1);
+        content = `<g transform="translate(${pad},${pad})" stroke="${theme.accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">${glyphWithTheme(TILE_GLYPHS[opts.glyph], theme)}</g>`;
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
-      <defs><clipPath id="tileClip"><rect width="${size}" height="${size}" rx="6"/></clipPath></defs>
-      <rect width="${size}" height="${size}" rx="6" fill="${theme.chip}" stroke="${theme.panelEdge}" stroke-width="2"/>
+      <defs><clipPath id="tileClip"><rect width="${size}" height="${size}" rx="10"/></clipPath></defs>
+      <rect width="${size}" height="${size}" rx="10" fill="${theme.panel}"/>
       ${content}
-      <rect width="${size}" height="${size}" rx="6" fill="none" stroke="${theme.panelEdge}" stroke-width="2"/>
+      <rect x="1" y="1" width="${size - 2}" height="${size - 2}" rx="10" fill="none" stroke="${theme.accent}" stroke-width="2"/>
     </svg>`;
 }
 
@@ -654,8 +671,8 @@ async function renderScreenshotSvg(source: string, theme: InfographicTheme, opts
     try { meta = await S(source).metadata(); } catch { return null; }
     const uri = await fileToDataUri(source);
     if (!uri) return null;
-    const W = opts.width && opts.width > 0 ? Math.round(opts.width) : 800;
-    const pad = 12;
+    const W = opts.width && opts.width > 0 ? Math.round(opts.width) : PAGE_W;
+    const pad = 22; // aligns with the feature panels' outer pad
     const innerW = W - pad * 2;
     const ar = (meta.height || 1) / (meta.width || 1);
     const imgH = Math.max(1, Math.round(innerW * ar));
@@ -663,15 +680,72 @@ async function renderScreenshotSvg(source: string, theme: InfographicTheme, opts
     const capH = cap ? 30 : 0;
     const H = pad * 2 + imgH + capH;
     const capEl = cap
-        ? `<text x="${W / 2}" y="${pad + imgH + 21}" text-anchor="middle" font-family="${theme.serif}" font-style="italic" font-size="14" fill="${theme.flavor}">${xmlEsc(cap)}</text>`
+        ? `<text x="${W / 2}" y="${pad + imgH + 21}" text-anchor="middle" font-family="${theme.font}" font-style="italic" font-size="14" fill="${theme.muted}">${xmlEsc(cap)}</text>`
         : "";
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
-      ${svgDefs(theme)}
-      <rect width="${W}" height="${H}" fill="url(#bg)"/>
-      ${contourTexture(W, H)}
+      <rect width="${W}" height="${H}" fill="${theme.bg}"/>
       <image href="${uri}" x="${pad}" y="${pad}" width="${innerW}" height="${imgH}" preserveAspectRatio="xMidYMid meet"/>
       <rect x="${pad}" y="${pad}" width="${innerW}" height="${imgH}" fill="none" stroke="${theme.panelEdge}" stroke-width="2"/>
       ${capEl}
+    </svg>`;
+}
+
+/* ------------------------------------------------------------------------ *
+ * Preview card: the mod-list preview (640x360) and the Workshop thumbnail
+ * (512x512), rendered from ONE source spec so they always match. Gradient
+ * ground, 7px accent bars flush top and bottom, centred glyph above the
+ * wordmark (title 46/700 TITLE, subtitle 20/600 ls3.5 ACCENT, tagline 17
+ * italic MUTED).
+ * ------------------------------------------------------------------------ */
+function renderPreviewSvg(opts: { title: string; subtitle?: string; tagline?: string; glyphSvg?: string; imageHref?: string },
+    t: InfographicTheme, W: number, H: number): string {
+    const title = String(opts.title || "");
+    const subtitle = opts.subtitle ? String(opts.subtitle).toUpperCase() : "";
+    const tagline = opts.tagline ? String(opts.tagline) : "";
+
+    // Shrink the title if it would overflow the card width.
+    let titleSize = 46;
+    const maxTitleW = W - 60;
+    const tw = measureText(title, titleSize, true);
+    if (tw > maxTitleW) titleSize = Math.max(24, Math.floor(titleSize * maxTitleW / tw));
+
+    const hasGlyph = !!(opts.glyphSvg || opts.imageHref);
+    const glyphBox = 100;
+    let contentH = titleSize;
+    if (hasGlyph) contentH += glyphBox + 26;
+    if (subtitle) contentH += 20 + 16;
+    if (tagline) contentH += 17 + 14;
+
+    let y = (H - contentH) / 2;
+    let out = "";
+    if (hasGlyph) {
+        const gx = (W - glyphBox) / 2;
+        if (opts.imageHref) {
+            out += `<image href="${opts.imageHref}" x="${gx}" y="${y.toFixed(1)}" width="${glyphBox}" height="${glyphBox}" preserveAspectRatio="xMidYMid meet"/>`;
+        } else {
+            out += `<g transform="translate(${gx},${y.toFixed(1)})" stroke="${t.accent}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">${opts.glyphSvg}</g>`;
+        }
+        y += glyphBox + 26;
+    }
+    out += `<text x="${W / 2}" y="${(y + titleSize * 0.8).toFixed(1)}" text-anchor="middle" font-family="${t.font}" font-size="${titleSize}" font-weight="700" fill="${t.title}">${xmlEsc(title)}</text>`;
+    y += titleSize;
+    if (subtitle) {
+        y += 16;
+        out += `<text x="${W / 2}" y="${(y + 16).toFixed(1)}" text-anchor="middle" font-family="${t.font}" font-size="20" font-weight="600" letter-spacing="3.5" fill="${t.accent}">${xmlEsc(subtitle)}</text>`;
+        y += 20;
+    }
+    if (tagline) {
+        y += 14;
+        out += `<text x="${W / 2}" y="${(y + 13.6).toFixed(1)}" text-anchor="middle" font-family="${t.font}" font-style="italic" font-size="17" fill="${t.muted}">${xmlEsc(tagline)}</text>`;
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+      <defs><linearGradient id="pv" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1e2023"/><stop offset="1" stop-color="#121315"/>
+      </linearGradient></defs>
+      <rect width="${W}" height="${H}" fill="url(#pv)"/>
+      <rect width="${W}" height="7" fill="${t.accent}"/>
+      <rect y="${H - 7}" width="${W}" height="7" fill="${t.accent}"/>
+      ${out}
     </svg>`;
 }
 
@@ -759,14 +833,14 @@ export const workshopImageTools = [
     {
         name: "render_workshop_infographic",
         description:
-            "Generate a Vanilla-Expanded-style infographic PNG for a Workshop description from structured input — " +
-            "no screenshot or external tool needed. Two components: type 'header' renders a notched ribbon section " +
-            "banner (default 800x51) from a title; type 'feature' renders a feature panel (default 800x300) with a " +
-            "left icon tile + optional 'Requires' chip and a gray content panel holding a ribbon subtitle, an italic " +
-            "flavor quote, body text, and an optional key/value stat grid. Themeable via 'accent' (a #rrggbb brand " +
-            "colour) so the images read as your own brand. Saves a PNG to the workshop-images folder; upload it " +
-            "(imgur or Steam) and embed via compose_workshop_bbcode. Build a description by rendering a header + " +
-            "several feature panels in order.",
+            "Generate one Workshop description panel as a PNG (800px wide, real font rendering — never a " +
+            "screenshot) from structured input. type 'header' renders the section ribbon (800x74): a notched " +
+            "hexagon bar with a centred uppercase title — section dividers only, no body copy. type 'feature' " +
+            "renders a feature panel whose HEIGHT IS DERIVED FROM ITS CONTENT: a left glyph tile (+ optional " +
+            "'Requires' chip) and a content panel with subtitle, one italic accent flavor line, body (~40-60 " +
+            "words), and up to 5 bullet rows (bold label + muted value — a row is a fact, not a sentence). One " +
+            "swappable brand token: 'accent' (#rrggbb); everything else is a fixed neutral ramp. Saves a PNG to " +
+            "the workshop-images folder; upload it (imgur or Steam) and embed via compose_workshop_bbcode.",
         inputSchema: {
             type: "object",
             properties: {
@@ -792,9 +866,7 @@ export const workshopImageTools = [
                 requirements: { type: "string", description: "feature: short text for the 'Requires:' chip under the icon." },
                 icon: { type: "string", description: "feature: left tile image — a file path, texPath, or item/texture name (same resolver as row icons)." },
                 iconRoots: { type: "array", items: { type: "string" }, description: "Extra folders to resolve icon refs against, searched FIRST (e.g. your mod's project folder). Defaults add the icon library + local Mods dir." },
-                searchWorkshop: { type: "boolean", description: "Also resolve icons against the 294100 Steam Workshop mods tree (slower first call; indexed+cached). Default false." },
-                width: { type: "number", description: "Override output width (default 800)." },
-                height: { type: "number", description: "Override output height (default 51 header / 300 feature)." }
+                searchWorkshop: { type: "boolean", description: "Also resolve icons against the 294100 Steam Workshop mods tree (slower first call; indexed+cached). Default false." }
             },
             required: ["type", "title"]
         }
@@ -813,7 +885,7 @@ export const workshopImageTools = [
             properties: {
                 blocks: {
                     type: "array",
-                    description: "Ordered page blocks. header: { type:'header', title }. feature: { type:'feature', title, flavor?, body?, rows?, requirements?, width?, height?, " +
+                    description: "Ordered page blocks (heights derive from content — never fixed). header: { type:'header', title }. feature: { type:'feature', title, flavor?, body?, rows?, requirements?, " +
                         "tile? } where tile is the left-tile art — { glyph:'<name>' } (built-in: " + TILE_GLYPH_NAMES.join(", ") + ") or { image:'<path>' } (external/AI art), or a string (glyph name or file path). " +
                         "image/screenshot: { type:'image', source:'<png path>', caption?, width? } — a full-width framed screenshot placed inline where a feature is described.",
                     items: { type: "object" }
@@ -862,9 +934,11 @@ export const workshopImageTools = [
     {
         name: "render_tile",
         description:
-            "Render one feature-panel tile card (150x150) as a PNG — from a built-in GLYPH or from an EXTERNAL art " +
-            "image (AI-generated / hand-made). Save it next to a page as <prefix>-tile-NN.png and compose_workshop_page " +
-            "picks it up via the override gate. Built-in glyphs: " + TILE_GLYPH_NAMES.join(", ") + ".",
+            "Render one feature-panel tile card (158x158, rx10 panel with a 2px accent border) as a PNG — from a " +
+            "built-in monoline GLYPH (stroke accent, centred in a 100x100 box) or from an EXTERNAL art image " +
+            "(AI-generated / hand-made). Save it next to a page as <prefix>-tile-NN.png and compose_workshop_page " +
+            "picks it up via the override gate. Built-in glyphs: " + TILE_GLYPH_NAMES.join(", ") + ". Pick the one " +
+            "that literally depicts the feature; gear/check are the fallback of last resort.",
         inputSchema: {
             type: "object",
             properties: {
@@ -875,6 +949,29 @@ export const workshopImageTools = [
                 accent: { type: "string", description: `Brand accent #rrggbb (default ${DEFAULT_ACCENT}).` },
                 size: { type: "number", description: `Tile size in px (default ${TILE_SIZE}).` }
             }
+        }
+    },
+    {
+        name: "render_workshop_preview",
+        description:
+            "Render the mod's preview card from ONE source spec to two PNGs: 640x360 (the mod-list preview) and " +
+            "512x512 (the Workshop thumbnail). Gradient ground, accent bars flush top and bottom, a centred " +
+            "monoline glyph above the wordmark (title 46/700, letter-spaced accent subtitle, italic muted " +
+            "tagline). Uses the same design tokens as the description panels so the whole presence reads as one " +
+            "set. Draft-first: writes local files only.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                title: { type: "string", description: "Wordmark title (46/700; auto-shrinks if it would overflow)." },
+                subtitle: { type: "string", description: "Letter-spaced accent subtitle under the title (rendered uppercase)." },
+                tagline: { type: "string", description: "One italic muted line under the subtitle." },
+                glyph: { type: "string", description: `Built-in glyph above the wordmark: ${TILE_GLYPH_NAMES.join(", ")}.` },
+                image: { type: "string", description: "Path to art shown instead of a glyph (fitted to a 100x100 box)." },
+                accent: { type: "string", description: `Brand accent #rrggbb (default ${DEFAULT_ACCENT}).` },
+                name: { type: "string", description: "Base output name (default 'preview') → <name>-640x360.png + <name>-512x512.png." },
+                outDir: { type: "string", description: "Folder to write into. Default the workshop-images folder." }
+            },
+            required: ["title"]
         }
     },
     {
@@ -1128,6 +1225,35 @@ export async function handleWorkshopImageTool(name: string, args: any) {
             return okText({ ok: true, ...res, folder: outDir, note: "Tile PNG saved. Reference it from a feature block's tile:{image} or let compose_workshop_page pick it up as <prefix>-tile-NN.png (override gate)." });
         } catch (e: any) {
             return errText(`Failed to render tile: ${e?.message || e}`);
+        }
+    }
+
+    if (name === "render_workshop_preview") {
+        const title = String(args?.title || "").trim();
+        if (!title) return errText("'title' is required.");
+        const glyph = args?.glyph ? String(args.glyph) : "";
+        if (glyph && !TILE_GLYPHS[glyph]) return errText(`Unknown glyph '${glyph}'. Built-in: ${TILE_GLYPH_NAMES.join(", ")}.`);
+        try {
+            const theme = buildTheme(args?.accent);
+            let imageHref: string | undefined;
+            if (args?.image) {
+                imageHref = (await fileToDataUri(String(args.image))) || undefined;
+                if (!imageHref) return errText(`Art image not found or unreadable: ${args.image}`);
+            }
+            const spec = {
+                title,
+                subtitle: args?.subtitle ? String(args.subtitle) : undefined,
+                tagline: args?.tagline ? String(args.tagline) : undefined,
+                glyphSvg: glyph ? glyphWithTheme(TILE_GLYPHS[glyph], theme) : undefined,
+                imageHref,
+            };
+            const outDir = args?.outDir ? String(args.outDir) : imagesDir();
+            const base = (String(args?.name || "preview").replace(/\.png$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")) || "preview";
+            const card = await saveSvgPng(renderPreviewSvg(spec, theme, 640, 360), `${base}-640x360.png`, outDir);
+            const thumb = await saveSvgPng(renderPreviewSvg(spec, theme, 512, 512), `${base}-512x512.png`, outDir);
+            return okText({ ok: true, folder: outDir, card, thumb, note: "640x360 is the mod-list preview; 512x512 the Workshop thumbnail. Draft-first: files written locally only." });
+        } catch (e: any) {
+            return errText(`Failed to render preview card: ${e?.message || e}`);
         }
     }
 
