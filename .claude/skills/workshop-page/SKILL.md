@@ -57,11 +57,13 @@ is missing, populate the library first — see `commands/workshop-images.md` →
 `unresolved` icon refs. **Stop here.** This is the draft.
 
 **Phase 5 — Publish (approval-gated only).** After explicit approval: upload the PNGs in
-order with **`imgur_upload`** (the API path — a publish action, confirm; run `imgur_login`
-first if `imgur_status` shows no credentials; **never try to drive the imgur website in a
-browser** — agents get lost in its drag-drop UI every time), `compose_workshop_bbcode`
-with the returned `bbcodeImages`/URLs in order, show the final BBCode, **confirm again**,
-then `swh_update_description { fileId, description }`. Verify with `swh_get_item`.
+order with **`imgur_upload`** (API; run `imgur_login` first if `imgur_status` shows no
+credentials) or, with no credentials, **`imgur_web_upload`** (drives the RimAgentic
+Chrome's logged-in imgur session over CDP — needs `launch_chrome`; **never click/type/paste
+through the imgur website manually**). Both are publish actions — confirm first. Then
+`compose_workshop_bbcode` with the returned `bbcodeImages`/URLs in order, show the final
+BBCode, **confirm again**, then `swh_update_description { fileId, description }`. Verify
+with `swh_get_item`.
 
 ## Tools (rimworld-claude-dev-tools MCP)
 - Plan/draft (safe): `swh_get_item`, `list_item_icons`, `resolve_item_icon`,

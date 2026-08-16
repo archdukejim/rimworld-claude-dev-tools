@@ -92,9 +92,11 @@ Steam's ~3× longer `steamuserimages` URLs. **Uploading is a publishing action �
   Idempotent (dedups on file content hash), so re-runs reuse existing links. Needs a one-time
   `imgur_login` (`imgur_status` tells you the auth state; `{ clientId, anonymousOnly: true }` works
   without an account).
-- **Do NOT drive the imgur website in a browser to upload.** The web UI is drag-drop-oriented and
-  agent-hostile; every past attempt got lost in it. If `imgur_upload` reports no credentials, run
-  `imgur_login` (or ask the user for a clientId) instead of falling back to the browser.
+- **No credentials? Use `imgur_web_upload`.** It uploads through the RimAgentic Chrome's logged-in
+  imgur session over CDP (sets the upload page's file input directly — no window focus, no drag-drop
+  UI) and records results in the same ledger. Requires `launch_chrome` + a signed-in imgur session
+  in that profile. **Never drive the imgur website manually** (clicking/typing/pasting into the
+  page) — that's what stranded past agents; the file-input route is the only sanctioned browser path.
 - **Manual fallback:** hand the merged PNG path(s) to the user; they drop them on imgur and return
   the links. Resolve any user-pasted album/page link to direct image URLs with `imgur_resolve`.
 Record the direct links in order. (Steam-hosted upload via the item's edit page still works as a

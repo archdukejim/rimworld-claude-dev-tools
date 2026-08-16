@@ -183,9 +183,11 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   `compose_workshop_bbcode` as `images`. Uploading by `mod` pulls from the showcase gallery
   and carries each item's caption through, so passing UI-test evidence becomes a description
   with no manual step.
-- **Never drive the imgur website in a browser to upload** — its drag-drop UI is agent-hostile
-  and every attempt has failed. If `imgur_upload` reports missing credentials, fix that
-  (`imgur_login`), don't fall back to the browser.
+- **Upload preference order:** `imgur_upload` (API; needs `imgur_login` once) → `imgur_web_upload`
+  (no credentials: drives the RimAgentic Chrome's logged-in session over CDP `DOM.setFileInputFiles`
+  — no window focus, no drag-drop; needs `launch_chrome` + a signed-in imgur session). **Never drive
+  the imgur website manually** (clicks/keystrokes/paste into the page) — blind desktop input on a
+  contested desktop is what stranded past agents. Browser-session uploads have no deletehash.
 - **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
   into direct full-size image URLs: local ledger first (zero network for anything uploaded via
   `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings

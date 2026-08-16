@@ -234,6 +234,10 @@
       "description": "Delete an uploaded imgur image by deletehash, id, or i.imgur.com link, and drop it from the local ledger. Irreversible."
     },
     {
+      "name": "imgur_web_upload",
+      "description": "Upload image(s) through the RimAgentic Chrome's logged-in imgur session over CDP (no API credentials needed): sets the upload page's file input directly — no window focus, no drag-drop UI — returns post URL + verified direct link per file, and records them in the shared upload ledger."
+    },
+    {
       "name": "imgur_resolve",
       "description": "Turn any imgur reference (album/gallery/image-page/direct URL or bare hash) into direct, embeddable full-size image URLs — local ledger first (zero network), then the imgur API, then a normalised HTML scrape with optional verification of real dimensions."
     },

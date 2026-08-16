@@ -294,6 +294,27 @@ export const imgurTools = [
         }
     },
     {
+        name: "imgur_web_upload",
+        description:
+            "Upload image(s) to imgur through the RimAgentic Chrome's logged-in imgur SESSION — the sanctioned " +
+            "no-credentials fallback when imgur_upload has no API client id. Drives the upload over CDP " +
+            "(DOM.setFileInputFiles on imgur.com/upload's file input): no window focus, no drag-drop UI, no native " +
+            "dialogs — never try to click through the imgur website manually. Requires the RimAgentic Chrome " +
+            "running (launch_chrome) and signed into imgur in that profile. Each file becomes its own post; " +
+            "returns the post URL + verified direct i.imgur.com link per file, records them in the same ledger as " +
+            "imgur_upload (content-hash dedup applies). Browser uploads have NO deletehash — they are deletable " +
+            "only from the imgur website. Prefer imgur_upload (API) whenever credentials exist.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: { type: "string", description: "Single image file path to upload." },
+                paths: { type: "array", items: { type: "string" }, description: "Image file paths, in order; each becomes its own imgur post." },
+                force: { type: "boolean", description: "Upload even if a byte-identical image is already in the ledger. Default false." },
+                port: { type: "number", description: "RimAgentic Chrome debugging port (default 9222)." }
+            }
+        }
+    },
+    {
         name: "imgur_resolve",
         description:
             "Turn ANY imgur reference — album URL, gallery URL, image page URL, direct i.imgur.com URL, or bare " +
@@ -337,6 +358,7 @@ export async function handleImgurTool(name: string, args: any) {
     if (name === "imgur_status") return await status();
     if (name === "imgur_upload") return await upload(args || {});
     if (name === "imgur_list_uploads") return await listUploads(args || {});
+    if (name === "imgur_web_upload") return await webUpload(args || {});
     if (name === "imgur_resolve") return await resolveRef(args || {});
     if (name === "imgur_delete") return await deleteImage(args || {});
     throw new Error(`Unknown imgur tool: ${name}`);
@@ -663,6 +685,159 @@ async function listUploads(args: any) {
     return okText({
         count: rows.length, total: ledger.uploads.length, ledger: ledgerPath(),
         albums: Object.values(ledger.albums), uploads: rows
+    });
+}
+
+// ---------------------------------------------------------------------------- imgur_web_upload
+
+/* Browser-session upload over CDP. Proven flow (2026-08-16): imgur.com/upload keeps a single
+ * hidden <input type="file" id="file-input">; DOM.setFileInputFiles on it starts the upload with
+ * no window focus, no drag-drop, no native dialog, and when it finishes the page navigates to
+ * the new post (imgur.com/a/<hash>). Blind UI driving (clicks/keystrokes on a contested desktop)
+ * is exactly what stranded past agents — never do that. */
+
+const CDP_PORT_DEFAULT = 9222;
+
+interface CdpTab { id: string; webSocketDebuggerUrl?: string; }
+
+/** Minimal CDP page session over the built-in WebSocket (Node >= 22). */
+class CdpPage {
+    private ws: any; private seq = 0;
+    private pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
+    static async open(wsUrl: string): Promise<CdpPage> {
+        const p = new CdpPage();
+        p.ws = new WebSocket(wsUrl);
+        await new Promise<void>((res, rej) => {
+            p.ws.addEventListener("open", () => res());
+            p.ws.addEventListener("error", () => rej(new Error("websocket error talking to the tab")));
+        });
+        p.ws.addEventListener("message", (ev: any) => {
+            let m: any; try { m = JSON.parse(String(ev.data)); } catch { return; }
+            const h = m.id && p.pending.get(m.id);
+            if (!h) return;
+            p.pending.delete(m.id);
+            m.error ? h.rej(new Error(m.error.message || JSON.stringify(m.error))) : h.res(m.result);
+        });
+        return p;
+    }
+    cmd(method: string, params: any = {}): Promise<any> {
+        return new Promise((res, rej) => {
+            const id = ++this.seq;
+            this.pending.set(id, { res, rej });
+            this.ws.send(JSON.stringify({ id, method, params }));
+        });
+    }
+    async eval(expression: string): Promise<any> {
+        const r = await this.cmd("Runtime.evaluate", { expression, returnByValue: true });
+        if (r?.exceptionDetails) throw new Error("page JS threw: " + (r.exceptionDetails.exception?.description || "unknown"));
+        return r?.result?.value;
+    }
+    close() { try { this.ws.close(); } catch { /* closing */ } }
+}
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** Upload one file through the logged-in imgur session; returns the post + direct link. */
+async function webUploadOne(filePath: string, port: number): Promise<{ postUrl: string; albumId?: string; link: string }> {
+    const base = `http://127.0.0.1:${port}`;
+    let tab: CdpTab;
+    try {
+        tab = await (await fetch(`${base}/json/new?${encodeURIComponent("https://imgur.com/upload")}`, { method: "PUT" })).json() as CdpTab;
+    } catch (e: any) {
+        throw new Error(`RimAgentic Chrome is not reachable on port ${port} — run launch_chrome first. (${e?.message || e})`);
+    }
+    if (!tab?.webSocketDebuggerUrl) throw new Error("Chrome opened no debuggable tab (webSocketDebuggerUrl missing).");
+
+    const page = await CdpPage.open(tab.webSocketDebuggerUrl);
+    try {
+        await page.cmd("DOM.enable");
+        await page.cmd("Runtime.enable");
+
+        // Wait for the upload page's file input to exist (page load is async).
+        let nodeId = 0;
+        const tInput = Date.now();
+        while (!nodeId && Date.now() - tInput < 20_000) {
+            await sleep(700);
+            try {
+                const doc = await page.cmd("DOM.getDocument");
+                nodeId = (await page.cmd("DOM.querySelector", { nodeId: doc.root.nodeId, selector: 'input[type="file"]' }))?.nodeId || 0;
+            } catch { /* page mid-navigation; retry */ }
+        }
+        if (!nodeId) {
+            const href = await page.eval("location.href").catch(() => "unknown");
+            throw new Error(`no <input type="file"> appeared on ${href} — imgur may be showing a captcha/interstitial or the session is signed out; check the window.`);
+        }
+
+        await page.cmd("DOM.setFileInputFiles", { files: [filePath], nodeId });
+
+        // The page navigates to the created post when the upload lands.
+        const t0 = Date.now();
+        let href = "";
+        while (Date.now() - t0 < 90_000) {
+            await sleep(1500);
+            href = await page.eval("location.href").catch(() => "");
+            if (href && !/\/upload/.test(href)) break;
+        }
+        if (!href || /\/upload/.test(href)) throw new Error("upload did not complete within 90s — check the Chrome window for a captcha or an error.");
+
+        const link = await page.eval(`(() => { const i = document.querySelector('img[src*="i.imgur.com"]'); return i ? i.src.split("?")[0] : null; })()`).catch(() => null);
+        const albumId = href.match(/imgur\.com\/a\/(?:[^/]*-)?([A-Za-z0-9]{5,10})/)?.[1];
+        return { postUrl: href, albumId, link: link || (albumId ? `https://imgur.com/a/${albumId}` : href) };
+    } finally {
+        page.close();
+        try { await fetch(`${base}/json/close/${tab.id}`); } catch { /* tab cleanup is best-effort */ }
+    }
+}
+
+async function webUpload(args: any) {
+    const files = [
+        ...(Array.isArray(args.paths) ? args.paths : []),
+        ...(args.path ? [args.path] : [])
+    ].map((f: any) => path.resolve(String(f))).filter(Boolean);
+    if (!files.length) return errText("Nothing to upload — pass `path` or `paths`.");
+    const port = Number(args.port) > 0 ? Math.round(Number(args.port)) : CDP_PORT_DEFAULT;
+
+    const ledger = await readLedger();
+    const results: any[] = [];
+    for (const f of files) {
+        let buf: Buffer;
+        try { buf = await fsp.readFile(f); }
+        catch { results.push({ file: f, ok: false, error: "File not found or unreadable." }); continue; }
+        const sha256 = createHash("sha256").update(buf).digest("hex");
+        if (!args.force) {
+            const hit = ledger.uploads.find(u => u.sha256 === sha256);
+            if (hit) { results.push({ file: f, ok: true, reused: true, link: hit.link, postUrl: hit.album ? `https://imgur.com/a/${hit.album}` : undefined, uploadedAt: hit.uploadedAt }); continue; }
+        }
+        try {
+            const up = await webUploadOne(f, port);
+            // Verify the direct link and record real dimensions, same fields as an API upload.
+            let width: number | undefined, height: number | undefined, bytes = buf.length;
+            if (/i\.imgur\.com/.test(up.link)) {
+                try { const v = await verifyDirect(up.link); width = v.width; height = v.height; bytes = v.bytes ?? bytes; } catch { /* link still usable */ }
+            }
+            const rec: UploadRecord = {
+                id: up.link.match(/i\.imgur\.com\/([A-Za-z0-9]+)/)?.[1] || up.albumId || "",
+                link: up.link, sha256, source: f, bytes, width, height,
+                album: up.albumId, account: "browser-session",
+                uploadedAt: new Date().toISOString()
+            };
+            ledger.uploads.push(rec);
+            results.push({ file: f, ok: true, reused: false, postUrl: up.postUrl, albumId: up.albumId, link: up.link, width, height });
+        } catch (e: any) {
+            results.push({ file: f, ok: false, error: e?.message || String(e) });
+        }
+    }
+    await writeLedger(ledger);
+
+    const ok = results.filter(r => r.ok);
+    return okText({
+        uploaded: ok.filter(r => !r.reused).length,
+        reused: ok.filter(r => r.reused).length,
+        failed: results.length - ok.length,
+        mode: "browser-session",
+        results,
+        bbcodeImages: ok.filter(r => r.link).map(r => ({ url: r.link })),
+        note: "Uploaded through the logged-in imgur session in the RimAgentic Chrome. No deletehash exists for these — delete from the imgur website if needed. Prefer imgur_upload (API) once credentials are provisioned."
     });
 }
 
