@@ -55,7 +55,10 @@ The server is TypeScript, compiled to `server/build/`, and also packaged as an
 - `docs/` — `API.md` (Steam Workshop `window.SWH` API), `MCP-PHASE2.md`,
   `SCHEDULING.md`, `COMMENT-TRIAGE.md`, `CLAUDE-USAGE.md`.
 - `extension/` — the Steam Workshop Helper browser extension.
-- `.claude/skills/` — includes `steam-comment-triage`, `ui-test`, `workshop-page`.
+- `.claude/skills/` — includes `ui-test`, `workshop-page` (repo-scoped on purpose: they lean on
+  in-repo docs/tools). Cross-repo workflow skills live at USER level (`~/.claude/skills/`):
+  `work-next-milestone`, `feature-complete`, `work-bugs`, `ship-it` (absorbed the old
+  `cut-release`), `steam-comment-triage`. Don't duplicate a skill in both places — one home each.
 - `.claude/agents/` — project subagents. `rimworld-isolation-tester` proves a specific
   *gameplay behavior* fires in a controlled in-game environment (precondition gate →
   `perf_watch` funnel → verdict). Use it for "does X actually work in-game / why isn't
