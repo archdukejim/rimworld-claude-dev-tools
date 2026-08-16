@@ -18,6 +18,37 @@ regression" and the RP2 × R&T recovery cases) live in git history; the knowledg
 | **Recovery & collapse-to-vanilla** | A run that "recovered" to safe mode, or whose `Initializing new game with mods:` block collapsed to official-only while non-official mods were intended, is a hard FAIL — never a pass. | `tools/rimworldDev.ts` |
 | **Empty run** | `run_rimworld_tests` requires `testsSeen > 0`; a green build is not evidence tests ran. | `tools/rimworldDev.ts` |
 | **Cross-mod def refs** | `validate_mod_defs` splits refs whose namespace matches a declared dependency into `resolvedViaDependency` instead of `unresolved`. | `tools/defValidate.ts` |
+| **Gate scoping** | `Resolve-WorkspaceRoot` walks *past* the tooling checkout, and refuses to choose between several candidate workspaces. | `harness/lib.ps1` |
+
+## Which mods a gate inspects — workspace-root resolution
+
+The release gates (`verify-binaries`, `verify-metadata`, `verify-branches`, `sync-wiki`) all decide
+what to inspect through `Resolve-WorkspaceRoot` + `Get-HarnessMods` in `harness/lib.ps1`. Getting that
+wrong doesn't produce a visible error — it produces a gate that confidently inspects the wrong thing.
+
+**The regression this section exists for.** The generic-toolkit pivot added `game-mod/` — the
+RimAgentic toolkit, a genuine mod with a real `About/About.xml` — inside the tooling repo. The
+upward walk accepted any directory with a mod child as "the workspace", and the tooling repo now
+matched. Every gate resolved its root to the tooling checkout and found exactly one mod, named after
+its folder: a phantom **`game-mod`**. `verify-binaries` then failed closed on
+`no Assemblies folder — the mod has a csproj but was never built`, while **none** of the twelve real
+mods were looked at. Fixed by `Test-IsToolingRepo` (a folder holding both `harness\lib.ps1` and
+`server\package.json` is this repo, not a workspace); the walk steps over it.
+
+**Ambiguity is a configuration error, not a guess.** A dev box can hold more than one real workspace
+— here an 11-mod personal collection sits beside the 12-mod suite. The sibling scan therefore returns
+a root only when there is exactly one candidate, and otherwise throws naming them. Picking by sort
+order is how a gate ends up reporting success over the wrong twelve mods, which is the same class of
+bug as every other entry in the table above.
+
+**Rules.**
+- A gate that inspected nothing, or inspected one folder when the workspace has twelve, is a **failed
+  gate** — not a pass, and not a real failure either. Check `checked[]` length against the mod count
+  before believing either verdict.
+- `-Root` / `RIMAGENTIC_ROOT` always wins and never silently falls back — including when you genuinely
+  do mean to target `game-mod`, which is the only supported way to point a gate at the toolkit mod.
+- `game-mod` is built and deployed via `deploy_rimworld_mods`, not by the release gates. It legitimately
+  has no `Assemblies/` in the repo, so seeing it in gate output at all means root resolution went wrong.
 
 ## Reading a run — is it real?
 
