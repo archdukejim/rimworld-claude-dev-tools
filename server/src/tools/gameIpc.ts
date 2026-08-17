@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { withIpcLock } from "../ipcLock";
 
 export const gameIpcTools = [
     {
@@ -80,6 +81,14 @@ function toolOutputFile(): string {
     return path.join(ipcDir(), "tool_output.json");
 }
 
+// Set when a call timed out AFTER the game consumed the request: the game may
+// still be executing and could drop its (now-orphaned) response at any moment.
+// The next call drains that late output before sending, so it can never be
+// mistaken for the new call's response.
+function lateOutputMarkerFile(): string {
+    return path.join(ipcDir(), "late_output_expected.json");
+}
+
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 // Tools whose whole point is to change what window is on screen. After one runs, the freshly
@@ -108,11 +117,94 @@ async function maybeAttachWindow(toolName: string, toolArgs: any, result: any): 
     }
 }
 
+// In-process FIFO: one session's own concurrent calls queue here instead of all
+// spinning on the cross-process lock file at once.
+let ipcChain: Promise<unknown> = Promise.resolve();
+function serializeIpc<T>(fn: () => Promise<T>): Promise<T> {
+    const next = ipcChain.then(fn, fn);
+    ipcChain = next.then(() => undefined, () => undefined);
+    return next;
+}
+
+/**
+ * One round-trip over the file-drop channel. Multiple MCP server processes run
+ * concurrently (one per Claude session) against the SAME two fixed filenames,
+ * so the whole exchange — clean stale output, write request, await response —
+ * holds a cross-process lock. Without it, sessions clobber each other's
+ * requests and consume each other's responses, which is exactly the
+ * "bridge locked up / weird result" failure mode.
+ */
 async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promise<any> {
+    return serializeIpc(() =>
+        withIpcLock(
+            ipcDir(),
+            `${name} (${maxWaitMs}ms)`,
+            () => lockedCallInGameTool(name, args, maxWaitMs),
+            // We just broke a dead/wedged session's lock. Its request may still
+            // produce a response — arm the drain so that late output can't be
+            // read as OUR answer. (The drain resolves this cheaply when the
+            // corpse's request turns out never to have been consumed.)
+            () => writeLateOutputMarker(name, STALE_BREAK_GRACE_MS)
+        )
+    );
+}
+
+// The 30s window ipcLock's TTL sizing accounts for — if you change this,
+// revisit LOCK_TTL_MS in ipcLock.ts. Used when we OBSERVED the game consume a
+// request it never answered; the game has no handler timeout, so give it real
+// slack.
+const LATE_OUTPUT_GRACE_MS = 30_000;
+// Used after breaking another session's stale lock: we don't know whether its
+// request was even consumed, so wait only long enough for a typical in-flight
+// tool execution to land.
+const STALE_BREAK_GRACE_MS = 12_000;
+
+function writeLateOutputMarker(tool: string, graceMs: number): void {
+    try {
+        fs.writeFileSync(
+            lateOutputMarkerFile(),
+            JSON.stringify({ until: Date.now() + graceMs, tool }),
+            "utf8"
+        );
+    } catch { /* best effort */ }
+}
+
+/** If a previous call abandoned a request, absorb the response the game may
+ *  still emit for it, so it can't be read as the answer to OUR request.
+ *  Runs under the cross-process lock. */
+async function drainLateOutput(): Promise<void> {
+    let until = 0;
+    try {
+        const marker = JSON.parse(fs.readFileSync(lateOutputMarkerFile(), "utf8"));
+        if (marker && typeof marker.until === "number") until = marker.until;
+    } catch {
+        return; // no marker — nothing to drain
+    }
+    // If the abandoned request is still sitting UNCONSUMED (stale-break case:
+    // the dead session wrote it but the game never picked it up), withdraw it —
+    // no response can ever come from a request the game never read.
+    if (fs.existsSync(toolInputFile())) {
+        try { fs.unlinkSync(toolInputFile()); } catch { /* best effort */ }
+        try { fs.unlinkSync(lateOutputMarkerFile()); } catch { /* best effort */ }
+        return;
+    }
+    while (Date.now() < until) {
+        if (fs.existsSync(toolOutputFile())) {
+            try { fs.unlinkSync(toolOutputFile()); } catch { /* re-check next tick */ }
+            break; // the orphaned response arrived and is gone
+        }
+        await sleep(100);
+    }
+    try { fs.unlinkSync(lateOutputMarkerFile()); } catch { /* best effort */ }
+}
+
+async function lockedCallInGameTool(name: string, args: any, maxWaitMs: number): Promise<any> {
     const requestPayload = {
         name,
         arguments: args
     };
+
+    await drainLateOutput();
 
     // Clean old output file if it exists
     if (fs.existsSync(toolOutputFile())) {
@@ -125,7 +217,7 @@ async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promi
     const iterations = Math.max(1, Math.round(maxWaitMs / 100));
     for (let i = 0; i < iterations; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         if (fs.existsSync(toolOutputFile())) {
             try {
                 const outputContent = fs.readFileSync(toolOutputFile(), "utf8");
@@ -137,18 +229,27 @@ async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promi
             }
         }
     }
-    
+
     // The old message — "Is the game running and unpaused?" — was a guess, and a wrong one twice
     // over: once while the game was running fine but the request had been written to a folder the
     // game was not reading, and once while the game had already died of a native crash. Neither
     // time did checking the game state help. What actually diagnoses this is the path being
     // watched and whether the request is still sitting there unread.
     const stillPending = fs.existsSync(toolInputFile());
+    if (stillPending) {
+        // Nothing consumed it — remove it so it can't ghost-execute if the game
+        // starts reading the folder minutes later.
+        try { fs.unlinkSync(toolInputFile()); } catch { /* best effort */ }
+    } else {
+        // The game took the request and may still answer after we stop waiting.
+        // Flag the orphan so the next call drains that late response.
+        writeLateOutputMarker(name, LATE_OUTPUT_GRACE_MS);
+    }
     const detail = stillPending
-        ? `The request is still unread at ${toolInputFile()}, so nothing is polling it. ` +
-          `The game polls the Core mod folder it was loaded from — check that the loaded Core is the one at this path ` +
-          `(RIMSYNAPSE_ROOT overrides it), and that the game has reached a live game: the poll runs from ` +
-          `GameComponentUpdate, which only ticks once a Game exists.`
+        ? `The request was still unread at ${toolInputFile()} (now withdrawn), so nothing is polling it. ` +
+          `The toolkit mod polls this exact directory (%LOCALAPPDATA%\\RimAgentic\\ipc, or RIMAGENTIC_IPC_DIR ` +
+          `when set — it must point BOTH ends at the same folder), and only once a live Game exists: the poll ` +
+          `runs from GameComponentUpdate, which never ticks at the main menu.`
         : `The request was consumed but no response appeared at ${toolOutputFile()}, so the game read it and did not answer.`;
 
     throw new Error(`Timeout after ${Math.round(maxWaitMs / 1000)}s waiting for an in-game tool response. ${detail}`);

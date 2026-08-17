@@ -38,7 +38,7 @@ import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { noteGameActivity } from "./gameWatchdog";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
-import { startBridge, Bridge } from "./bridge";
+import { connectBridge, Bridge } from "./bridge";
 import { swhTools, handleSwhTool } from "./tools/workshop";
 import { githubTools as swhGithubTools, handleGithubTool as handleSwhGithubTool } from "./tools/github";
 
@@ -228,10 +228,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // 4. Start Server
 async function main() {
-    // Start the Steam Workshop loopback bridge (127.0.0.1). Best-effort: if the
-    // port is taken, the RimWorld/GitHub tools still work; only swh_* are affected.
+    // Connect the Steam Workshop loopback bridge (127.0.0.1): bind as owner, or
+    // — when a peer MCP session already owns the port — relay through it as a
+    // proxy, so every concurrent session's swh_*/tab tools share one queue.
+    // Best-effort: on genuine failure the RimWorld/GitHub tools still work.
     try {
-        bridge = await startBridge(config);
+        bridge = await connectBridge(config);
     } catch (err) {
         console.error("[rwdt] Steam bridge failed to start (swh_* tools disabled):", err instanceof Error ? err.message : err);
     }
