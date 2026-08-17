@@ -189,6 +189,11 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
 ## Build / run
 
 - Build: `server/build_server.bat` → runs `npm run build` (`tsc`, `src/` → `build/`).
+- **`server/node_modules` is untracked** (it used to be committed, which made every worktree
+  checkout crawl). In session worktrees it's a **junction to the main checkout's copy** (made by
+  the SessionStart hook) — treat it as read-only there; `npm install` / `npm ci` runs ONLY in
+  `C:\github\rimworld-claude-dev-tools\server`. The committed `package-lock.json` is kept in
+  sync with `package.json`, so `npm ci` works in a fresh clone.
 - Run (stdio): `node server/build/index.js`. SSE: add `--sse --port <n>`.
 - The packaged runtime is `server/localMCP.exe`; `manifest.json` entry point is
   `server/index.js` launched with `node`.
