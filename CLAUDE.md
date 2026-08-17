@@ -191,6 +191,12 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   — no window focus, no drag-drop; needs `launch_chrome` + a signed-in imgur session). **Never drive
   the imgur website manually** (clicks/keystrokes/paste into the page) — blind desktop input on a
   contested desktop is what stranded past agents. Browser-session uploads have no deletehash.
+- **`imgur_status` reports BOTH paths — never declare imgur broken from `authorized:false` alone.**
+  It probes the RimAgentic Chrome for a signed-in imgur web session (cookie names over CDP) and
+  reports `webSession.loggedIn` + `uploadsAvailable` + `preferredUpload`. The standing setup on this
+  machine is web-session-only (no API credentials, by choice): that is a WORKING configuration via
+  `imgur_web_upload`, not an error to fix. If Chrome isn't running, launch it and re-check before
+  concluding anything.
 - **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
   into direct full-size image URLs: local ledger first (zero network for anything uploaded via
   `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings
