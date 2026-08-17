@@ -53,8 +53,7 @@ let status = "reused";
 if (!fs.existsSync(wtPath)) {
     try {
         fs.mkdirSync(wtRoot, { recursive: true });
-        // core.longpaths=true: this repo tracks deep node_modules paths that can exceed Windows'
-        // 260-char MAX_PATH in a nested worktree location; without it `worktree add` fails mid-checkout.
+        // core.longpaths=true is a harmless belt-and-braces for deep paths on Windows.
         const g = `git -c core.longpaths=true -C "${repoRoot}"`;
         if (refExists(repoRoot, `refs/heads/${branch}`)) {
             sh(`${g} worktree add "${wtPath}" ${branch}`);
@@ -72,12 +71,43 @@ if (!fs.existsSync(wtPath)) {
     }
 }
 
+/* server/node_modules is untracked (it used to be committed — that made every worktree add
+ * check out ~8k dependency files and every session start crawl). Fresh worktrees get a
+ * Windows JUNCTION to the main checkout's node_modules instead: instant, and deps are
+ * already installed. The junction is shared by every session, so npm installs must run
+ * ONLY in the main checkout — worktrees treat node_modules as read-only. */
+let depsNote = "";
+const wtDeps = path.join(wtPath, "server", "node_modules");
+const mainDeps = path.join(repoRoot, "server", "node_modules");
+if (!fs.existsSync(wtDeps)) {
+    if (fs.existsSync(mainDeps)) {
+        try { fs.symlinkSync(mainDeps, wtDeps, "junction"); }
+        catch { depsNote = `\n  • server/node_modules: junction failed — run npm ci in ${wtPath}\\server before building.`; }
+    } else {
+        depsNote = `\n  • server/node_modules: main checkout has none — run npm install ONCE in ${repoRoot}\\server (the shared junction target), then re-launch or junction it into this worktree.`;
+    }
+}
+
+/* Garbage-collect abandoned session worktrees so they can't pile up again. Detached and
+ * best-effort: a GC failure must never slow or block session start. The GC itself only
+ * removes worktrees that are >7 days idle, clean, and fully merged (see gc-worktrees.cjs). */
+try {
+    const { spawn } = require("child_process");
+    const gc = path.join(repoRoot, ".claude", "hooks", "gc-worktrees.cjs");
+    if (fs.existsSync(gc)) {
+        spawn(process.execPath, [gc, "--exclude", wtPath], {
+            cwd: repoRoot, detached: true, stdio: "ignore", windowsHide: true
+        }).unref();
+    }
+} catch { /* GC is optional */ }
+
 emit(
 `ISOLATION (mandatory) — this session has its own git worktree:
   • Worktree:  ${wtPath}
   • Branch:    ${branch}   (based on ${base}; ${status})
   • DO ALL WORK HERE. cd into the worktree first; use absolute paths under it for Edit/Write.
   • 'main' is PROTECTED and 'development' is integration-only — NEVER commit/push directly to either (a hook will block it).
+  • server/node_modules here is a JUNCTION to the main checkout's copy — treat it as read-only; npm install/ci runs ONLY in ${repoRoot}\\server.${depsNote}
   • See other sessions' worktrees:   git worktree list        (their branches are agent/<id>)
   • Pull a finished subtask into yours:   git -C "${wtPath}" merge agent/<other-id>
   • Land your work:  push ${branch}, then open a PR INTO development (never into main directly).
