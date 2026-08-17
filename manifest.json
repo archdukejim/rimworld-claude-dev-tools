@@ -174,6 +174,34 @@
       "description": "Compose Steam Workshop description BBCode embedding a set of Steam-hosted image URLs (with optional captions), combined with an intro and/or existing description — ready to pass to swh_update_description."
     },
     {
+      "name": "render_workshop_infographic",
+      "description": "Render one Workshop description panel as a PNG (800px wide, real font rendering): a notched-hexagon section ribbon (800x74) or a feature panel whose height derives from its content (glyph tile, subtitle, accent flavor line, body, bullet rows, Requires chip). One swappable brand accent; fixed neutral ramp."
+    },
+    {
+      "name": "compose_workshop_page",
+      "description": "Render a whole Workshop description page in one call: an ordered list of header/feature/image blocks rendered to numbered PNGs sharing one brand accent and icon setup, with optional merge into one tall image. Draft-first: local files only."
+    },
+    {
+      "name": "render_tile",
+      "description": "Render one feature-panel tile card (158x158) as a PNG from a built-in monoline glyph or an external art image; compose_workshop_page reuses it via the override gate."
+    },
+    {
+      "name": "render_workshop_preview",
+      "description": "Render the mod's preview card from one source spec to two PNGs: 640x360 (mod list) and 512x512 (Workshop thumbnail) — gradient ground, accent bars, centred glyph above the wordmark. Draft-first: local files only."
+    },
+    {
+      "name": "merge_workshop_tiles",
+      "description": "Stack rendered page PNGs vertically into one (or a few) tall images so a whole description embeds a single hosted URL; auto-splits to stay under the 700 KB performance target."
+    },
+    {
+      "name": "list_item_icons",
+      "description": "List the icons available in the local icon library (populated by dump_item_icons) that feature panels resolve against. Read-only."
+    },
+    {
+      "name": "resolve_item_icon",
+      "description": "Resolve an icon ref (file path, RimWorld texPath, or bare defName) to the PNG the infographic tools would use, without rendering. Read-only."
+    },
+    {
       "name": "showcase_add",
       "description": "Store a passing positive UI-test screenshot as a captioned, Steam-ready showcase item (scaled JPEG + manifest entry with caption/element/mod) for later Workshop description uploads. Called from the ui-test protocol on each positive pass."
     },
@@ -204,6 +232,14 @@
     {
       "name": "imgur_delete",
       "description": "Delete an uploaded imgur image by deletehash, id, or i.imgur.com link, and drop it from the local ledger. Irreversible."
+    },
+    {
+      "name": "imgur_web_upload",
+      "description": "Upload image(s) through the RimAgentic Chrome's logged-in imgur session over CDP (no API credentials needed): sets the upload page's file input directly — no window focus, no drag-drop UI — returns post URL + verified direct link per file, and records them in the shared upload ledger."
+    },
+    {
+      "name": "imgur_resolve",
+      "description": "Turn any imgur reference (album/gallery/image-page/direct URL or bare hash) into direct, embeddable full-size image URLs — local ledger first (zero network), then the imgur API, then a normalised HTML scrape with optional verification of real dimensions."
     },
     {
       "name": "launch_chrome",

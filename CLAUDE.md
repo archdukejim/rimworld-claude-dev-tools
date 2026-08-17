@@ -55,7 +55,10 @@ The server is TypeScript, compiled to `server/build/`, and also packaged as an
 - `docs/` — `API.md` (Steam Workshop `window.SWH` API), `MCP-PHASE2.md`,
   `SCHEDULING.md`, `COMMENT-TRIAGE.md`, `CLAUDE-USAGE.md`.
 - `extension/` — the Steam Workshop Helper browser extension.
-- `.claude/skills/` — includes `steam-comment-triage`, `ui-test`, `workshop-page`.
+- `.claude/skills/` — includes `ui-test`, `workshop-page` (repo-scoped on purpose: they lean on
+  in-repo docs/tools). Cross-repo workflow skills live at USER level (`~/.claude/skills/`):
+  `work-next-milestone`, `feature-complete`, `work-bugs`, `ship-it` (absorbed the old
+  `cut-release`), `steam-comment-triage`. Don't duplicate a skill in both places — one home each.
 - `.claude/agents/` — project subagents. `rimworld-isolation-tester` proves a specific
   *gameplay behavior* fires in a controlled in-game environment (precondition gate →
   `perf_watch` funnel → verdict). Use it for "does X actually work in-game / why isn't
@@ -183,6 +186,17 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   `compose_workshop_bbcode` as `images`. Uploading by `mod` pulls from the showcase gallery
   and carries each item's caption through, so passing UI-test evidence becomes a description
   with no manual step.
+- **Upload preference order:** `imgur_upload` (API; needs `imgur_login` once) → `imgur_web_upload`
+  (no credentials: drives the RimAgentic Chrome's logged-in session over CDP `DOM.setFileInputFiles`
+  — no window focus, no drag-drop; needs `launch_chrome` + a signed-in imgur session). **Never drive
+  the imgur website manually** (clicks/keystrokes/paste into the page) — blind desktop input on a
+  contested desktop is what stranded past agents. Browser-session uploads have no deletehash.
+- **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
+  into direct full-size image URLs: local ledger first (zero network for anything uploaded via
+  `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings
+  and the one-char resize suffix, prefers .png, dedups by base hash, optionally verifies real
+  dimensions). Never hand-roll this with a page fetch — scrapes surface thumbnails first, and
+  WebFetch is blocked for imgur.com.
 - Tests: `cd server && npm run test:imgur` (stub API + temp `LOCALAPPDATA`; touches neither
   imgur nor your real keyring). The OAuth round-trip itself isn't covered — it needs real credentials.
 

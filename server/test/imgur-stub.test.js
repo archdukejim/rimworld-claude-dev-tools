@@ -57,6 +57,20 @@ const stub = http.createServer((req, res) => {
             deleted.push(decodeURIComponent(req.url.split("/").pop()));
             return send(200, { success: true, data: true });
         }
+        if (req.url === "/3/album/APIALB/images" && req.method === "GET") {
+            return send(200, {
+                success: true, data: [
+                    { id: "aaaa111", link: "https://i.imgur.com/aaaa111.png", width: 800, height: 600, size: 1000, type: "image/png" },
+                    { id: "bbbb222", link: "https://i.imgur.com/bbbb222.jpg", width: 640, height: 480, size: 900, type: "image/jpeg" }
+                ]
+            });
+        }
+        if (req.url === "/3/image/APIIMG7" && req.method === "GET") {
+            return send(200, { success: true, data: { id: "APIIMG7", link: "https://i.imgur.com/APIIMG7.png", width: 320, height: 200, size: 500, type: "image/png" } });
+        }
+        if ((req.url.startsWith("/3/image/") || req.url.startsWith("/3/album/")) && req.method === "GET") {
+            return send(404, { success: false, data: { error: "not found" } });
+        }
         send(404, { success: false, data: { error: "no stub for " + req.method + " " + req.url } });
     });
 });
@@ -156,6 +170,20 @@ stub.listen(0, "127.0.0.1", async () => {
     const anon = await call("imgur_upload", { path: b, anonymous: true, force: true });
     check("anonymous mode reported", anon.mode === "anonymous" && anon.account === null, JSON.stringify({ mode: anon.mode, account: anon.account }));
     check("anonymous mode sends Client-ID", authSeen[authSeen.length - 1] === "Client-ID CLIENTID123", authSeen[authSeen.length - 1]);
+
+    // 8. imgur_resolve — API paths against the stub. (The ledger path needs no network at all;
+    //    the scrape+verify path would hit real imgur, so it stays untested here.)
+    const ralb = await call("imgur_resolve", { ref: "https://imgur.com/a/my-pages-APIALB" });
+    check("resolve album slug URL via API", ralb.source === "api" && ralb.albumId === "APIALB" && ralb.images.length === 2, JSON.stringify(ralb).slice(0, 200));
+    check("resolve returns full-size links + dims", ralb.images[0].url === "https://i.imgur.com/aaaa111.png" && ralb.images[0].width === 800 && ralb.images[0].format === "png", JSON.stringify(ralb.images[0]));
+    const rimg = await call("imgur_resolve", { ref: "APIIMG7" });
+    check("resolve bare hash via API image endpoint", rimg.source === "api" && rimg.images[0].hash === "APIIMG7" && rimg.images[0].height === 200, JSON.stringify(rimg).slice(0, 200));
+    const rbad = await call("imgur_resolve", { ref: "https://example.com/x.png" });
+    check("non-imgur ref rejected without fetching", typeof rbad === "string" && /Not an imgur reference/.test(rbad), JSON.stringify(rbad).slice(0, 120));
+
+    // 9. ledger free-text search + filename in rows
+    const bySearch = await call("imgur_list_uploads", { search: "s1.jpg" });
+    check("ledger free-text search matches filename", bySearch.count === 1 && bySearch.uploads[0].filename === "s1.jpg" && bySearch.uploads[0].link, JSON.stringify(bySearch.uploads).slice(0, 200));
 
     stub.close();
     const failed = results.filter(r => !r.pass);

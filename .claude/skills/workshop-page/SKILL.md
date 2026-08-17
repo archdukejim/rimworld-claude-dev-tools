@@ -5,10 +5,10 @@ description: Design a Vanilla-Expanded-style Steam Workshop description for one 
 
 # Workshop page designer
 
-Builds an image-based Steam Workshop description in the Vanilla Expanded house style
-(dark contour background, notched ribbon banners, gray feature panels with italic flavor
-quotes and item-icon stat grids) for a given archdukejim mod, using the
-`rimworld-claude-dev-tools` MCP. Own-brand accent, not a VE clone.
+Builds an image-based Steam Workshop description in the house style (dark neutral ramp,
+notched-hexagon section ribbons, content-height feature panels with monoline accent glyph
+tiles, one italic accent flavor line, and bullet fact rows) for a given archdukejim mod,
+using the `rimworld-claude-dev-tools` MCP. Own-brand accent, not a VE clone.
 
 Low-level tool mechanics (upload paths, BBCode, description update) live in
 `C:\github\rimworld-claude-dev-tools\commands\workshop-images.md` — this skill is the
@@ -19,7 +19,15 @@ workflow around them.
   and **stop**. Uploading images and updating the live Steam description (Phase 5) happen
   **only after explicit approval**.
 - **One brand accent per mod**, reused across every image so the page reads as one set.
-  Pick/confirm the accent hex once (default `#b9622b`); do not clone VE's red.
+  Pick/confirm the accent hex once (default `#c8873a`); do not clone VE's red. The accent
+  marks structure (ribbons, subtitle tabs, bullets, glyphs, tile borders, the flavor line) —
+  never body prose. If tempted to accent a paragraph for emphasis, restructure it into a row.
+- **Copy voice is concrete and declarative.** No marketing adjectives ("powerful",
+  "seamless", "immersive"), no exclamation marks, no second-person hype. State what the
+  thing does and what it costs. Where the mod contradicts a common assumption, say so
+  plainly in the body — that is the most persuasive sentence on the page. Panel titles are
+  short sentence-case phrases ("Never closer than safe"); the flavor line is one short
+  sentence with a turn in it; a row is a fact, not a sentence.
 - **Icons are real textures.** Vanilla Core/DLC icons come from the library
   (`%LOCALAPPDATA%\RimAgentic\icons`, populated by `dump_item_icons`); the mod's OWN item
   icons resolve from its `Textures/` folder via `iconRoots`. Confirm a defName with
@@ -49,16 +57,21 @@ is missing, populate the library first — see `commands/workshop-images.md` →
 `unresolved` icon refs. **Stop here.** This is the draft.
 
 **Phase 5 — Publish (approval-gated only).** After explicit approval: upload the PNGs in
-order (imgur or Steam via Claude in Chrome — a publish action, confirm), `compose_workshop_bbcode`
-with the resulting URLs in order, show the final BBCode, **confirm again**, then
-`swh_update_description { fileId, description }`. Verify with `swh_get_item`.
+order with **`imgur_upload`** (API; run `imgur_login` first if `imgur_status` shows no
+credentials) or, with no credentials, **`imgur_web_upload`** (drives the RimAgentic
+Chrome's logged-in imgur session over CDP — needs `launch_chrome`; **never click/type/paste
+through the imgur website manually**). Both are publish actions — confirm first. Then
+`compose_workshop_bbcode` with the returned `bbcodeImages`/URLs in order, show the final
+BBCode, **confirm again**, then `swh_update_description { fileId, description }`. Verify
+with `swh_get_item`.
 
 ## Tools (rimworld-claude-dev-tools MCP)
 - Plan/draft (safe): `swh_get_item`, `list_item_icons`, `resolve_item_icon`,
-  `compose_workshop_page`, `render_workshop_infographic`, `list_workshop_images`.
+  `compose_workshop_page`, `render_workshop_infographic`, `render_workshop_preview`,
+  `list_workshop_images`.
 - Populate icon library (from a running game): `execute_game_tool { tool_name:"dump_item_icons" }`.
-- Publish (approval-gated): image upload via Claude in Chrome, `compose_workshop_bbcode`,
-  `swh_update_description`.
+- Publish (approval-gated): `imgur_upload` (after `imgur_login`), `compose_workshop_bbcode`,
+  `swh_update_description`. `imgur_resolve` turns any user-pasted imgur link into direct URLs.
 
 ## Preconditions
 The MCP registered. For Phase 5, Chrome with the Steam Workshop Helper extension and logged
