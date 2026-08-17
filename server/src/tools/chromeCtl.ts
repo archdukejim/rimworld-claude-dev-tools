@@ -279,8 +279,8 @@ function defaultBrowser(url: string, why: string): { ok: boolean; via: string; e
 
 /** Tab-group work lives in the extension; surface a useful error when the bridge isn't up. */
 async function viaBridge(bridge: Bridge | null, method: string, args: any) {
-    if (!bridge) return errText("The loopback bridge isn't running, so the extension can't be reached. Restart the MCP server.");
-    const st = bridge.status();
+    if (!bridge) return errText("The loopback bridge isn't available in this session (port conflict at startup?), so the extension can't be reached. Restart this session's MCP server.");
+    const st = await bridge.status();
     if (!st.connected) {
         return errText(
             "The extension isn't connected to the loopback bridge, so tab/group calls can't run.\n" +
@@ -387,7 +387,7 @@ async function describe(port: number, bridge: Bridge | null, extra: Record<strin
     let ts: Target[] = [];
     try { ts = await targets(port); } catch { /* endpoint raced; report what we have */ }
     const pages = ts.filter(t => t.type === "page");
-    const bs = bridge ? bridge.status() : null;
+    const bs = bridge ? await bridge.status() : null;
     return {
         running: true,
         port,
@@ -395,7 +395,7 @@ async function describe(port: number, bridge: Bridge | null, extra: Record<strin
         extensionPath: extensionDir(),
         pids: ourChromePids(),
         extension: extensionAlive(ts) as Record<string, unknown>,
-        bridge: bs ? { connected: bs.connected, queued: bs.queued, pending: bs.pending } : { connected: false, note: "bridge not started" },
+        bridge: bs ? { connected: bs.connected, queued: bs.queued, pending: bs.pending, mode: bs.mode } : { connected: false, note: "bridge not started" },
         tabs: pages.map(p => ({ id: p.id, title: p.title, url: p.url })),
         ...extra
     };

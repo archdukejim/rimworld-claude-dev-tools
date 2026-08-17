@@ -124,10 +124,11 @@ async function authorize(anonymous: boolean): Promise<{ header: string; mode: "a
     const creds = readCreds();
     if (!creds) {
         throw new Error(
-            "No imgur credentials stored. Run imgur_login (see its description for the 60-second app registration), " +
-            "or imgur_login { clientId, anonymousOnly: true } for anonymous uploads with no account. " +
-            "Do NOT fall back to driving the imgur website in a browser — its drag-drop upload UI is agent-hostile; " +
-            "fix the credentials and use imgur_upload."
+            "No imgur API credentials stored — but that does NOT mean uploads are broken: if the RimAgentic " +
+            "Chrome is signed into imgur, imgur_web_upload works right now with no credentials (run imgur_status " +
+            "to check both paths). For the API path, run imgur_login (see its description for the 60-second app " +
+            "registration) or imgur_login { clientId, anonymousOnly: true }. Never drive the imgur website " +
+            "MANUALLY (clicks/keystrokes) — imgur_web_upload is the only sanctioned browser path."
         );
     }
     if (!anonymous && creds.refreshToken) {
@@ -246,9 +247,11 @@ export const imgurTools = [
     {
         name: "imgur_status",
         description:
-            "Report imgur auth state: which account is active (or anonymous mode), whether the access token is valid " +
-            "and when it expires, remaining API/upload quota, and how many uploads the local ledger holds. Read-only — " +
-            "call this first when an upload fails, before re-running imgur_login.",
+            "Report BOTH imgur upload paths: stored API credentials (imgur_upload — account, token expiry, quota) AND " +
+            "the RimAgentic Chrome's signed-in web session (imgur_web_upload — probed via cookie names over CDP). " +
+            "`authorized:false` does NOT mean imgur is broken: check `uploadsAvailable` / `webSession.loggedIn` — a " +
+            "signed-in browser session uploads fine with zero API credentials. Read-only — call this first when an " +
+            "upload fails, BEFORE re-running imgur_login or telling the user imgur is unusable.",
         inputSchema: { type: "object", properties: {} }
     },
     {
@@ -501,15 +504,108 @@ function page(error: string | null): string {
         `<h1 style="font-size:1.3rem">${title}</h1><p>${body}</p></body>`;
 }
 
+// ---------------------------------------------------------------------------- web-session probe
+
+/* Cookie names that only exist for a signed-in imgur browser session (verified
+ * empirically 2026-08-17 against a logged-in RimAgentic profile): the SPA's
+ * OAuth bearer cookie, the remember-me cookie, and imgur's own auth flag.
+ * Cookie NAMES only are ever read out — never values. */
+const IMGUR_AUTH_COOKIES = ["accesstoken", "authautologin", "is_authed"];
+
+interface WebSessionProbe {
+    chromeRunning: boolean;
+    loggedIn: boolean | null; // null = could not check (Chrome down / probe disabled)
+    evidence?: string[];      // which auth cookie names were found
+    note: string;
+}
+
+/** Names (never values) of imgur.com cookies in the running RimAgentic Chrome. */
+async function browserImgurCookieNames(wsUrl: string): Promise<string[]> {
+    const page = await CdpPage.open(wsUrl);
+    try {
+        const r = await page.cmd("Storage.getCookies", {});
+        return (r?.cookies || [])
+            .filter((c: any) => String(c.domain || "").endsWith("imgur.com"))
+            .map((c: any) => String(c.name));
+    } finally {
+        page.close();
+    }
+}
+
+/**
+ * Is the RimAgentic Chrome up, and does its profile hold a signed-in imgur
+ * session (i.e. does imgur_web_upload work with zero API credentials)?
+ * Read-only browser-target CDP cookie check. RIMAGENTIC_CDP_PORT=0 disables
+ * the probe (used by the hermetic stub tests).
+ */
+async function probeWebSession(): Promise<WebSessionProbe> {
+    const envPort = process.env.RIMAGENTIC_CDP_PORT;
+    const port = envPort !== undefined ? Number(envPort) : CDP_PORT_DEFAULT;
+    if (!port) {
+        return { chromeRunning: false, loggedIn: null, note: "web-session probe disabled (RIMAGENTIC_CDP_PORT=0)." };
+    }
+    let wsUrl: string | undefined;
+    try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 1500);
+        const v: any = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: ac.signal })).json();
+        clearTimeout(t);
+        wsUrl = v?.webSocketDebuggerUrl;
+    } catch {
+        return {
+            chromeRunning: false,
+            loggedIn: null,
+            note: "RimAgentic Chrome is not running, so the web-session upload path could not be checked — " +
+                  "launch_chrome starts it, and its persistent profile usually keeps the imgur sign-in."
+        };
+    }
+    if (!wsUrl) {
+        return { chromeRunning: true, loggedIn: null, note: "Chrome is up but exposed no browser-level debug socket; can't check the imgur session." };
+    }
+    try {
+        const names = await Promise.race([
+            browserImgurCookieNames(wsUrl),
+            new Promise<string[]>((_, rej) => setTimeout(() => rej(new Error("cookie probe timed out")), 4000)),
+        ]);
+        const evidence = IMGUR_AUTH_COOKIES.filter(n => names.includes(n));
+        return evidence.length
+            ? {
+                  chromeRunning: true, loggedIn: true, evidence,
+                  note: "Signed into imgur in the RimAgentic Chrome — imgur_web_upload works with no API credentials."
+              }
+            : {
+                  chromeRunning: true, loggedIn: false,
+                  note: "The RimAgentic Chrome is running but holds NO signed-in imgur session — sign in once in that window to enable imgur_web_upload."
+              };
+    } catch (e: any) {
+        return { chromeRunning: true, loggedIn: null, note: `Could not check the imgur session (${e?.message || e}).` };
+    }
+}
+
 // ---------------------------------------------------------------------------- imgur_status
 
 async function status() {
     const creds = readCreds();
     const ledger = await readLedger();
+    const webSession = await probeWebSession();
     if (!creds) {
+        // No API credentials is NOT "imgur is broken" — the browser-session
+        // path may be fully working. Say so explicitly: this exact output used
+        // to make every fresh chat report imgur as unusable.
         return okText({
             authorized: false,
-            note: "No imgur credentials stored. Run imgur_login — its description has the app-registration steps.",
+            webSession,
+            uploadsAvailable: webSession.loggedIn === true,
+            preferredUpload: webSession.loggedIn ? "imgur_web_upload" : null,
+            note: webSession.loggedIn
+                ? "Uploads WORK right now via imgur_web_upload (signed-in browser session). No API credentials " +
+                  "stored, so imgur_upload is unavailable — imgur_login is optional and only adds deletehashes/albums."
+                : webSession.chromeRunning
+                    ? "No API credentials, and the running RimAgentic Chrome has no signed-in imgur session. Either " +
+                      "sign into imgur in that window (enables imgur_web_upload) or run imgur_login (API path)."
+                    : "No API credentials stored, and the RimAgentic Chrome isn't running so the web-session path " +
+                      "couldn't be checked. Do NOT report imgur as broken from this alone — launch_chrome and re-run " +
+                      "imgur_status, or run imgur_login for the API path.",
             ledgerUploads: ledger.uploads.length
         });
     }
@@ -521,6 +617,9 @@ async function status() {
         mode: creds.refreshToken ? "account" : "anonymous",
         account: creds.accountUsername ?? null,
         accessTokenExpiresAt: creds.expiresAt ?? null,
+        webSession,
+        uploadsAvailable: true,
+        preferredUpload: "imgur_upload",
         ledgerUploads: ledger.uploads.length,
         albums: Object.values(ledger.albums).map(a => ({ title: a.title, id: a.id }))
     };

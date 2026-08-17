@@ -1,34 +1,79 @@
-# Agent handoff — session 8c27bd52 (2026-08-16)
+# Agent handoff — session 74d9dd03 (2026-08-17)
 
-Branch: `agent/8c27bd52` → PR #21 into `development`.
+Branch: `agent/74d9dd03` → PR into `development`.
 
 ## What was done
 
-1. **Workshop description renderer redesigned to the fixed-token spec**
-   (`server/src/tools/workshopImages.ts`): one swappable ACCENT (#c8873a) + fixed neutral
-   ramp; 800x74 notched-hexagon header with centred uppercase title; feature panels whose
-   height derives from content (rhythm constants in the `F` object) with the tile column and
-   content panel centred vertically **independently**; per-character advance-table wrapping
-   (`measureText`/`wrapText`); 158x158 rx10 tiles with monoline accent glyphs (new:
-   crosshair, standoff, bipod, tracks); Requires chip; new `render_workshop_preview` tool
-   (640x360 + 512x512 from one spec); PNG compression 9. Manifest, `commands/workshop-images.md`,
-   and the `workshop-page` skill synced (accent default now #c8873a, copy-voice rules added).
+Fixed the "bridge keeps locking up when multiple chats/agents run" problem by adding
+cross-process queueing to BOTH bridges. Root cause (verified empirically: five
+`node server/build/index.js` processes were running concurrently, one per Claude
+session, stdio transport):
 
-2. **imgur family** (`server/src/tools/imgur.ts`): new `imgur_resolve` (ledger → API → scrape
-   + normalise, optional verify); `imgur_list_uploads` gained `search` + `filename`; upload
-   guidance hardened everywhere to "use imgur_upload, never the imgur website in a browser".
-   Stub tests extended to 27/27 (`npm run test:imgur`).
+1. **Game IPC channel** (`gameIpc.ts`): all sessions shared
+   `%LOCALAPPDATA%\RimAgentic\ipc\tool_input.json` / `tool_output.json` — fixed
+   filenames, no correlation IDs (the game-side protocol in
+   `game-mod/Source/SynapseGameComponent.cs` echoes nothing), no locking. Sessions
+   clobbered each other's requests and consumed each other's responses → spurious
+   timeouts, cross-matched results.
+2. **SWH loopback bridge** (`bridge.ts`, port 8766): only the first process to bind
+   the port got a bridge; every other session had `swh_*` / `chrome_tabs` /
+   `chrome_tidy` permanently dead ("bridge not started").
+
+## The fix
+
+- **`server/src/ipcLock.ts` (new)** — cross-process mutex in the IPC dir
+  (`bridge.lock`, atomic `wx` create; rename-based stale-breaking when the holder
+  pid is dead or the lock outlives its 90s TTL; unlink retries for AV holds; wait
+  budget 180s). NOT reentrant — never call `callInGameTool` from inside a locked fn.
+- **`gameIpc.ts`** — every `callInGameTool` round-trip now runs inside an in-process
+  FIFO + the cross-process lock. On timeout: an unconsumed request is withdrawn
+  (no ghost execution); a consumed-but-unanswered one arms a `late_output_expected`
+  marker so the NEXT caller drains the game's late response instead of consuming it
+  as its own. Stale-break arms the same drain (12s grace) since the dead session's
+  request may still be executing.
+- **`bridge.ts`** — rewritten for multi-session:
+  - one command in flight at a time; queued commands get a queue-grace timer
+    (60s), and the real exec timeout only starts at dispatch (fixes ghost
+    execution of timed-out queued commands);
+  - `POST /call` relay endpoint + `connectBridge()`: the first process to bind is
+    the OWNER, every later process gets a PROXY that relays through it, so all
+    sessions share one queue. Owner dies → the next proxy call promotes itself.
+    `/call` is locked against browsers (Origin-reject, no CORS headers, shared
+    secret at `%LOCALAPPDATA%\RimAgentic\bridge-call-secret.txt`);
+  - replay policy: extension reconnect mid-command replays only REPLAY_SAFE
+    (read/converging) methods; `postComment` etc. fail fast with an honest
+    "MAY have executed — verify before retrying" (the MV3 worker can die after the
+    page-context Steam call fired, so blind replay double-posts). Same rule on
+    proxy failover: auto re-send only on ECONNREFUSED or replay-safe methods;
+  - `Bridge.status()` is now async (proxy needs a network hop) — both call sites
+    in `chromeCtl.ts` updated.
 
 ## Verification
-- `npm run build` clean; imgur stub tests 27/27.
-- Renderer validated by composing a 3-block page + preview cards and inspecting the PNGs
-  (header 74 tall, long panel derived 305, short panel shows independent centering, chip
-  spacing fixed via explicit tspan dx).
 
-## Notes for the next agent
-- `npm ci` in a fresh worktree may leave `fast-xml-parser` missing (lockfile drift also seen
-  as the uncommitted `server/package-lock.json` change in the main checkout); `npm install`
-  fixes the build.
-- The running dev MCP server uses `server/build/` — rebuild + restart to pick these up.
-- `imgur_resolve`'s scrape+verify path is untested against real imgur (needs network); ledger
-  and API paths are covered by the stub tests.
+- `npm run build` clean.
+- `npm run test:ipc` — 4 processes × 8 calls against a fake game responder: zero
+  cross-talk, fake game never saw overlapping requests, dead-pid stale lock broken,
+  timed-out request withdrawn, lock released.
+- `npm run test:bridge` — owner + proxy + fake extension: serialization across
+  sessions, idempotent replay after lost delivery, `postComment` fail-fast without
+  re-delivery, proxy self-promotion after owner exit.
+
+## ROLLOUT — important
+
+The fix is only real once **every running server is the new build**: an old-build
+process ignores `bridge.lock`, and if it owns port 8766 the new proxies refuse it
+(`/health` has no `relay: true` marker) with a "stale build" error. After merging:
+rebuild in the main checkout and **kill all old `node server/build/index.js`
+processes** before trusting the bridge again.
+
+## Explicitly NOT fixed here (separate work, surfaced by the concurrency audit)
+
+- Kill-by-image-name: `taskkill /f /im RimWorldWin64.exe` in the watchdog backstop /
+  `launch_rimworld killExisting` / quicktest kills OTHER sessions' games; the idle
+  watchdog's activity clock is per-process so it can close a game another session
+  is driving.
+- Unlocked read-modify-write JSON stores: `keys.json` (keyring can be wiped by a
+  torn read), imgur `uploads.json` (ledger records / anonymous deletehashes lost),
+  `showcase.json`.
+- Shared default savedatafolder → ModsConfig/Prefs TOCTOU between sessions
+  (one session's test can silently run against another's modlist).
