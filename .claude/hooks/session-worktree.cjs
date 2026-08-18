@@ -16,7 +16,8 @@ const fs = require("fs");
 const path = require("path");
 
 function sh(cmd) {
-    return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    // windowsHide: the hook runs consoleless, so without it every git child would flash a window.
+    return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
 }
 function ok(fn, dflt) { try { return fn(); } catch { return dflt; } }
 function refExists(repo, ref) { return ok(() => { sh(`git -C "${repo}" rev-parse --verify --quiet ${ref}`); return true; }, false); }
