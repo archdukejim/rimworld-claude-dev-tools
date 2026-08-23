@@ -1,34 +1,43 @@
-# Agent handoff — session 8c27bd52 (2026-08-16)
+# AGENT-HANDOFF — `agent/bb82b711`
 
-Branch: `agent/8c27bd52` → PR #21 into `development`.
+## What this branch adds
 
-## What was done
+**PromptLab — the universal, game-free RimSynapse prompt/response harness.** Compose the exact prompt any LLM
+call site would send → run it against the same local model → return the **raw** response → iterate, with no
+game launch. It does NOT judge (that's the consumer's job). See `docs/plans/prompt-lab-universal.md`.
 
-1. **Workshop description renderer redesigned to the fixed-token spec**
-   (`server/src/tools/workshopImages.ts`): one swappable ACCENT (#c8873a) + fixed neutral
-   ramp; 800x74 notched-hexagon header with centred uppercase title; feature panels whose
-   height derives from content (rhythm constants in the `F` object) with the tile column and
-   content panel centred vertically **independently**; per-character advance-table wrapping
-   (`measureText`/`wrapText`); 158x158 rx10 tiles with monoline accent glyphs (new:
-   crosshair, standoff, bipod, tracks); Requires chip; new `render_workshop_preview` tool
-   (640x360 + 512x512 from one spec); PNG compression 9. Manifest, `commands/workshop-images.md`,
-   and the `workshop-page` skill synced (accent default now #c8873a, copy-voice rules added).
+- **NEW `promptlab/`** — a net8 console: a reflection-based family registry (`Contract.cs` `IPromptFamily`,
+  `Registry.cs`), a generic runner (`Program.cs`), the faithful caller (`LlmCaller.cs`), and the live-Core-
+  config reader (`CoreConfigReader.cs`). Families in `promptlab/Families/`: `ConversationFamily` (links
+  Conversations' pure `ThinPromptComposer`/`IdentityComposer`/`LenientDialogueParser`) and `NewspaperFamily`
+  (links WorldNews' pure `NewspaperPromptComposer`). Each family `<Compile>`-links its mod's pure composer from
+  the workspace (`$RS_Root\<Mod>`, per-mod overridable via `*_SRC`), conditional on the source being present.
+- **NEW `harness/promptlab.ps1`** — builds the console (passing `-p:WorkspaceRoot` + any `*_SRC` env
+  overrides) and runs a job; emits ONLY the console's JSON on stdout.
+- **CHANGED `server/src/tools/promptLab.ts`** — tool family `promptLab`:
+  - `simulate_llm_prompt { family, mode, inputs|scenarios, suiteFilter, runs, dryRun, config }` → raw responses
+    + composed prompts + optional family parse + metadata.
+  - `list_prompt_families` → families + input contracts + catalog sizes.
+- **CHANGED** `server/src/index.ts` (`promptLab` wired ×4 — unchanged since the family fns kept their names),
+  `manifest.json`, `CLAUDE.md`, `.gitignore` (`promptlab/bin`,`obj`).
 
-2. **imgur family** (`server/src/tools/imgur.ts`): new `imgur_resolve` (ledger → API → scrape
-   + normalise, optional verify); `imgur_list_uploads` gained `search` + `filename`; upload
-   guidance hardened everywhere to "use imgur_upload, never the imgur website in a browser".
-   Stub tests extended to 27/27 (`npm run test:imgur`).
+## Depends on the mod pure composers
+- **Conversations** `feature/prompt-lab` (#54) — the pure `ThinPromptComposer` etc.
+- **WorldNews** `feature/prompt-lab-composer` — the pure `NewspaperPromptComposer`.
+Until those land in the workspace, set `CONVERSATIONS_SRC` / `WORLDNEWS_SRC` to their checkouts;
+`promptlab.ps1` passes them through. A family whose source is absent simply isn't registered.
 
-## Verification
-- `npm run build` clean; imgur stub tests 27/27.
-- Renderer validated by composing a 3-block page + preview cards and inspecting the PNGs
-  (header 74 tall, long panel derived 305, short panel shows independent centering, chip
-  spacing fixed via explicit tspan dx).
+## Verify (done this session)
+- `cd server && npm run build` clean; `manifest.json` valid; console builds with both families.
+- End-to-end through the built MCP handler (with `*_SRC` set): `list_prompt_families` → conversation(32),
+  newspaper(5); a conversation scenario returned parsed lines; a newspaper suite scenario returned a full issue
+  (headline + wealth/strength deltas). #44 phenomenon reproduces (voiced-clinical → clinical; voiceless-bare →
+  plain speech).
 
-## Notes for the next agent
-- `npm ci` in a fresh worktree may leave `fast-xml-parser` missing (lockfile drift also seen
-  as the uncommitted `server/package-lock.json` change in the main checkout); `npm install`
-  fixes the build.
-- The running dev MCP server uses `server/build/` — rebuild + restart to pick these up.
-- `imgur_resolve`'s scrape+verify path is untested against real imgur (needs network); ledger
-  and API paths are covered by the stub tests.
+## Next (planned, not in this branch)
+Phase 2 fixtures: `capture_prompt_fixtures` (game-launch-once dump of REAL inputs) then corpus/type inference;
+Phase 3 A/B + snapshot/variance; Phase 4 Psychology families + agentic loops.
+
+## Rollout note
+Restart the running MCP server (`node server/build/index.js`) to expose the tools. The console is a dev-only
+build (never in the TS build or `.mcpb`); it needs `dotnet` and the mod workspace present.

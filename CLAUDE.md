@@ -126,7 +126,38 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `set_active_key`; multiple labelled keys per service, active-key resolution),
 `imgur` (host generated images for Workshop descriptions — see below),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
-`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
+`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
+`promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
+prompt/response harness — see below).
+
+### Game-free prompt iteration (`promptLab`)
+
+The **universal** RimSynapse prompt/response harness. `simulate_llm_prompt` composes the EXACT prompt a
+given LLM call site (**family**) would send and — unless `dryRun` — sends it to the same local model the
+game uses, with **no RimWorld launch**, returning the **raw** response (+ composed system/user, an
+optional family parse, and metadata). It replaces the deploy→launch→load→debug-action→read-log loop for
+tuning prompts (e.g. the Conversations #44 clinical-technobabble regression). **It does NOT judge** —
+parsing/scoring the raw is the job of whatever specific tool is built on top, tuned to that tool's goal.
+
+- **Family registry.** Each call site is an `IPromptFamily` (`promptlab/Contract.cs`), discovered by
+  reflection (`Registry.cs`). Current families: `conversation` (Conversations dialogue), `newspaper`
+  (WorldNews broadsheet), and `psychology.voice` / `psychology.break` / `psychology.childhood` (Psychology —
+  note `psychology.voice` produces the `voiceProfile` the `conversation` #44 logic consumes, so the whole
+  register loop is tunable game-free). `list_prompt_families` returns each family's input contract (fields, types,
+  provenance) + catalog size. `mode:"suite"` runs a family's built-in scenario catalog; `mode:"scenario"`
+  runs your own `inputs` (family-specific — see the contract). `dryRun` builds prompts without an LLM.
+- **Faithful by construction:** a family `<Compile>`-links the PURE, Verse-free composer authored ONCE
+  in its mod (`ThinPromptComposer`/`IdentityComposer` in Conversations; `NewspaperPromptComposer` in
+  WorldNews), so the lab can't drift from the game. A TS reimplementation would silently diverge — don't
+  build one. Add a family = add a mod-owned pure composer + a `promptlab/Families/<X>Family.cs` adapter.
+- **Pipeline:** MCP tool → `harness/promptlab.ps1` → `promptlab/PromptLab.exe`. The console links each
+  mod's pure composer from the workspace (`$RS_Root\<Mod>`), reads the **live Core config** for
+  endpoint/model, auto-maps the loaded local model like the game, and POSTs the faithful non-agentic body
+  `{model, messages}` + thinking-disable flags — no temperature/max_tokens/response_format.
+- **Mod source location:** a family only compiles in if its mod's pure composer is present at
+  `$RS_Root\<Mod>`. To test a family against a mod **branch/worktree** before it lands, set the matching
+  `*_SRC` env var (`CONVERSATIONS_SRC`, `WORLDNEWS_SRC`, …) to that checkout — `promptlab.ps1` passes it
+  through as an MSBuild property. Requires `dotnet`.
 
 ### The RimAgentic Chrome (`chromeCtl`)
 

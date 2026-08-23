@@ -2,10 +2,22 @@ import { nut, sharp } from "./native";
 import { CaptureFormat, Region as CustomRegion } from "./types";
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
 import { randomBytes } from "crypto";
 
 let screenshotCounter = 0;
 const MAX_SCREENSHOTS = 20;
+
+/**
+ * Where captures land. Resolving against process.cwd() littered whatever folder the server
+ * happened to be started from with the 20-slot screenshot rotation (and kept re-creating
+ * folders the user had deleted). A fixed temp-dir home survives any cwd and is safe to purge.
+ */
+async function screenshotDir(): Promise<string> {
+  const dir = path.join(os.tmpdir(), "rimagentic-screenshots");
+  await fs.mkdir(dir, { recursive: true });
+  return dir;
+}
 
 /**
  * Captures the entire screen, writes it to a PNG/JPEG file, and returns the file PATH.
@@ -27,10 +39,10 @@ export async function captureScreen(format: CaptureFormat = CaptureFormat.PNG, q
   try {
     screenshotCounter = (screenshotCounter % MAX_SCREENSHOTS) + 1;
     const finalFilename = `screenshot_${String(screenshotCounter).padStart(2, '0')}.${format}`;
-    finalFilepath = path.resolve(finalFilename);
+    finalFilepath = path.join(await screenshotDir(), finalFilename);
 
     const tempFilename = `temp_screenshot_${randomBytes(8).toString('hex')}.png`;
-    tempFilepath = path.resolve(tempFilename);
+    tempFilepath = path.join(await screenshotDir(), tempFilename);
 
     const width = await screen.width();
     const height = await screen.height();
@@ -87,10 +99,10 @@ export async function captureRegion(region: CustomRegion, format: CaptureFormat 
   try {
     screenshotCounter = (screenshotCounter % MAX_SCREENSHOTS) + 1;
     const finalFilename = `screenshot_${String(screenshotCounter).padStart(2, '0')}.${format}`;
-    finalFilepath = path.resolve(finalFilename);
+    finalFilepath = path.join(await screenshotDir(), finalFilename);
 
     const tempFilename = `temp_screenshot_${randomBytes(8).toString('hex')}.png`;
-    tempFilepath = path.resolve(tempFilename);
+    tempFilepath = path.join(await screenshotDir(), tempFilename);
 
     const nutRegion = new NutRegion(region.left, region.top, region.width, region.height);
     console.error(`Attempting to capture region to temporary file: ${tempFilepath}`);
