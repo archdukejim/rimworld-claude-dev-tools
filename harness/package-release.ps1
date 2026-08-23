@@ -88,6 +88,22 @@ foreach ($r in $Repo) {
         Write-Host "[package] ${r}: injected $($localDlls.Count) DLL(s), checksum-verified against $relTag"
     }
 
+    # Guard (Core#117): never emit a zip whose CHECKSUMS.sha256 lists DLLs the staged
+    # payload does not contain. This is what shipped a hollow Core-0.9.1.zip: the local
+    # Assemblies/ was empty at package time, so the injection block above was silently
+    # skipped and a zip with only CHECKSUMS.sha256 was produced with no error. A missing
+    # DLL here means the release source was not built before packaging.
+    $manifestPath = Join-Path $stagedAsm 'CHECKSUMS.sha256'
+    if (Test-Path $manifestPath) {
+        $listed = Get-Content $manifestPath |
+            Where-Object { $_ -match '^[0-9a-f]{64}\s+\S' } |
+            ForEach-Object { ($_ -split '\s+', 2)[1].Trim() }
+        $missing = @($listed | Where-Object { -not (Test-Path (Join-Path $stagedAsm $_)) })
+        if ($missing.Count) {
+            throw "${r}: staged zip is missing DLL(s) listed in CHECKSUMS.sha256: $($missing -join ', '). Build the release source (Assemblies/) before packaging."
+        }
+    }
+
     $zip = Join-Path $OutDir "$r-$version.zip"
     if (Test-Path $zip) { Remove-Item $zip }
     Compress-Archive -Path (Join-Path $staging $r) -DestinationPath $zip
