@@ -57,6 +57,10 @@ foreach ($mod in $targets) {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
     $wikiUrl = if ($pat) {
         "https://x-access-token:$pat@github.com/RimSynapse/$name.wiki.git"
+    } elseif ($WhatIf) {
+        # The gate path only reads, and the wikis are public: clone anonymously so a
+        # hosted runner with no PAT and no SSH key can still check drift (Core#85).
+        "https://github.com/RimSynapse/$name.wiki.git"
     } else {
         "git@github.com:RimSynapse/$name.wiki.git"
     }
