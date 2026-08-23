@@ -322,7 +322,7 @@ export const jobsTools = [
                 repo: { type: "string", description: "Build only this repo and its dependencies. Omit to build everything." },
                 mods: { type: "array", items: { type: "string" }, description: "packageIds to pin as the run's active modlist (written into the job's own ModsConfig)." },
                 savedatafolder: { type: "string", description: "Override the job's savedatafolder. Default: an isolated per-job folder under %LOCALAPPDATA%\\RimAgentic\\jobs." },
-                timeoutSec: { type: "number", description: "Max seconds to wait for the TestRunner (default 420)." },
+                timeoutSec: { type: "number", description: "Max seconds to wait for the in-game test runner (default 420)." },
                 isolate: { type: "boolean", description: "Build in a git worktree of the mod repo (committed HEAD) so the build is isolated and parallel-safe. Requires 'repo' to be its own git repo; works for standalone mods. Default false." }
             }
         }

@@ -4,7 +4,7 @@
   "display_name": "Rim Agentic Toolkit",
   "version": "1.2.0",
   "description": "An agent-driven RimWorld modding toolkit: discover, build, deploy, launch and test any RimWorld mod, with a live in-game tool bridge and bundled modding docs.",
-  "long_description": "RimAgentic lets a frontier-model agent develop RimWorld mods. Mod tools discover the mods in a workspace, resolve load order from About.xml, build C# in dependency order, deploy into the game's Mods folder, launch an isolated dev instance, run the in-game TestRunner, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and test results. A bundled modding knowledge base teaches the agent how to mod (Defs, XML patches, C#/Harmony, load order). Game IPC tools call into a running game via the companion RimAgentic game mod, which exposes the base game + DLC surface (defs, incidents, reflected debug actions, pawn/object/map state) and lets other mods register their own tools dynamically. GitHub tools (the only family needing a token) manage issues, boards and wikis; desktop-control tools drive mouse/keyboard/screen for cases with no data path. A failure in any one family disables only that family, not the whole server.",
+  "long_description": "RimAgentic lets a frontier-model agent develop RimWorld mods. Mod tools discover the mods in a workspace, resolve load order from About.xml, build C# in dependency order, deploy into the game's Mods folder, launch an isolated dev instance, run the in-game test suite, and parse Player.log into classified errors, Harmony patch failures, missing dependencies and test results. A bundled modding knowledge base teaches the agent how to mod (Defs, XML patches, C#/Harmony, load order). Game IPC tools call into a running game via the companion RimAgentic game mod, which exposes the base game + DLC surface (defs, incidents, reflected debug actions, pawn/object/map state) and lets other mods register their own tools dynamically. GitHub tools (the only family needing a token) manage issues, boards and wikis; desktop-control tools drive mouse/keyboard/screen for cases with no data path. A failure in any one family disables only that family, not the whole server.",
   "author": {
     "name": "archdukejim"
   },
@@ -439,11 +439,11 @@
     },
     {
       "name": "run_rimworld_tests",
-      "description": "Full automated test cycle: build the mods in dependency order, launch RimWorld with the in-game TestRunner (-synapse-test), then classify the log. Stops early if the build fails. Returns the build summary plus [SYNAPSE-TEST] PASS/FAIL results and any errors. Requires the RimSynapse.TestRunner mod to be active and loaded last."
+      "description": "Full automated test cycle: build the mods (and their Source.Tests projects) in dependency order, launch RimWorld with the in-game test runner (-synapse-test, hosted by the RimAgentic toolkit bridge), then classify the log. Stops early if the build fails. Returns the build summary plus [SYNAPSE-TEST] PASS/FAIL results and any errors. Requires the toolkit bridge mod to be active; it is forced to load last."
     },
     {
       "name": "read_rimworld_log",
-      "description": "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any [SYNAPSE-TEST] PASS/FAIL results from the TestRunner mod. Pass raw:true for an unfiltered tail instead."
+      "description": "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any [SYNAPSE-TEST] PASS/FAIL results from the in-game test runner. Pass raw:true for an unfiltered tail instead."
     },
     {
       "name": "list_rimworld_saves",

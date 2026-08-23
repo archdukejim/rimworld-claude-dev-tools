@@ -1,4 +1,4 @@
-# package-release.ps1 — build the installable .zip asset for a GitHub release (Core#109).
+﻿# package-release.ps1 — build the installable .zip asset for a GitHub release (Core#109).
 #
 # RimSort installs mods from GitHub by downloading a release's .zip *asset*; the
 # auto-generated "Source code (zip)" does not count. This script packages the
@@ -27,7 +27,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $shipped = @('Core', 'Psychology', 'Conversations', 'Factions', 'WorldNews',
-             'Regions-and-Territories', 'NVIDIA-Tool', 'AuraAlgorithm', 'TestRunner')
+             'Regions-and-Territories', 'NVIDIA-Tool', 'AuraAlgorithm')
 if (-not $Repo) { $Repo = $shipped }
 if ($Tag -and $Repo.Count -gt 1) { throw "-Tag only makes sense with a single -Repo" }
 

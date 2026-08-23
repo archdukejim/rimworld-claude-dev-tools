@@ -1,4 +1,4 @@
-# lib.ps1 — shared config + helpers for the RimSynapse test harness.
+﻿# lib.ps1 — shared config + helpers for the RimSynapse test harness.
 # Dot-source this from the other scripts:  . "$PSScriptRoot\lib.ps1"
 
 $ErrorActionPreference = 'Stop'

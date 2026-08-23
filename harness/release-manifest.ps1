@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Write a checksum manifest recording exactly which binaries a release shipped.
 
 .DESCRIPTION

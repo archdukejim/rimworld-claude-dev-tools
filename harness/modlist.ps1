@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS  Save or restore RimWorld's active mod list (ModsConfig.xml).
 .DESCRIPTION
-    The test loop can leave ModsConfig.xml in a bad state (e.g. after adding the dev-only
-    TestRunner, or if the game rewrites it on a failed load). This snapshots a known-good
-    list and restores it on demand.
+    The test loop can leave ModsConfig.xml in a bad state (e.g. if the game rewrites it on
+    a failed load). This snapshots a known-good list and restores it on demand.
 
     Snapshots live in _harness/modlists/<Name>.xml. "RimSynapse-Test" is the baseline:
     Harmony, RimWorld + all 5 DLCs, MapModeFramework, and the RimSynapse mods with Core
-    before its companions and Factions last.
+    before its companions and the RimAgentic toolkit bridge dead last (it hosts the
+    in-game test runner and must observe every other mod).
 .EXAMPLE   .\modlist.ps1 -Save -Name RimSynapse-Test
 .EXAMPLE   .\modlist.ps1 -Restore -Name RimSynapse-Test
 .EXAMPLE   .\modlist.ps1 -Show

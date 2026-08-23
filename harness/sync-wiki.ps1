@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Publish each mod's Learning/ docs to its GitHub wiki.
 
 .DESCRIPTION

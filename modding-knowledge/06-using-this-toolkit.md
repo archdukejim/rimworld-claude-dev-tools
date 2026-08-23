@@ -32,7 +32,7 @@ RimWorld mod, plus a bridge into the running game. The typical loop:
   instance (own save/prefs/log via `-savedatafolder`), muted, dev-mode on.
 - `launch_quicktest` — jump straight into a generated test map.
 - `run_rimworld_tests { repo?, savedatafolder? }` — full cycle: build in dependency
-  order → launch with the in-game TestRunner → classify the log → PASS/FAIL. The
+  order → launch with the in-game test runner (hosted by the RimAgentic bridge) → classify the log → PASS/FAIL. The
   build/launch config is pinned to the folder you pass, so configure the modlist first.
 
 ## 5. Read results

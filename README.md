@@ -41,7 +41,7 @@ claude-cli://open?q=%2Fplugin%20install%20rimagentic%40rimworld-claude-dev-tools
 ## Two halves
 
 - **MCP server** (`server/`) — the tools an agent calls: discover mods, resolve load
-  order, build/deploy, launch an isolated dev instance, run the in-game TestRunner,
+  order, build/deploy, launch an isolated dev instance, run the in-game test suite,
   triage `Player.log`, query the modding docs, and drive the in-game tool bridge.
 - **Game-side mod** (`game-mod/`) — a standalone RimWorld mod (`RimAgentic`) that
   exposes the base game + DLC surface over a file bridge: discover and invoke in-game

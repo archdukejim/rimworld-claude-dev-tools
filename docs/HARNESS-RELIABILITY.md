@@ -60,7 +60,7 @@ bug as every other entry in the table above.
 - If the first-pass reports the rimagentic bridge is **not responding**, `run_debug_action` /
   `execute_game_tool` will time out — a safe-mode recovery disables the bridge mod.
 
-## Known-good test modlist (20 mods, base game first)
+## Known-good test modlist (19 mods, base game first)
 
 ```
 ludeon.rimworld
@@ -81,13 +81,18 @@ rimsynapse.factions
 rimsynapse.auraalgorithm
 rimsynapse.nvidiatool
 rimsynapse.llmtrainer
-rimsynapse.testrunner
 archdukejim.rimagentic
 ```
 
-A green run of this list is **152 cases, 0 blocking** (baseline as of 2026-08-12). Run it once to
-establish a green baseline **before** diagnosing any "X is broken" — configuration failures dwarf code
-regressions as the cause of a red run.
+There is no separate test-runner mod: the RimAgentic bridge hosts the runner, and each repo's cases
+ship as a dev-only `TestAssemblies\` DLL inside that repo, loaded at arm time under `-synapse-test`.
+The suite's own `Toolkit_TestAssembliesDiscovered` case fails the run when a repo's test DLL is
+missing or unloadable — a red run naming it means "build the Source.Tests projects", not a code bug.
+
+A green run of this list is **~210 cases, 0 blocking** (baseline as of 2026-08-22; 152 as of
+2026-08-12 under the retired standalone TestRunner mod). Run it once to establish a green baseline
+**before** diagnosing any "X is broken" — configuration failures dwarf code regressions as the cause
+of a red run.
 
 ## Headless testing guidance
 

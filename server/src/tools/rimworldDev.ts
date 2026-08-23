@@ -44,22 +44,29 @@ function rimWorldProcessCount(): number {
  *  the newest mtime. Used by deploy (did the binary actually change?) and launch (is the deployed copy
  *  older than the repo build?) — the "harness reports success while the game runs a stale DLL" trap (G6). */
 function assemblyFingerprint(modDir: string): { dllCount: number; hash: string | null; newestMtimeMs: number } {
-    const asmDir = path.join(modDir, "Assemblies");
-    let files: string[] = [];
-    try { files = fs.readdirSync(asmDir).filter(f => f.toLowerCase().endsWith(".dll")).sort(); }
-    catch { return { dllCount: 0, hash: null, newestMtimeMs: 0 }; }
-    if (files.length === 0) return { dllCount: 0, hash: null, newestMtimeMs: 0 };
+    // TestAssemblies\ holds the repo's in-game test cases (run by the RimAgentic toolkit under
+    // -synapse-test). A stale test DLL silently runs OLD cases against new code, so it is part of
+    // the "game runs the wrong binary" trap and is fingerprinted alongside Assemblies\.
     const h = crypto.createHash("sha1");
     let newest = 0;
-    for (const f of files) {
-        const p = path.join(asmDir, f);
-        try {
-            h.update(fs.readFileSync(p));
-            const mt = fs.statSync(p).mtimeMs;
-            if (mt > newest) newest = mt;
-        } catch { /* skip unreadable dll */ }
+    let count = 0;
+    for (const sub of ["Assemblies", "TestAssemblies"]) {
+        const asmDir = path.join(modDir, sub);
+        let files: string[] = [];
+        try { files = fs.readdirSync(asmDir).filter(f => f.toLowerCase().endsWith(".dll")).sort(); }
+        catch { continue; }
+        for (const f of files) {
+            const p = path.join(asmDir, f);
+            try {
+                h.update(fs.readFileSync(p));
+                const mt = fs.statSync(p).mtimeMs;
+                if (mt > newest) newest = mt;
+                count++;
+            } catch { /* skip unreadable dll */ }
+        }
     }
-    return { dllCount: files.length, hash: h.digest("hex"), newestMtimeMs: newest };
+    if (count === 0) return { dllCount: 0, hash: null, newestMtimeMs: 0 };
+    return { dllCount: count, hash: h.digest("hex"), newestMtimeMs: newest };
 }
 
 /** Short hash for logs. */
@@ -449,10 +456,11 @@ export const rimworldDevTools = [
     {
         name: "run_rimworld_tests",
         description:
-            "Full automated test cycle: build the mods in dependency order, launch RimWorld with the in-game " +
-            "TestRunner (-synapse-test), then classify the log. Stops early if the build fails. Returns the build " +
-            "summary plus [SYNAPSE-TEST] PASS/FAIL results and any errors. Requires the RimSynapse.TestRunner mod " +
-            "to be active and loaded last.",
+            "Full automated test cycle: build the mods (and their Source.Tests projects) in dependency order, " +
+            "launch RimWorld with the in-game test runner (-synapse-test, hosted by the RimAgentic toolkit " +
+            "bridge), then classify the log. Stops early if the build fails. Returns the build summary plus " +
+            "[SYNAPSE-TEST] PASS/FAIL results and any errors. Requires the toolkit bridge mod to be active; " +
+            "it is forced to load last.",
         inputSchema: {
             type: "object",
             properties: {
@@ -462,7 +470,7 @@ export const rimworldDevTools = [
                 },
                 timeoutSec: {
                     type: "number",
-                    description: "Max seconds to wait for the TestRunner to report results (default: 420)."
+                    description: "Max seconds to wait for the in-game test runner to report results (default: 420)."
                 },
                 savedatafolder: {
                     type: "string",
@@ -479,7 +487,7 @@ export const rimworldDevTools = [
         description:
             "Reads and triages RimWorld's Player.log. By default returns a classified summary — exceptions, " +
             "Harmony patch failures, XML/def errors, missing dependencies, version and metadata warnings, plus any " +
-            "[SYNAPSE-TEST] PASS/FAIL results from the TestRunner mod. Pass raw:true for an unfiltered tail instead.",
+            "[SYNAPSE-TEST] PASS/FAIL results from the in-game test runner. Pass raw:true for an unfiltered tail instead.",
         inputSchema: {
             type: "object",
             properties: {
@@ -582,6 +590,10 @@ const foldersWhitelist = [
     // deployed and published copy shipped without its in-game wiki — 27 concepts against the
     // repo's 30. Every mod description advertises "Official Wiki and Documentation".
     "Learning",
+    // Dev-only in-game test cases (Source.Tests -> TestAssemblies), loaded by the RimAgentic
+    // bridge under -synapse-test. Deploys carry them so the suite travels with its mod; RimWorld
+    // never auto-loads the folder, and release packaging (package-release.ps1) excludes it.
+    "TestAssemblies",
     "Common",
     "1.0",
     "1.1",
@@ -603,7 +615,7 @@ const foldersWhitelist = [
  * not on this list.
  */
 const knownNotShipped = new Set([
-    "Source", "Tests", "obj", "bin", ".git", ".github", ".vs", ".agents",
+    "Source", "Source.Tests", "Tests", "obj", "bin", ".git", ".github", ".vs", ".agents",
     "node_modules", "Design", "Development", "docs", "_to_delete",
     "CLAUDE.md", "CHANGELOG.md", "FutureFeatures.md", ".gitignore", ".gitattributes"
 ]);
@@ -617,7 +629,7 @@ const filesWhitelist = [
 
 /**
  * Triage Player.log into the categories that matter when checking whether a run was healthy,
- * plus any [SYNAPSE-TEST] results emitted by the TestRunner mod.
+ * plus any [SYNAPSE-TEST] results emitted by the in-game test runner (hosted by the RimAgentic bridge).
  *
  * A bare "at Foo.Bar ()" line is only evidence of a problem when it belongs to a real
  * exception. Mods also log System.Diagnostics.StackTrace deliberately for tracing, which
@@ -848,7 +860,7 @@ function runHarness(scriptName: string, scriptArgs: string[], timeoutMs: number)
 
 /**
  * The full RimWorld test cycle as a reusable, config-explicit core: build in
- * dependency order, launch the in-game TestRunner against a **given**
+ * dependency order, launch the in-game test runner against a **given**
  * `savedatafolder`, then classify the log. Returns the same structured object the
  * `run_rimworld_tests` tool has always emitted.
  *
@@ -862,7 +874,7 @@ export interface TestCycleOptions {
     repo?: string;
     /** Required. Which RimWorld config the run reads — and therefore which modlist it tests. */
     savedatafolder: string;
-    /** Max seconds to wait for the TestRunner to report results (default 420). */
+    /** Max seconds to wait for the in-game test runner to report results (default 420). */
     timeoutSec?: number;
 }
 
@@ -921,7 +933,7 @@ export async function runTestCycle(
     const configDrift = checkModlistDrift(opts.savedatafolder);
 
     // Pre-launch modlist gate — refuse to spend a whole test cycle on a modlist that can't run the
-    // suite: no base game (safe-mode reset) or no toolkit bridge (no TestRunner/IPC). Short-circuit
+    // suite: no base game (safe-mode reset) or no toolkit bridge (no test runner/IPC). Short-circuit
     // with a clear diagnosis instead of launching into a guaranteed empty run.
     const modlistGate = assertLaunchModlist(opts.savedatafolder);
     if (modlistGate.blocking) {
@@ -932,7 +944,7 @@ export async function runTestCycle(
     // from the Mods/ folder, and nothing between build and launch deploys them. A real (non-junction)
     // deployed copy that byte-differs from the fresh build means the suite would run a STALE binary: a
     // green build, and even a full [SYNAPSE-TEST] summary, would reflect code you did NOT just build —
-    // the trap that silently ran a days-old TestRunner while the fix sat unbuilt in Mods, and can pass
+    // the trap that silently ran days-old binaries while the fix sat unbuilt in Mods, and can pass
     // every stage while your new cases never execute (a false green). Fail closed and name the redeploy
     // BEFORE spending a launch cycle. Junctioned copies are the repo itself and are skipped. This mirrors
     // the same check the standalone launch_rimworld handler already runs, which the test cycle bypassed.
@@ -974,7 +986,7 @@ export async function runTestCycle(
     } catch { /* best-effort enrichment; never fail the cycle over log parsing */ }
     const recovered = crashDiagnosis.some(d => /RECOVERED/.test(d));
 
-    // G2 — a green build is NOT evidence that tests ran. A run is only valid when the TestRunner
+    // G2 — a green build is NOT evidence that tests ran. A run is only valid when the test runner
     // actually reported a summary. Fold in the collapse/recovery signals so a run that loaded vanilla
     // can never read as a pass, even if it happened to emit a summary.
     const testsSeen = (log?.tests?.passed ?? 0) + (log?.tests?.failed ?? 0);
@@ -988,7 +1000,7 @@ export async function runTestCycle(
     if (build?.ok === true && testsSeen === 0) {
         parts.push(
             "NO TESTS RAN — no [SYNAPSE-TEST] summary in the log. A green build does NOT mean tests ran. " +
-            "Likely causes: the TestRunner mod isn't active/loaded-last, the base game is missing so RimWorld " +
+            "Likely causes: the RimAgentic bridge mod isn't active, the base game is missing so RimWorld " +
             "reset to safe mode, or the game hung on a dialog."
         );
     }

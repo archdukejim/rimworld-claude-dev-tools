@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Parse & classify RimWorld's Player.log from the last launch marker.
 .DESCRIPTION
     Reads Player.log from the byte offset recorded by launch.ps1 (falls back to the whole file
@@ -93,7 +93,7 @@ $reported   = $passed + $failed
 $incomplete = $false
 $incompleteReason = $null
 
-# Only meaningful when the TestRunner actually announced itself; a smoke run has no cases.
+# Only meaningful when the test runner actually announced itself; a smoke run has no cases.
 if ($null -ne $announced) {
     if ($reported -lt $announced) {
         $incomplete = $true

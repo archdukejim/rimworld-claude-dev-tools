@@ -38,6 +38,33 @@ foreach ($name in $targetNames) {
     $built += $name
 }
 
+# Second pass: per-repo in-game test projects (<repo>\Source.Tests\*.csproj -> TestAssemblies\),
+# discovered and run by the RimAgentic toolkit under -synapse-test. They HintPath other mods'
+# DLLs, so they build only after the whole main graph above succeeded. A test project that does
+# not build is a real failure: the suite it carries would silently vanish from the next run
+# (the toolkit's bootstrap guard would catch the missing DLL, but only by failing the run later).
+if ($failed.Count -eq 0) {
+    foreach ($name in $targetNames) {
+        $proj = $RS_BuildInfo.Csproj[$name]
+        if (-not $proj) { continue }
+        $testsDir = Join-Path (Split-Path (Split-Path $proj -Parent) -Parent) 'Source.Tests'
+        $testProj = if (Test-Path $testsDir) { Get-ChildItem $testsDir -Filter '*.csproj' -File | Select-Object -First 1 } else { $null }
+        if (-not $testProj) { continue }
+        RS-Log "Building $name tests ..."
+        $out = & dotnet build $testProj.FullName -c $Configuration --nologo 2>&1
+        $code = $LASTEXITCODE
+        $warnLines = $out | Select-String -Pattern ': warning ' | ForEach-Object { $_.Line.Trim() }
+        if ($warnLines) { $warnings += ($warnLines | ForEach-Object { "[$name tests] $_" }) }
+        if ($code -ne 0) {
+            $errLines = $out | Select-String -Pattern ': error ' | ForEach-Object { $_.Line.Trim() }
+            $failed += @{ repo="$name tests"; exitCode=$code; errors=@($errLines) }
+            RS-Log "FAILED $name tests (exit $code)"
+        } else {
+            $built += "$name tests"
+        }
+    }
+}
+
 $ok = ($failed.Count -eq 0)
 RS-Json @{ ok=$ok; built=$built; failed=$failed; warnings=$warnings }
 if (-not $ok) { exit 1 }
