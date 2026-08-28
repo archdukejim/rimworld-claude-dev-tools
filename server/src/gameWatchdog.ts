@@ -18,8 +18,6 @@ import { requestInGameSave } from "./tools/gameIpc";
  * `setInterval` is all this needs — no cross-process bookkeeping.
  */
 
-const IMAGE = "RimWorldWin64.exe";
-
 function envInt(name: string, def: number): number {
     const v = process.env[name]?.trim();
     if (v && /^\d+$/.test(v)) return parseInt(v, 10);
@@ -65,11 +63,15 @@ function rimworldRunning(): boolean {
 }
 
 function killGame(pid: number | null): void {
+    // PID-SCOPED ONLY. This watchdog lives in the session that launched the game; with multiple
+    // concurrent sessions, a `taskkill /im RimWorldWin64.exe` backstop here would nuke ANOTHER
+    // session's game the moment this session went idle (the FIFO game lease lets a second session
+    // hold its own game while this one's watchdog is still armed). So we only ever close the exact
+    // process we launched. If the pid is unknown we close nothing rather than risk a cross-session
+    // kill — an orphan with no tracked pid is left for the next lease-gated launch to clear.
     try {
         if (pid && pid > 0) execSync(`taskkill /f /pid ${pid}`, { stdio: "ignore" });
     } catch { /* already gone */ }
-    // Backstop: close any instance by image name too (orphans, or an unresolved pid).
-    try { execSync(`taskkill /f /im ${IMAGE}`, { stdio: "ignore" }); } catch { /* none running */ }
 }
 
 /** Stand down: clear the timer and forget the tracked game. Safe to call when not armed. */

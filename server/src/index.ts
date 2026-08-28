@@ -37,6 +37,7 @@ import { authTools, handleAuthTool } from "./tools/auth";
 import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { promptLabTools, handlePromptLabTool } from "./tools/promptLab";
 import { noteGameActivity } from "./gameWatchdog";
+import { withGameLease, GAME_LEASE_TOOLS, gameLeaseTools, handleGameLeaseTool } from "./gameLease";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
@@ -94,7 +95,8 @@ const ALL_TOOLS = [
     ...swhGithubTools,
     ...authTools,
     ...rimsortTools,
-    ...promptLabTools
+    ...promptLabTools,
+    ...gameLeaseTools
 ];
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
@@ -123,6 +125,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         requireGitHubToken(token, name);
     }
 
+    // One dispatch closure, so the game-resource tools can be run either directly or wrapped in the
+    // FIFO game lease (below) without duplicating the tool ladder.
+    const dispatch = async (): Promise<any> => {
     // Not GitHub-backed: this is how you INSTALL the token, so it must never require one.
     if (authTools.some(t => t.name === name)) {
         return await handleAuthTool(name, args, applyGitHubToken);
@@ -223,6 +228,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleSwhGithubTool(name, args);
     }
 
+    // Read-only FIFO game-lease status (not lease-gated itself).
+    if (gameLeaseTools.some(t => t.name === name)) {
+        return await handleGameLeaseTool(name, args);
+    }
+
     // Steam Workshop actions run in the browser via the loopback bridge.
     if (swhTools.some(t => t.name === name)) {
         if (!bridge) throw new Error("Steam loopback bridge not started yet.");
@@ -230,6 +240,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     throw new Error(`Unknown tool: ${name}`);
+    };
+
+    // The game-resource tools (deploy/configure/launch/test/in-game IPC) run one session at a time
+    // in FIFO order so concurrent sessions can't stomp the single game / Mods folder / ModsConfig.
+    // Everything else dispatches directly. See gameLease.ts.
+    return GAME_LEASE_TOOLS.has(name) ? await withGameLease(name, dispatch) : await dispatch();
 });
 
 // 4. Start Server
@@ -346,6 +362,7 @@ async function main() {
                     requireGitHubToken(token, name);
                 }
 
+                const dispatch = async (): Promise<any> => {
                 let result;
                 if (authTools.some(t => t.name === name)) {
                     result = await handleAuthTool(name, args, applyGitHubToken);
@@ -395,14 +412,19 @@ async function main() {
                     result = await handlePromptLabTool(name, args);
                 } else if (swhGithubTools.some(t => t.name === name)) {
                     result = await handleSwhGithubTool(name, args);
+                } else if (gameLeaseTools.some(t => t.name === name)) {
+                    result = await handleGameLeaseTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
                     if (!bridge) throw new Error("Steam loopback bridge not started yet.");
                     result = await handleSwhTool(name, args, bridge);
                 } else {
-                    res.status(404).json({ error: "Unknown tool: " + name });
-                    return;
+                    throw new Error("Unknown tool: " + name);
                 }
-                
+                return result;
+                };
+
+                // Game-resource tools serialize FIFO across sessions (gameLease.ts); the rest run direct.
+                const result = GAME_LEASE_TOOLS.has(name) ? await withGameLease(name, dispatch) : await dispatch();
                 res.json(result);
             } catch (err: any) {
                 res.status(500).json({ error: err.message });

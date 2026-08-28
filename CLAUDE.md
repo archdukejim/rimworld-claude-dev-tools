@@ -267,6 +267,14 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   than reported as clean. The durable reference (what's enforced, the known-good test modlist,
   and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
   **`docs/HARNESS-RELIABILITY.md`**.
+- **The game is FIFO-gated across sessions** — the game-resource tools (`deploy_rimworld_mods`,
+  `configure_active_mods`, `launch_*`, `run_rimworld_tests`, `restart_game`, `execute_game_tool`,
+  `save_rimworld_game`, `list_game_tools`) run one session at a time in arrival order via a
+  cross-process lease (`server/src/gameLease.ts`), so concurrent sessions can't stomp the single
+  game / Mods folder / ModsConfig. A blocked call means another session holds it — check with
+  `game_lease_status`. The raw IPC channel is separately mutexed per round-trip
+  (`server/src/ipcLock.ts`). Reference: **`docs/SESSION-GATING.md`**. (Layer 1 of the multi-PC
+  test-broker plan; the idle watchdog no longer image-kills, so it can't nuke another session's game.)
 
 ## GitHub auth & release ops (rules)
 
