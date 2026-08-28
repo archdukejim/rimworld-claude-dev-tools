@@ -529,9 +529,24 @@
       appId: args.appId,
       fields: { description: args.description },
     });
-    const ok =
-      result.item == null || result.item.description === args.description;
-    return { ...result, verified: ok };
+    // Tri-state: only a positive re-read is "verified". A FAILED re-read (item==null) must NOT read
+    // as success — Steam returns HTTP 200 even for a rejected write, so the POST returning ok is not
+    // proof. The old `item == null || match` reported verified:true for a completely unconfirmed write.
+    const item = result.item;
+    const verified =
+      item && typeof item.description === "string"
+        ? item.description === args.description
+        : null;
+    return {
+      ...result,
+      verified,
+      verifiedNote:
+        verified === true
+          ? "Confirmed: the item's description matches what was sent."
+          : verified === false
+          ? "MISMATCH: the page description differs from what was sent — either the write was rejected (not owner / rate-limited) or Steam normalised the text. Re-read before retrying."
+          : "UNVERIFIED: the write returned HTTP 200 but the confirming re-read failed. Do NOT blindly retry (writes are not idempotent) — check the page first.",
+    };
   }
 
   /** Update just the title. */
@@ -544,8 +559,20 @@
       appId: args.appId,
       fields: { title: args.title },
     });
-    const ok = result.item == null || result.item.title === args.title;
-    return { ...result, verified: ok };
+    // Tri-state (see updateDescription): a failed re-read is UNVERIFIED, not success.
+    const item = result.item;
+    const verified =
+      item && typeof item.title === "string" ? item.title === args.title : null;
+    return {
+      ...result,
+      verified,
+      verifiedNote:
+        verified === true
+          ? "Confirmed: the item's title matches what was sent."
+          : verified === false
+          ? "MISMATCH: the page title differs from what was sent — the write may have been rejected. Re-read before retrying."
+          : "UNVERIFIED: the write returned HTTP 200 but the confirming re-read failed. Do NOT blindly retry — check the page first.",
+    };
   }
 
   // ---- public surface -----------------------------------------------------

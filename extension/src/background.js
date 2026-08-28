@@ -209,7 +209,11 @@ const BACKGROUND_METHODS = {
 async function runCommand(method, args) {
   const handler = BACKGROUND_METHODS[method];
   if (handler) return await handler(args);
-  return await callActiveTab(method, args, 25000);
+  // This per-call timeout must be LONGER than the server's callTimeoutMs (default 30000, config.ts),
+  // or the extension gives up first and POSTs an error while the Steam write may still be in flight —
+  // the server then reports failure and a retry double-posts. Keeping the server as the outer bound
+  // means a slow-but-successful write still reports through /result before anyone reports failure.
+  return await callActiveTab(method, args, 45000);
 }
 
 async function bridgeEnabled() {

@@ -35,7 +35,7 @@ interface Pending {
 
 export interface Bridge {
   call(method: string, args: any): Promise<any>;
-  status(): { connected: boolean; queued: number; pending: number; lastPollAt: number };
+  status(): { owner: boolean; connected: boolean; queued: number; pending: number; lastPollAt: number };
   close(): Promise<void>;
 }
 
@@ -159,6 +159,19 @@ export function startBridge(config: MCPConfig): Promise<Bridge> {
 
   function call(method: string, args: any): Promise<any> {
     return new Promise((resolve, reject) => {
+      // We can only serve SWH calls if THIS process owns the shared bridge port. Every session runs
+      // its own MCP server, but the extension long-polls one fixed port, so only one server owns it.
+      // A non-owner used to fail with a misleading "bridge not started" (bridge was null); now the
+      // bridge object always exists and keeps trying to take the port, so say what's actually true.
+      if (!owner) {
+        reject(new Error(
+          `The Steam Workshop bridge (${config.bridgeHost}:${config.bridgePort}) is currently owned by ` +
+          `another RimAgentic session (or a stale MCP server). Only one session drives Steam Workshop at ` +
+          `a time. Run swh_* from that session, or close it — this session takes over the port ` +
+          `automatically within a few seconds of it freeing.`
+        ));
+        return;
+      }
       const id = nextId();
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -167,7 +180,9 @@ export function startBridge(config: MCPConfig): Promise<Bridge> {
           new Error(
             connected
               ? `Timed out after ${config.callTimeoutMs}ms waiting for the extension to run SWH.${method}. ` +
-                `Is a steamcommunity.com tab open and logged in?`
+                `Is a steamcommunity.com tab open and logged in? If this was a WRITE (post/edit/delete), ` +
+                `it may have already been applied to Steam — these calls are not idempotent, so verify ` +
+                `on the page before retrying rather than re-sending.`
               : `The Steam Workshop Helper extension is not connected to the local bridge ` +
                 `(no poll seen on ${config.bridgeHost}:${config.bridgePort}). ` +
                 `Load/reload the extension and open a steamcommunity.com tab.`
@@ -182,7 +197,8 @@ export function startBridge(config: MCPConfig): Promise<Bridge> {
 
   function status() {
     return {
-      connected: Date.now() - lastPollAt < config.pollTimeoutMs + 5000,
+      owner,
+      connected: owner && Date.now() - lastPollAt < config.pollTimeoutMs + 5000,
       queued: queue.length,
       pending: pending.size,
       lastPollAt,
@@ -191,23 +207,53 @@ export function startBridge(config: MCPConfig): Promise<Bridge> {
 
   function close(): Promise<void> {
     return new Promise((resolve) => {
+      if (bindTimer) { clearInterval(bindTimer); bindTimer = null; }
       for (const [, p] of pending) {
         clearTimeout(p.timer);
         p.reject(new Error("bridge closing"));
       }
       pending.clear();
-      server.close(() => resolve());
+      if (owner) server.close(() => resolve());
+      else resolve();
     });
   }
 
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.bridgePort, config.bridgeHost, () => {
-      server.removeListener("error", reject);
-      console.error(
-        `[swh-mcp] loopback bridge listening on http://${config.bridgeHost}:${config.bridgePort}`
-      );
-      resolve({ call, status, close });
-    });
+  // ---- Resilient binding ---------------------------------------------------
+  // The old code bound once and rejected on EADDRINUSE, which left `bridge` null for the whole
+  // session — so a server that lost the race (another session, or a stale server, held the port)
+  // could never serve SWH, even after the port later freed. Instead: keep the bridge object alive
+  // and RETRY the bind. When the current owner exits, a waiting session grabs the port within one
+  // retry interval and its swh_* tools start working with no restart.
+  let owner = false;
+  let bindTimer: NodeJS.Timeout | null = null;
+  const REBIND_MS = Number(process.env.SWH_MCP_REBIND_MS) > 0 ? Number(process.env.SWH_MCP_REBIND_MS) : 5000;
+
+  function scheduleRebind() {
+    if (bindTimer || owner) return;
+    bindTimer = setInterval(tryBind, REBIND_MS);
+    bindTimer.unref?.(); // never keep the process alive just to poll for the port
+  }
+
+  function tryBind() {
+    if (owner) return;
+    try { server.listen(config.bridgePort, config.bridgeHost); } catch { /* 'error' event handles it */ }
+  }
+
+  server.on("listening", () => {
+    owner = true;
+    if (bindTimer) { clearInterval(bindTimer); bindTimer = null; }
+    console.error(`[swh-mcp] loopback bridge listening on http://${config.bridgeHost}:${config.bridgePort}`);
+  });
+  server.on("error", (err: any) => {
+    owner = false;
+    if (err?.code !== "EADDRINUSE") {
+      console.error(`[swh-mcp] bridge listen error (${err?.code || "unknown"}): ${err?.message || err}`);
+    }
+    scheduleRebind(); // another owner holds it (or a transient error) — keep trying to take over
+  });
+
+  return new Promise((resolve) => {
+    tryBind();
+    resolve({ call, status, close });
   });
 }
