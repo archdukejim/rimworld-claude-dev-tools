@@ -69,6 +69,42 @@ round-trip. Mutual exclusion, not fairness — fairness is the lease's job.
   launch tools' own "clean slate" image-kill is fine because it only runs while
   holding the lease, i.e. no other active session's game exists.)
 
+## Layer 1.5 — session-stateful, modlist-aware game
+
+Layer 1 answers *who* may touch the game. Layer 1.5 makes "use the game" **declarative**: a session
+says which modlist it wants, and the game is brought up with exactly that, rebuilt clean every time.
+
+### Session identity (`server/src/sessionContext.ts`)
+
+Claude Code exposes **no** session id to MCP servers (only `CLAUDECODE=1` and a shared
+`CLAUDE_PROJECT_DIR`), so a hook-written `session_id.txt` would race across concurrent sessions.
+The stable key we use instead is the **git worktree short-id** (`d2029542`): the agent hands it to
+us implicitly on path-bearing calls (deploy sources from `…\worktrees\<repo>\<id>\…`, branch
+`agent/<id>`). We **infer** it from tool-arg paths and **pin** it to the process; `use_session`
+pins it explicitly. The cache is stored on disk keyed by that id, so it survives the MCP server
+being killed and respawned (the rebuild gotcha) — the next path-bearing call re-attaches. Two
+sessions = two processes each inferring their own id; no shared file, no race.
+
+### Per-session modlist cache + clean-template rebuild (`server/src/tools/session.ts`)
+
+- `set_session_modlist { mods, dlcs }` / `get_session_modlist` — **ungated** cache ops. You pass
+  only your content mods + DLC; the **mandatory clean base** (`brrainz.harmony`, `ludeon.rimworld`,
+  `archdukejim.rimagentic`) is always added.
+- The active list is **regenerated from the clean template every time** — mandatory base ∪ session
+  mods → `resolveModLoadOrder` (official-first, `forceLoad*`-aware, toolkit forced last). Never an
+  incremental mutation of the current `ModsConfig`, which is the whole drift-bug class.
+- `ensure_game` — **gated** (FIFO). Resolves the session, builds the clean modlist, and:
+  - live game already has this session's modlist (fingerprint match) and is healthy → **reuse, no
+    relaunch** (the fast path that avoids restart thrash);
+  - otherwise → **close the running game → scrub + rewrite `ModsConfig` from the clean build →
+    relaunch** (the takeover). It reuses `configure_active_mods` (overwrite = scrub+rebuild) and
+    `launch_rimworld` (killExisting = kill+relaunch), and records a shared `live-session.json`
+    marker of which session's modlist is live. `dryRun` returns the plan without touching the game.
+
+One PC = one game, so switching to a *different* session's modlist is a full relaunch; the
+same-modlist fast path and Layer 1's sticky grace keep that from thrashing. Different modlists *at
+once* is what Layer 2 (multiple PCs) is for.
+
 ## Tuning (env overrides)
 
 | var | default | meaning |
@@ -83,9 +119,12 @@ round-trip. Mutual exclusion, not fairness — fairness is the lease's job.
 
 ## Tests
 
-`cd server && npm run test:lease` — spawns real worker processes that contend for
-the lease and asserts FIFO order, mutual exclusion, single acquisition per session,
-and reentrancy. Touches only a temp lease dir.
+- `cd server && npm run test:lease` — spawns real worker processes that contend for the lease and
+  asserts FIFO order, mutual exclusion, single acquisition per session, and reentrancy.
+- `npm run test:session` — session identity (infer/pin/resolve), the modlist cache round-trip, and
+  the clean-template builder (base injected, DLC/content included, toolkit forced last, ordering).
+
+Both touch only temp dirs.
 
 ## Rollout gotcha
 

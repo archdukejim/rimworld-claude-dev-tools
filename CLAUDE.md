@@ -128,7 +128,10 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`gameLease` (`game_lease_status` — inspect the FIFO game lease),
+`session` (`use_session`, `set_session_modlist`, `get_session_modlist`, `ensure_game` — per-session
+modlist cache + clean-template game bring-up; see `docs/SESSION-GATING.md`).
 
 ### Game-free prompt iteration (`promptLab`)
 
@@ -275,6 +278,12 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   `game_lease_status`. The raw IPC channel is separately mutexed per round-trip
   (`server/src/ipcLock.ts`). Reference: **`docs/SESSION-GATING.md`**. (Layer 1 of the multi-PC
   test-broker plan; the idle watchdog no longer image-kills, so it can't nuke another session's game.)
+- **Prefer `ensure_game` over launching by hand** — Layer 1.5 adds a per-session modlist cache
+  (`set_session_modlist`, keyed by your worktree short-id, inferred from paths or set via
+  `use_session`). `ensure_game` brings the game up with your cached modlist **rebuilt from a clean
+  template every time** (never an incremental ModsConfig mutation — kills the drift-bug class),
+  reusing the live game if its modlist already matches or otherwise taking over (kill → scrub →
+  rewrite → relaunch). See **`docs/SESSION-GATING.md`**.
 
 ## GitHub auth & release ops (rules)
 

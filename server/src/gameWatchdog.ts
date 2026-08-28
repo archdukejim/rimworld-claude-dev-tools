@@ -52,7 +52,7 @@ export function noteGameActivity(): void {
     lastActivity = Date.now();
 }
 
-function rimworldRunning(): boolean {
+export function rimworldRunning(): boolean {
     try {
         const out = execSync(
             `powershell -NoProfile -Command "(Get-Process -Name RimWorldWin64 -ErrorAction SilentlyContinue | Measure-Object).Count"`,

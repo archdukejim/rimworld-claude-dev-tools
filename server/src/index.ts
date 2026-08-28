@@ -38,6 +38,7 @@ import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { promptLabTools, handlePromptLabTool } from "./tools/promptLab";
 import { noteGameActivity } from "./gameWatchdog";
 import { withGameLease, GAME_LEASE_TOOLS, gameLeaseTools, handleGameLeaseTool } from "./gameLease";
+import { sessionTools, handleSessionTool, SESSION_LEASE_TOOLS } from "./tools/session";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
@@ -96,8 +97,12 @@ const ALL_TOOLS = [
     ...authTools,
     ...rimsortTools,
     ...promptLabTools,
-    ...gameLeaseTools
+    ...gameLeaseTools,
+    ...sessionTools
 ];
+
+/** True for tools that must run inside the FIFO game lease (game-resource + the ensure_game takeover). */
+const isLeaseGated = (name: string): boolean => GAME_LEASE_TOOLS.has(name) || SESSION_LEASE_TOOLS.has(name);
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
 // RimWorld and pc-control families never touch GitHub - so this is checked per call rather than at
@@ -233,6 +238,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleGameLeaseTool(name, args);
     }
 
+    // Per-session modlist cache + the ensure_game takeover (ensure_game is lease-gated below).
+    if (sessionTools.some(t => t.name === name)) {
+        return await handleSessionTool(name, args);
+    }
+
     // Steam Workshop actions run in the browser via the loopback bridge.
     if (swhTools.some(t => t.name === name)) {
         if (!bridge) throw new Error("Steam loopback bridge not started yet.");
@@ -242,10 +252,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`Unknown tool: ${name}`);
     };
 
-    // The game-resource tools (deploy/configure/launch/test/in-game IPC) run one session at a time
-    // in FIFO order so concurrent sessions can't stomp the single game / Mods folder / ModsConfig.
-    // Everything else dispatches directly. See gameLease.ts.
-    return GAME_LEASE_TOOLS.has(name) ? await withGameLease(name, dispatch) : await dispatch();
+    // The game-resource tools (deploy/configure/launch/test/in-game IPC + ensure_game) run one
+    // session at a time in FIFO order so concurrent sessions can't stomp the single game / Mods
+    // folder / ModsConfig. Everything else dispatches directly. See gameLease.ts.
+    return isLeaseGated(name) ? await withGameLease(name, dispatch) : await dispatch();
 });
 
 // 4. Start Server
@@ -414,6 +424,8 @@ async function main() {
                     result = await handleSwhGithubTool(name, args);
                 } else if (gameLeaseTools.some(t => t.name === name)) {
                     result = await handleGameLeaseTool(name, args);
+                } else if (sessionTools.some(t => t.name === name)) {
+                    result = await handleSessionTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
                     if (!bridge) throw new Error("Steam loopback bridge not started yet.");
                     result = await handleSwhTool(name, args, bridge);
@@ -424,7 +436,7 @@ async function main() {
                 };
 
                 // Game-resource tools serialize FIFO across sessions (gameLease.ts); the rest run direct.
-                const result = GAME_LEASE_TOOLS.has(name) ? await withGameLease(name, dispatch) : await dispatch();
+                const result = isLeaseGated(name) ? await withGameLease(name, dispatch) : await dispatch();
                 res.json(result);
             } catch (err: any) {
                 res.status(500).json({ error: err.message });

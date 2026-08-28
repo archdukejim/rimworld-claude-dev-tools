@@ -464,7 +464,7 @@ export function readActiveModsFromConfig(savedata: string): string[] {
 
 /** Order-independent fingerprint of a modlist — the set of packageIds is what determines whether the
  *  same mods load; load-order is validated separately. */
-function fingerprintModlist(mods: string[]): string {
+export function fingerprintModlist(mods: string[]): string {
     const norm = Array.from(new Set(mods.map(m => m.trim().toLowerCase()))).sort();
     return crypto.createHash("sha1").update(norm.join("\n")).digest("hex");
 }
