@@ -17,7 +17,11 @@
       <downloadUrl>https://github.com/pardeike/HarmonyRimWorld/releases/latest</downloadUrl>
     </li>
   </modDependencies>
-  <loadAfter>
+  <!-- This toolkit is the tool bridge and must load LAST so it can observe/patch every
+       other mod. About.xml has no true "load dead-last" flag; forceLoadAfter is the
+       strongest hint the auto-sorter honours. Guaranteeing absolute-last order still
+       requires ModsConfig.xml (RimSort, or this repo's resolve/configure tools). -->
+  <forceLoadAfter>
     <li>brrainz.harmony</li>
     <li>Ludeon.RimWorld</li>
     <li>Ludeon.RimWorld.Royalty</li>
@@ -25,5 +29,5 @@
     <li>Ludeon.RimWorld.Biotech</li>
     <li>Ludeon.RimWorld.Anomaly</li>
     <li>Ludeon.RimWorld.Odyssey</li>
-  </loadAfter>
+  </forceLoadAfter>
 </ModMetaData>

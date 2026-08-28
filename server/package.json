@@ -8,6 +8,10 @@
     "start": "node build/index.js",
     "test:imgur": "node test/imgur-stub.test.js",
     "test:chrome": "node test/chrome-tabgroups.test.js",
+    "test:loadorder": "node test/loadorder.test.js",
+    "test:lease": "node test/game-lease.test.js",
+    "test:session": "node test/session.test.js",
+    "test:bridge": "node test/bridge-rebind.test.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

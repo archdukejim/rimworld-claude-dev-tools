@@ -128,7 +128,10 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`gameLease` (`game_lease_status` — inspect the FIFO game lease),
+`session` (`use_session`, `set_session_modlist`, `get_session_modlist`, `ensure_game` — per-session
+modlist cache + clean-template game bring-up; see `docs/SESSION-GATING.md`).
 
 ### Game-free prompt iteration (`promptLab`)
 
@@ -267,6 +270,20 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   than reported as clean. The durable reference (what's enforced, the known-good test modlist,
   and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
   **`docs/HARNESS-RELIABILITY.md`**.
+- **The game is FIFO-gated across sessions** — the game-resource tools (`deploy_rimworld_mods`,
+  `configure_active_mods`, `launch_*`, `run_rimworld_tests`, `restart_game`, `execute_game_tool`,
+  `save_rimworld_game`, `list_game_tools`) run one session at a time in arrival order via a
+  cross-process lease (`server/src/gameLease.ts`), so concurrent sessions can't stomp the single
+  game / Mods folder / ModsConfig. A blocked call means another session holds it — check with
+  `game_lease_status`. The raw IPC channel is separately mutexed per round-trip
+  (`server/src/ipcLock.ts`). Reference: **`docs/SESSION-GATING.md`**. (Layer 1 of the multi-PC
+  test-broker plan; the idle watchdog no longer image-kills, so it can't nuke another session's game.)
+- **Prefer `ensure_game` over launching by hand** — Layer 1.5 adds a per-session modlist cache
+  (`set_session_modlist`, keyed by your worktree short-id, inferred from paths or set via
+  `use_session`). `ensure_game` brings the game up with your cached modlist **rebuilt from a clean
+  template every time** (never an incremental ModsConfig mutation — kills the drift-bug class),
+  reusing the live game if its modlist already matches or otherwise taking over (kill → scrub →
+  rewrite → relaunch). See **`docs/SESSION-GATING.md`**.
 
 ## GitHub auth & release ops (rules)
 
