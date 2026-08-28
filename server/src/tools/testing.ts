@@ -152,7 +152,17 @@ function readModAbout(folder: string): Record<string, any> {
     };
 }
 
-/** The loadAfter / loadBefore a mod declares, lowercased. Empty when the mod is not installed. */
+/**
+ * The ordering a mod declares, lowercased. Empty when the mod is not installed.
+ *
+ * `forceLoadAfter` / `forceLoadBefore` express the SAME ordering relationship as
+ * `loadAfter` / `loadBefore` — the "force" only tells the in-game auto-sorter to
+ * weight the hint more heavily; it does not change which side loads first. The
+ * resolver must treat them identically or a mod that declares only the force variant
+ * (as the toolkit's own About.xml does) is placed as if it declared no order at all,
+ * and the test harness writes a ModsConfig.xml that disagrees with what RimSort / the
+ * in-game sorter would produce. So fold both variants into after/before here.
+ */
 function declaredOrdering(folder: string | undefined): { after: string[]; before: string[] } {
     if (!folder) return { after: [], before: [] };
     const aboutPath = path.join(folder, "About", "About.xml");
@@ -174,8 +184,8 @@ function declaredOrdering(folder: string | undefined): { after: string[]; before
     ).map(m => m[1].trim().toLowerCase());
 
     return {
-        after: [...listOf("loadAfter"), ...deps],
-        before: listOf("loadBefore")
+        after: [...listOf("loadAfter"), ...listOf("forceLoadAfter"), ...deps],
+        before: [...listOf("loadBefore"), ...listOf("forceLoadBefore")]
     };
 }
 
