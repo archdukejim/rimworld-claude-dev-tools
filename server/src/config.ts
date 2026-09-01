@@ -14,6 +14,9 @@ export interface MCPConfig {
     bridgePort: number;
     pollTimeoutMs: number;
     callTimeoutMs: number;
+    // Mod edition repos for publish_infographic: key (e.g. "mmf") -> local repo path. Each repo's
+    // Steam id is read from its About/PublishedFileId.txt, so only the paths live here.
+    editions?: Record<string, string>;
 }
 
 /**

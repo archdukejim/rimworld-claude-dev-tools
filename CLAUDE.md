@@ -128,7 +128,12 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`infographic` (`render_html_to_image`, `compose_infographic`, `publish_infographic` —
+themed HTML → crisp PNG via headless Chrome → fan-out to edition repos + Steam
+descriptions; the render gotchas [UTF-8 loopback serving, virtual-time budget, forced
+`data-theme`, measured tight height] and the publish flow live in **`docs/INFOGRAPHICS.md`** —
+read it before touching the renderer).
 
 ### Game-free prompt iteration (`promptLab`)
 

@@ -484,6 +484,18 @@
     {
       "name": "save_rimworld_game",
       "description": "Saves the currently running RimWorld dev game to a named slot via the in-game bridge, so you can close the game and later resume this exact state with launch_rimworld's loadSave. Requires a live game (does nothing at the main menu)."
+    },
+    {
+      "name": "render_html_to_image",
+      "description": "Render an HTML infographic (file/string/URL) to a crisp PNG with headless Chrome/Edge: UTF-8-safe loopback serving, virtual-time budget for JS/fonts, forced light/dark theme, 2x scale, measured tight height."
+    },
+    {
+      "name": "compose_infographic",
+      "description": "Generate themed, render-ready infographic HTML from structured data via built-in templates (timeline/roadmap, card-grid, stat-sheet) in the house design system."
+    },
+    {
+      "name": "publish_infographic",
+      "description": "Fan a rendered infographic PNG out to every mod edition: commit About/<name>.png + a marker-managed README section to each GitHub repo, and upsert an imgur-hosted [img] section into each Steam Workshop description (CDP live update, handoff file fallback). Supports dryRun."
     }
   ],
   "keywords": [

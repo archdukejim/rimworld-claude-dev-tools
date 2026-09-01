@@ -36,6 +36,7 @@ import { jobsTools, handleJobsTool } from "./tools/jobs";
 import { authTools, handleAuthTool } from "./tools/auth";
 import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { promptLabTools, handlePromptLabTool } from "./tools/promptLab";
+import { infographicTools, handleInfographicTool } from "./tools/infographic";
 import { noteGameActivity } from "./gameWatchdog";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
@@ -94,7 +95,8 @@ const ALL_TOOLS = [
     ...swhGithubTools,
     ...authTools,
     ...rimsortTools,
-    ...promptLabTools
+    ...promptLabTools,
+    ...infographicTools
 ];
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
@@ -216,6 +218,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (promptLabTools.some(t => t.name === name)) {
         return await handlePromptLabTool(name, args);
+    }
+
+    if (infographicTools.some(t => t.name === name)) {
+        return await handleInfographicTool(name, args);
     }
 
     // Steam Workshop GitHub issue tools (repo-map based; API direct, no bridge).
@@ -393,6 +399,8 @@ async function main() {
                     result = await handleJobsTool(name, args);
                 } else if (promptLabTools.some(t => t.name === name)) {
                     result = await handlePromptLabTool(name, args);
+                } else if (infographicTools.some(t => t.name === name)) {
+                    result = await handleInfographicTool(name, args);
                 } else if (swhGithubTools.some(t => t.name === name)) {
                     result = await handleSwhGithubTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
