@@ -2,10 +2,11 @@
 # a uniform dark series banner on top, the mod's accent banner on the bottom naming what it
 # patches (or which core edition it is), an opaque monoline emblem in the top-left corner,
 # and an opaque version stamp read live from each repo's About.xml — so re-running this
-# after a version bump restamps every preview. NOTE: uses each repo's About/Preview.png as
-# the base art, so run it BEFORE copying output over those files (or from a clean checkout);
-# review the output in -OutDir, then copy over each About/Preview.png. Output is
-# recompressed with the MCP server's sharp to stay under Steam's 1 MB preview cap.
+# after a version bump restamps every preview. The pristine base art lives in
+# rs-preview-base/ next to this script (NOT the repos' About/Preview.png, which carry the
+# rendered banners and would stack if reused as input). Review the output in -OutDir, then
+# copy over each repo's About/Preview.png. Output is recompressed with the MCP server's
+# sharp to stay under Steam's 1 MB preview cap.
 param([string]$OutDir = (Join-Path $env:TEMP 'rs-previews'))
 Add-Type -AssemblyName System.Drawing
 
@@ -110,7 +111,7 @@ $fmt = New-Object System.Drawing.StringFormat
 $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
 
 foreach ($m in $mods) {
-    $src = "C:\github\regions-and-societies\$($m.repo)\About\Preview.png"
+    $src = Join-Path $PSScriptRoot "rs-preview-base\$($m.repo).png"
     $bmp = New-Object System.Drawing.Bitmap 1024, 1024
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
