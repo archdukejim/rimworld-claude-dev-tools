@@ -268,6 +268,17 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
   **`docs/HARNESS-RELIABILITY.md`**.
 
+- **Exactly one `sharp` in the tree — `package.json` `overrides` keeps it that way.** `@xenova/transformers`
+  wants `sharp@^0.32`; the server uses `^0.35`. Without the override npm nests a second sharp under
+  `node_modules/@xenova/transformers/node_modules/`, and both ship a DLL named `libvips-42.dll`. Windows
+  loads a DLL by name once per process, so after any corpus/embedding tool loads transformers (and its
+  old sharp) first, every sharp-backed workshop-image tool fails with ERR_DLOPEN_FAILED "The specified
+  procedure could not be found" for the life of that server process — it is NOT a Node-ABI mismatch,
+  and sharp loads fine in a fresh `node -e`. Guard: `cd server && npm run test:sharp` (loads
+  transformers first, then sharp). If it fails after an `npm install`, delete the nested folder and
+  its `package-lock.json` entries and reinstall — `npm install`/`npm dedupe` do not evict an
+  already-locked nested copy on their own.
+
 ## GitHub auth & release ops (rules)
 
 The GitHub token resolves in this order (`getGitHubToken`, `server/src/config.ts`):
