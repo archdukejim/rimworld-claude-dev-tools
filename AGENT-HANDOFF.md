@@ -1,43 +1,35 @@
-# AGENT-HANDOFF — `agent/bb82b711`
+# AGENT-HANDOFF — `agent/85a44357`
 
-## What this branch adds
+## What this branch fixes
 
-**PromptLab — the universal, game-free RimSynapse prompt/response harness.** Compose the exact prompt any LLM
-call site would send → run it against the same local model → return the **raw** response → iterate, with no
-game launch. It does NOT judge (that's the consumer's job). See `docs/plans/prompt-lab-universal.md`.
+**Every sharp-backed workshop-image tool was dead** (`render_workshop_infographic`, `compose_workshop_page`,
+`make_workshop_image`, `list_workshop_images`, `merge_workshop_tiles`, `render_workshop_preview`,
+`capture_workshop_image`) with `ERR_DLOPEN_FAILED: The specified procedure could not be found` on
+`@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.3.node`.
 
-- **NEW `promptlab/`** — a net8 console: a reflection-based family registry (`Contract.cs` `IPromptFamily`,
-  `Registry.cs`), a generic runner (`Program.cs`), the faithful caller (`LlmCaller.cs`), and the live-Core-
-  config reader (`CoreConfigReader.cs`). Families in `promptlab/Families/`: `ConversationFamily` (links
-  Conversations' pure `ThinPromptComposer`/`IdentityComposer`/`LenientDialogueParser`) and `NewspaperFamily`
-  (links WorldNews' pure `NewspaperPromptComposer`). Each family `<Compile>`-links its mod's pure composer from
-  the workspace (`$RS_Root\<Mod>`, per-mod overridable via `*_SRC`), conditional on the source being present.
-- **NEW `harness/promptlab.ps1`** — builds the console (passing `-p:WorkspaceRoot` + any `*_SRC` env
-  overrides) and runs a job; emits ONLY the console's JSON on stdout.
-- **CHANGED `server/src/tools/promptLab.ts`** — tool family `promptLab`:
-  - `simulate_llm_prompt { family, mode, inputs|scenarios, suiteFilter, runs, dryRun, config }` → raw responses
-    + composed prompts + optional family parse + metadata.
-  - `list_prompt_families` → families + input contracts + catalog sizes.
-- **CHANGED** `server/src/index.ts` (`promptLab` wired ×4 — unchanged since the family fns kept their names),
-  `manifest.json`, `CLAUDE.md`, `.gitignore` (`promptlab/bin`,`obj`).
+**Root cause — not an ABI mismatch.** `@xenova/transformers` declares `sharp@^0.32`, the server uses `^0.35`,
+so npm nested a second sharp (0.32.6) under `node_modules/@xenova/transformers/node_modules/`. Both copies ship
+a DLL named `libvips-42.dll`; Windows binds a DLL name once per process. Any corpus/embedding tool loads
+transformers (and its old sharp) first, after which the 0.35 binary binds against the old libvips and every
+sharp tool fails for the life of that server process. `native.ts` caches the failure, so it looked permanent.
 
-## Depends on the mod pure composers
-- **Conversations** `feature/prompt-lab` (#54) — the pure `ThinPromptComposer` etc.
-- **WorldNews** `feature/prompt-lab-composer` — the pure `NewspaperPromptComposer`.
-Until those land in the workspace, set `CONVERSATIONS_SRC` / `WORLDNEWS_SRC` to their checkouts;
-`promptlab.ps1` passes them through. A family whose source is absent simply isn't registered.
+- **CHANGED `server/package.json`** — `overrides: { "@xenova/transformers": { "sharp": "$sharp" } }` (one
+  top-level sharp; every sharp API transformers calls exists in 0.35) + `test:sharp` script.
+- **CHANGED `server/package-lock.json`** — nested `sharp`/`node-addon-api` entries removed; top-level sharp
+  0.35.3 → 0.35.4 (side effect of `npm dedupe`). `npm install` / `npm dedupe` would NOT evict the locked
+  nested copy on their own — the lock entries had to be deleted by hand.
+- **NEW `server/test/sharp-dedupe.test.js`** — loads transformers first, then sharp; asserts a deduped tree.
+- **CHANGED `CLAUDE.md`** — gotcha under "Conventions & gotchas".
 
 ## Verify (done this session)
-- `cd server && npm run build` clean; `manifest.json` valid; console builds with both families.
-- End-to-end through the built MCP handler (with `*_SRC` set): `list_prompt_families` → conversation(32),
-  newspaper(5); a conversation scenario returned parsed lines; a newspaper suite scenario returned a full issue
-  (headline + wealth/strength deltas). #44 phenomenon reproduces (voiced-clinical → clinical; voiceless-bare →
-  plain speech).
-
-## Next (planned, not in this branch)
-Phase 2 fixtures: `capture_prompt_fixtures` (game-launch-once dump of REAL inputs) then corpus/type inference;
-Phase 3 A/B + snapshot/variance; Phase 4 Psychology families + agentic loops.
+- `cd server && npm run test:sharp` → 6/6 ok.
+- Fresh `node build/index.js --sse`: `search_harmony` (loads transformers) then `list_workshop_images` in the
+  same process → real 85-image listing.
+- `build/embeddings.embed()` still returns a 384-dim vector; `npm ci --dry-run` clean; `npm ls --all` clean.
+- The live session's MCP `list_workshop_images` returns the listing.
 
 ## Rollout note
-Restart the running MCP server (`node server/build/index.js`) to expose the tools. The console is a dev-only
-build (never in the TS build or `.mcpb`); it needs `dotnet` and the mod workspace present.
+`node_modules` in the main checkout (`C:\github\rimworld-claude-dev-tools\server`) is already reinstalled with
+the deduped tree; its `package.json`/`package-lock.json` working copies carry the same change uncommitted until
+this PR merges into `development`. MCP server processes started before the fix that already cached the sharp
+failure need a restart.
