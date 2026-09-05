@@ -55,14 +55,18 @@ foreach ($mod in $targets) {
     # push credential below, so no separate auth step is needed.
     $pat = @($env:WIKI_PAT, $env:GH_TOKEN, $env:GITHUB_TOKEN) |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+    # The wiki lives next to the mod's own repo, whichever org that is: derive the
+    # owner/name slug from the mod's origin remote instead of assuming RimSynapse.
+    $originUrl = git -C $mod.FullName remote get-url origin 2>$null
+    $slug = if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?$') { $Matches[1] } else { "RimSynapse/$name" }
     $wikiUrl = if ($pat) {
-        "https://x-access-token:$pat@github.com/RimSynapse/$name.wiki.git"
+        "https://x-access-token:$pat@github.com/$slug.wiki.git"
     } elseif ($WhatIf) {
         # The gate path only reads, and the wikis are public: clone anonymously so a
         # hosted runner with no PAT and no SSH key can still check drift (Core#85).
-        "https://github.com/RimSynapse/$name.wiki.git"
+        "https://github.com/$slug.wiki.git"
     } else {
-        "git@github.com:RimSynapse/$name.wiki.git"
+        "git@github.com:$slug.wiki.git"
     }
     git clone --quiet $wikiUrl $clone 2>&1 | Out-Null
     # A failed clone leaves a non-zero $LASTEXITCODE; clear it so it cannot leak into
