@@ -114,11 +114,25 @@ foreach ($r in $Repo) {
     $zip = Join-Path $OutDir "$r-$version.zip"
     if (Test-Path $zip) { Remove-Item $zip }
     Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
+    # HARD REQUIREMENT: About/About.xml must sit at the ZIP ROOT. RimSort creates the mod folder
+    # itself on install, so a zip carrying a top-level <Repo>/ folder lands as Mods/<Repo>/<Repo>/
+    # and RimSort never detects the mod. Verified on the produced archive, not the staging dir.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace '\', '/' })
+        if (-not ($entries -contains 'About/About.xml')) {
+            throw "${r}: $zip does not have About/About.xml at the zip root - RimSort would install it nested (<Repo>/<Repo>/) and never detect it. First entries: $(($entries | Select-Object -First 5) -join ', ')"
+        }
+    } finally { $archive.Dispose() }
     $size = [math]::Round((Get-Item $zip).Length / 1MB, 2)
     Write-Host "[package] $r $relTag -> $zip (${size} MB)"
 
     if ($Upload) {
-        gh release upload -R "RimSynapse/$r" $relTag $zip --clobber
+        # Upload slug comes from the repo's own origin remote (repos live in more than one org).
+        $originUrl = git -C $path remote get-url origin
+        $slug = if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?$') { $Matches[1] } else { "RimSynapse/$r" }
+        gh release upload -R $slug $relTag $zip --clobber
         if ($LASTEXITCODE -ne 0) { throw "${r}: upload to $relTag failed" }
         Write-Host "[package] $r $relTag asset uploaded"
     }
