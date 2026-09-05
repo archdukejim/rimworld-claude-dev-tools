@@ -4,8 +4,9 @@
 # auto-generated "Source code (zip)" does not count. This script packages the
 # shippable payload of a release tag — About/, Assemblies/, Defs/, Languages/,
 # Learning/, Patches/, Sounds/, Textures/, LoadFolders.xml, LICENSE — into
-# <Repo>-<version>.zip with the repo name as the zip's top-level folder, and
-# (with -Upload) attaches it to the release.
+# <Repo>-<version>.zip with the mod files at the ZIP ROOT (no top-level folder:
+# RimSort creates the mod folder itself on install, so a nested <Repo>/<Repo>/
+# layout cannot load), and (with -Upload) attaches it to the release.
 #
 # Tags that predate DLL tracking (Core <= v0.9.0, R&T <= v0.8.0) have no DLLs in
 # the tag tree; for those the local Assemblies/*.dll are injected, but only after
@@ -59,15 +60,18 @@ foreach ($r in $Repo) {
     if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
     New-Item -ItemType Directory -Force $staging | Out-Null
 
+    # No --prefix: the mod files sit at the ZIP ROOT. RimSort creates the mod folder itself
+    # on install, so a zip with a top-level <Repo>/ folder ends up as <Repo>/<Repo>/ in Mods
+    # and RimSort cannot load it.
     $tmpZip = Join-Path $env:TEMP "rimsynapse-pkg\$r-archive.zip"
-    git -C $path archive --format=zip --prefix="$r/" -o $tmpZip $relTag -- @paths
+    git -C $path archive --format=zip -o $tmpZip $relTag -- @paths
     if ($LASTEXITCODE -ne 0) { throw "${r}: git archive failed for $relTag" }
     Expand-Archive $tmpZip -DestinationPath $staging
     Remove-Item $tmpZip
 
     # Inject locally built DLLs when the tag tree has none (pre-#95 tags) —
     # verified against the tag's own checksum manifest, or refused.
-    $stagedAsm = Join-Path $staging "$r\Assemblies"
+    $stagedAsm = Join-Path $staging 'Assemblies'
     $localAsm = Join-Path $path 'Assemblies'
     $hasStagedDll = (Test-Path $stagedAsm) -and (Get-ChildItem $stagedAsm -Filter *.dll)
     $localDlls = if (Test-Path $localAsm) { Get-ChildItem $localAsm -Filter *.dll } else { @() }
@@ -76,7 +80,10 @@ foreach ($r in $Repo) {
         if (-not (Test-Path $manifest)) { throw "${r}: tag $relTag tracks no DLLs and has no CHECKSUMS.sha256 to verify local ones against" }
         $recorded = @{}
         Get-Content $manifest | Where-Object { $_ -match '^[0-9a-f]{64}\s+\S' } | ForEach-Object {
-            $h, $n = $_ -split '\s+', 2; $recorded[$n.Trim()] = $h
+            # TrimStart('*'): sha256sum binary-mode manifests record "<hash> *<name>" —
+            # some repos' release-manifest.ps1 writes that form (their verify-binaries.ps1
+            # accepts it), so tolerate both here rather than keying on "*<name>".
+            $h, $n = $_ -split '\s+', 2; $recorded[$n.Trim().TrimStart('*')] = $h
         }
         foreach ($dll in $localDlls) {
             $actual = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLower()
@@ -97,7 +104,7 @@ foreach ($r in $Repo) {
     if (Test-Path $manifestPath) {
         $listed = Get-Content $manifestPath |
             Where-Object { $_ -match '^[0-9a-f]{64}\s+\S' } |
-            ForEach-Object { ($_ -split '\s+', 2)[1].Trim() }
+            ForEach-Object { ($_ -split '\s+', 2)[1].Trim().TrimStart('*') }   # tolerate "* <name>" binary-mode records
         $missing = @($listed | Where-Object { -not (Test-Path (Join-Path $stagedAsm $_)) })
         if ($missing.Count) {
             throw "${r}: staged zip is missing DLL(s) listed in CHECKSUMS.sha256: $($missing -join ', '). Build the release source (Assemblies/) before packaging."
@@ -106,7 +113,7 @@ foreach ($r in $Repo) {
 
     $zip = Join-Path $OutDir "$r-$version.zip"
     if (Test-Path $zip) { Remove-Item $zip }
-    Compress-Archive -Path (Join-Path $staging $r) -DestinationPath $zip
+    Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
     $size = [math]::Round((Get-Item $zip).Length / 1MB, 2)
     Write-Host "[package] $r $relTag -> $zip (${size} MB)"
 
