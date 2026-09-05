@@ -120,7 +120,7 @@ foreach ($r in $Repo) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
     try {
-        $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace '\', '/' })
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
         if (-not ($entries -contains 'About/About.xml')) {
             throw "${r}: $zip does not have About/About.xml at the zip root - RimSort would install it nested (<Repo>/<Repo>/) and never detect it. First entries: $(($entries | Select-Object -First 5) -join ', ')"
         }
