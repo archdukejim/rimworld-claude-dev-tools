@@ -56,7 +56,8 @@ function applyGitHubToken(newToken: string): void {
     octokit = new Octokit({ auth: newToken });
 }
 
-// Steam loopback bridge — set in main(); the swh_* tools require it.
+// Steam loopback bridge — set in main(). Never null after startup: an owner, a proxy to the sibling
+// server that bound the port first, or an "unavailable" stub that explains why (bridge.ts).
 let bridge: Bridge | null = null;
 
 // 2. Setup MCP Server
@@ -223,9 +224,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleSwhGithubTool(name, args);
     }
 
-    // Steam Workshop actions run in the browser via the loopback bridge.
+    // Steam Workshop actions: extension bridge when connected, else the DevTools route (workshop.ts).
     if (swhTools.some(t => t.name === name)) {
-        if (!bridge) throw new Error("Steam loopback bridge not started yet.");
         return await handleSwhTool(name, args, bridge);
     }
 
@@ -234,13 +234,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // 4. Start Server
 async function main() {
-    // Start the Steam Workshop loopback bridge (127.0.0.1). Best-effort: if the
-    // port is taken, the RimWorld/GitHub tools still work; only swh_* are affected.
-    try {
-        bridge = await startBridge(config);
-    } catch (err) {
-        console.error("[rwdt] Steam bridge failed to start (swh_* tools disabled):", err instanceof Error ? err.message : err);
-    }
+    // Start the Steam Workshop loopback bridge (127.0.0.1). Never throws: with several MCP servers
+    // running the port is usually owned by a sibling already, and this one becomes a proxy to it.
+    bridge = await startBridge(config);
 
     const isSse = process.argv.includes("--sse");
     if (isSse) {
@@ -396,7 +392,6 @@ async function main() {
                 } else if (swhGithubTools.some(t => t.name === name)) {
                     result = await handleSwhGithubTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
-                    if (!bridge) throw new Error("Steam loopback bridge not started yet.");
                     result = await handleSwhTool(name, args, bridge);
                 } else {
                     res.status(404).json({ error: "Unknown tool: " + name });

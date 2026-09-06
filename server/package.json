@@ -8,6 +8,7 @@
     "start": "node build/index.js",
     "test:imgur": "node test/imgur-stub.test.js",
     "test:chrome": "node test/chrome-tabgroups.test.js",
+    "test:steam": "node test/steam-cdp-stub.test.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

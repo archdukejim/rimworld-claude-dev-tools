@@ -3,6 +3,7 @@ import * as path from "path";
 import { randomBytes } from "crypto";
 import { nut, sharp } from "./pc/native";
 import { loadConfig } from "../config";
+import { checkDescriptionCap, checkLinkDomains, DESCRIPTION_CAP } from "../steamLogic";
 
 /**
  * Steam Workshop image pipeline (roadmap #1): capture RimWorld content and produce Workshop-ready
@@ -1077,7 +1078,19 @@ export async function handleWorkshopImageTool(name: string, args: any) {
         else if (mode === "append") { if (existing) parts.push(existing); parts.push(imagesBlock); }
         else { parts.push(imagesBlock); } // replace
         const bbcode = parts.join("\n\n");
-        return okText({ ok: true, images: blocks.length, mode, chars: bbcode.length, bbcode, note: "Pass 'bbcode' to swh_update_description { fileId, description }." });
+        // Guardrails (learned on the R&S 0.3.2 publish): Steam caps descriptions at 8,000 characters, and its
+        // content check flags unfamiliar link domains — both are cheaper to catch here than after the upload.
+        const cap = checkDescriptionCap(bbcode);
+        const domains = checkLinkDomains(bbcode);
+        const warnings = domains.ok ? [] : [domains.warning!];
+        return okText({
+            ok: cap.ok, images: blocks.length, mode, chars: bbcode.length, cap: DESCRIPTION_CAP, over: cap.over,
+            ...(cap.ok ? {} : { error: cap.message }),
+            warnings, links: domains.links, bbcode,
+            note: cap.ok
+                ? "Pass 'bbcode' to swh_update_description { fileId, description }." + (warnings.length ? " Review the warnings first." : "")
+                : "Over the cap — swh_update_description will refuse this. Trim before uploading."
+        });
     }
 
     if (name === "render_workshop_infographic") {
