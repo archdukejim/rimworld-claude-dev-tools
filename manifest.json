@@ -282,6 +282,10 @@
       "description": "Search the offline Def corpus by concept/keyword across defName/label/description, optionally filtered by defType. Pair with search_game_api (the C# behind the def). Requires build_def_corpus."
     },
     {
+      "name": "build_mod_def_corpus",
+      "description": "Build a registered, graphable corpus over one or more mods' Def XML + Patches (plus base game/DLC defs by default so mod→vanilla edges resolve). Select by packageId, name, folder, or packageId regex; honours loadFolders.xml. Registers the corpus and builds its graph (extends/requiresResearch/produces/consumes/costs/craftedAt/race/patches/references) in one call."
+    },
+    {
       "name": "register_corpus",
       "description": "Register any structured records as a named corpus (from inline objects or a JSONL/JSON file) so the agent can search and graph it like the built-in API/Def corpora. Auto-detects idField and textFields."
     },
