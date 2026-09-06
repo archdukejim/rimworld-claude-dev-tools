@@ -81,7 +81,7 @@ export const buildModDefCorpusTool = {
 };
 
 type ModPick = { packageId: string; name: string; folder: string; source: string };
-type Ctx = { mod: string; modName: string; source: string; file: string; viaPatch?: boolean };
+type Ctx = { mod: string; modName: string; source: string; file: string; viaPatch?: boolean; compat?: boolean };
 
 function versionKey(v: string): number {
     const m = v.match(/(\d+)\.(\d+)/); return m ? Number(m[1]) * 1000 + Number(m[2]) : -1;
@@ -89,7 +89,7 @@ function versionKey(v: string): number {
 
 /** Which subfolders of a mod load for `gameVersion`, per loadFolders.xml or RimWorld's defaults. */
 function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<string>, parser: XMLParser)
-    : { folders: string[]; skipped: string[]; via: string } {
+    : { folders: string[]; skipped: string[]; conditional: Set<string>; via: string } {
     const gv = versionKey(gameVersion);
     let entries: fs.Dirent[] = [];
     try { entries = fs.readdirSync(modRoot, { withFileTypes: true }); } catch { /* empty */ }
@@ -111,7 +111,7 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
                         const li = b?.li;
                         if (li !== undefined) items.push(...(Array.isArray(li) ? li : [li]));
                     }
-                    const folders: string[] = []; const skipped: string[] = [];
+                    const folders: string[] = []; const skipped: string[] = []; const conditional = new Set<string>();
                     for (const it of items) {
                         const text = strVal(it) ?? "";
                         const ifActive = it && typeof it === "object" ? strVal(it["@_IfModActive"]) : null;
@@ -121,9 +121,11 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
                         if (ifActive && !isActive(ifActive)) ok = false;
                         if (ifNot && isActive(ifNot)) ok = false;
                         const rel = text.replace(/^[\\/]+/, "").replace(/[\\/]+$/, "");
-                        (ok ? folders : skipped).push(rel === "" ? "/" : rel);
+                        const folder = rel === "" ? "/" : rel;
+                        (ok ? folders : skipped).push(folder);
+                        if (ok && (ifActive || ifNot)) conditional.add(folder);
                     }
-                    return { folders: [...new Set(folders)], skipped: [...new Set(skipped)], via: `${lf.name}:${pick}` };
+                    return { folders: [...new Set(folders)], skipped: [...new Set(skipped)], conditional, via: `${lf.name}:${pick}` };
                 }
             }
         } catch { /* fall through to defaults */ }
@@ -134,7 +136,7 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
     const versions = entries.filter(e => e.isDirectory() && /^\d+\.\d+$/.test(e.name)).map(e => e.name)
         .filter(v => versionKey(v) <= gv).sort((a, b) => versionKey(a) - versionKey(b));
     if (versions.length) folders.push(versions[versions.length - 1]);
-    return { folders, skipped: [], via: "default" };
+    return { folders, skipped: [], conditional: new Set<string>(), via: "default" };
 }
 
 /**
@@ -234,6 +236,7 @@ function defRecord(defType: string, el: any, ctx: Ctx): any | null {
         source: ctx.source,
         file: ctx.file,
         viaPatch: ctx.viaPatch || undefined,
+        compat: ctx.compat || undefined,   // from a conditional (IfModActive) folder: a compat copy, never wins the bare id
         classes: classes.size ? [...classes] : undefined,
         research: nonEmpty(research),
         produces: nonEmpty(keysOf(el.products)),
@@ -304,6 +307,7 @@ function patchRecords(tree: any, ctx: Ctx, out: any[]) {
             label: `${topClass}${names.length ? " → " + names.slice(0, 4).join(", ") + (names.length > 4 ? ", …" : "") : ""}`,
             description: acc.xpaths.slice(0, 6).join(" | "),
             mod: ctx.mod, modName: ctx.modName, source: ctx.source, file: ctx.file,
+            compat: ctx.compat || undefined,
             classes: [...new Set(acc.classes)],
             conditionMods: acc.mods.length ? [...new Set(acc.mods)] : undefined,
             xpaths: acc.xpaths,
@@ -394,7 +398,7 @@ export async function buildModDefCorpus(args: any) {
                     files++;
                     let tree: any;
                     try { tree = parser.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
-                    const ctx: Ctx = { mod: m.packageId, modName: m.name, source: "mod", file: path.relative(m.folder, file) };
+                    const ctx: Ctx = { mod: m.packageId, modName: m.name, source: "mod", file: path.relative(m.folder, file), compat: lf.conditional.has(rel) || undefined };
                     const before = records.length;
                     if (kind === "def") defsFromRoot(tree?.Defs, ctx, records);
                     else patchRecords(tree, ctx, records);
@@ -427,7 +431,9 @@ export async function buildModDefCorpus(args: any) {
     const firstByName = new Map<string, any>();
     const typed = new Map<string, string>();     // "DefType:defName|Name" -> id
     let crossType = 0, overrides = 0;
-    for (const r of records) {
+    // Compat copies (from IfModActive folders) are visited last so the owning mod keeps the bare id.
+    const idOrder = [...records].sort((a, b) => Number(!!a.compat) - Number(!!b.compat));
+    for (const r of idOrder) {
         if (r.defType === "PatchOperation") { idSet.add(r.id); continue; }
         const base = r.id as string;
         const first = firstByName.get(base);
