@@ -120,7 +120,8 @@ No token required: `wiki`, `factions`, `psychology`, `pcControl` (desktop
 automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
 `gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
 loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
-(generic register/index/graph/search), `harmony` (Harmony patching RAG — a
+(generic register/index/graph/search; `build_mod_def_corpus` in the `defCorpus` family builds a graphed
+corpus over any set of mods' Defs + Patches, e.g. one per mod family, with vanilla defs mixed in), `harmony` (Harmony patching RAG — a
 curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
 `set_active_key`; multiple labelled keys per service, active-key resolution),

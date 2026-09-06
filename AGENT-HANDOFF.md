@@ -1,43 +1,32 @@
-# AGENT-HANDOFF — `agent/bb82b711`
+# AGENT-HANDOFF — `agent/85a44357-mod-corpus`
 
 ## What this branch adds
 
-**PromptLab — the universal, game-free RimSynapse prompt/response harness.** Compose the exact prompt any LLM
-call site would send → run it against the same local model → return the **raw** response → iterate, with no
-game launch. It does NOT judge (that's the consumer's job). See `docs/plans/prompt-lab-universal.md`.
+**`build_mod_def_corpus`** (defCorpus family, `server/src/tools/modDefCorpus.ts`) — a registered, graphable
+corpus over any set of MODS' Def XML + Patches, with base game + DLC defs mixed in (default) so mod→vanilla
+edges resolve. One call = parse → register_corpus → graph_corpus.
 
-- **NEW `promptlab/`** — a net8 console: a reflection-based family registry (`Contract.cs` `IPromptFamily`,
-  `Registry.cs`), a generic runner (`Program.cs`), the faithful caller (`LlmCaller.cs`), and the live-Core-
-  config reader (`CoreConfigReader.cs`). Families in `promptlab/Families/`: `ConversationFamily` (links
-  Conversations' pure `ThinPromptComposer`/`IdentityComposer`/`LenientDialogueParser`) and `NewspaperFamily`
-  (links WorldNews' pure `NewspaperPromptComposer`). Each family `<Compile>`-links its mod's pure composer from
-  the workspace (`$RS_Root\<Mod>`, per-mod overridable via `*_SRC`), conditional on the source being present.
-- **NEW `harness/promptlab.ps1`** — builds the console (passing `-p:WorkspaceRoot` + any `*_SRC` env
-  overrides) and runs a job; emits ONLY the console's JSON on stdout.
-- **CHANGED `server/src/tools/promptLab.ts`** — tool family `promptLab`:
-  - `simulate_llm_prompt { family, mode, inputs|scenarios, suiteFilter, runs, dryRun, config }` → raw responses
-    + composed prompts + optional family parse + metadata.
-  - `list_prompt_families` → families + input contracts + catalog sizes.
-- **CHANGED** `server/src/index.ts` (`promptLab` wired ×4 — unchanged since the family fns kept their names),
-  `manifest.json`, `CLAUDE.md`, `.gitignore` (`promptlab/bin`,`obj`).
+- Select mods by packageId / name / folder (`mods`) or `packageIdPattern` regex.
+- Honours `loadFolders.xml` (version block ≤ game version from Version.txt; `IfModActive`/`IfModNotActive`
+  judged against corpus mods + installed DLCs + `activeMods`), else RimWorld's default root + Common + best
+  version folder. Skipped conditional folders are reported per mod.
+- Relations: `extends`, `requiresResearch`, `produces`, `consumes`, `costs`, `craftedAt`, `race`, `patches`
+  (PatchOperation record → the defs its xpaths target), `references` (any def id mentioned anywhere in the def,
+  incl. statBases keys → StatDefs).
+- Ids: defNames are unique per DEF TYPE in RimWorld, so the first record keeps the bare name; a same-name def
+  of another type is `defName@DefType` (`sameNameAs`), a same-type duplicate from another mod is
+  `defName@packageId` (`overrides` — reported as a real override). Typed relations resolve to the exact typed
+  record; `references` resolves by bare name (first wins).
+- Defs added by `PatchOperationAdd` into `/Defs` become real def records (`viaPatch:true`).
+- **NEW `server/src/tools/defXml.ts`** — helpers shared with `build_def_corpus` (moved out of defCorpus.ts).
+- **CHANGED** `defCorpus.ts` (imports helpers, registers the tool), `manifest.json`, `CLAUDE.md`.
 
-## Depends on the mod pure composers
-- **Conversations** `feature/prompt-lab` (#54) — the pure `ThinPromptComposer` etc.
-- **WorldNews** `feature/prompt-lab-composer` — the pure `NewspaperPromptComposer`.
-Until those land in the workspace, set `CONVERSATIONS_SRC` / `WORLDNEWS_SRC` to their checkouts;
-`promptlab.ps1` passes them through. A family whose source is absent simply isn't registered.
+## Built this session (in `%LOCALAPPDATA%\RimAgentic\corpora`)
+- `world-domination` — World Domination 2.0 (`tsa.worlddominationexperimental`) + game: 14,160 records.
+- `vanilla-expanded` — every `oskarpotocki.*` / `vanillaexpanded.*` mod (46) + game: 24,524 records.
+  Third-party VE add-ons (`mrhydralisk.voe*`, `cn.vfei2swarmdisaster`) deliberately excluded.
 
-## Verify (done this session)
-- `cd server && npm run build` clean; `manifest.json` valid; console builds with both families.
-- End-to-end through the built MCP handler (with `*_SRC` set): `list_prompt_families` → conversation(32),
-  newspaper(5); a conversation scenario returned parsed lines; a newspaper suite scenario returned a full issue
-  (headline + wealth/strength deltas). #44 phenomenon reproduces (voiced-clinical → clinical; voiceless-bare →
-  plain speech).
-
-## Next (planned, not in this branch)
-Phase 2 fixtures: `capture_prompt_fixtures` (game-launch-once dump of REAL inputs) then corpus/type inference;
-Phase 3 A/B + snapshot/variance; Phase 4 Psychology families + agentic loops.
-
-## Rollout note
-Restart the running MCP server (`node server/build/index.js`) to expose the tools. The console is a dev-only
-build (never in the TS build or `.mcpb`); it needs `dotnet` and the mod workspace present.
+## Verified
+- Live MCP: `list_corpora` shows both graphed; `search_corpus` (filterField source=mod) returns VPE defs and
+  patch records; `query_corpus_graph` `patches` reverse on `Player_Outpost` finds the WD2 patch; transitive
+  `extends` walks `TSA_WD_Hayball_2a → TSA_WD_HayballBase → TSA_WD_PropBase → BuildingBase` (vanilla).
