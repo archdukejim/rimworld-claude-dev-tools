@@ -18,13 +18,17 @@ edges resolve. One call = parse → register_corpus → graph_corpus.
   `defName@packageId` (`overrides` — reported as a real override). Typed relations resolve to the exact typed
   record; `references` resolves by bare name (first wins).
 - Defs added by `PatchOperationAdd` into `/Defs` become real def records (`viaPatch:true`).
+- `modRoots`: scan folders of mod checkouts (About/About.xml at the repo root or one level down) — how the
+  full Vanilla Expanded series was built from sparse clones of the 125 `Vanilla-Expanded` GitHub repos
+  (`%LOCALAPPDATA%RimAgenticmod-sourcesanilla-expanded`, blob-filtered to About/Defs/Patches/loadFolders).
+  Handles a duplicated `<vX.Y>` block in loadFolders.xml (Vanilla Backgrounds Expanded has one).
 - **NEW `server/src/tools/defXml.ts`** — helpers shared with `build_def_corpus` (moved out of defCorpus.ts).
 - **CHANGED** `defCorpus.ts` (imports helpers, registers the tool), `manifest.json`, `CLAUDE.md`.
 
 ## Built this session (in `%LOCALAPPDATA%\RimAgentic\corpora`)
 - `world-domination` — World Domination 2.0 (`tsa.worlddominationexperimental`) + game: 14,160 records.
-- `vanilla-expanded` — every `oskarpotocki.*` / `vanillaexpanded.*` mod (46) + game: 24,524 records.
-  Third-party VE add-ons (`mrhydralisk.voe*`, `cn.vfei2swarmdisaster`) deliberately excluded.
+- `vanilla-expanded` — ALL 124 mods in the Vanilla-Expanded GitHub org (sparse clones, `modRoots`) + game:
+  36,988 records. Two repos are empty shells (VanillaTemplateExpanded, VIESAS). Third-party add-ons excluded.
 
 ## Verified
 - Live MCP: `list_corpora` shows both graphed; `search_corpus` (filterField source=mod) returns VPE defs and

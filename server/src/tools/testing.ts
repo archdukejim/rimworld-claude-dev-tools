@@ -124,7 +124,7 @@ function modFolderIndex(config: { rimworldModsDir?: string }): ModIndex {
 }
 
 /** Parse the About.xml fields an agent needs to place or evaluate a mod. */
-function readModAbout(folder: string): Record<string, any> {
+export function readModAbout(folder: string): Record<string, any> {
     const aboutPath = path.join(folder, "About", "About.xml");
     const xml = fs.readFileSync(aboutPath, "utf8");
     const tag = (t: string) => new RegExp(`<${t}>([\\s\\S]*?)</${t}>`, "i").exec(xml)?.[1]?.trim();

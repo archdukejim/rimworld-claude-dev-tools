@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { XMLParser } from "fast-xml-parser";
 import { loadConfig } from "../config";
-import { resolveInstalledMods } from "./testing";
+import { resolveInstalledMods, readModAbout } from "./testing";
 import { handleCorpusRegistryTool } from "./corpusRegistry";
 import { resolveRimWorldDir, walkXml, strVal, readGameVersion } from "./defXml";
 
@@ -67,6 +67,10 @@ export const buildModDefCorpusTool = {
                 description: "Mods to include: packageId (exact, case-insensitive), mod name (exact or substring), or an absolute mod folder."
             },
             packageIdPattern: { type: "string", description: "Regex over packageId (case-insensitive) selecting mods — alternative/addition to 'mods'." },
+            modRoots: {
+                type: "array", items: { type: "string" },
+                description: "Folders to scan for mod checkouts (e.g. a directory of cloned GitHub repos): every subfolder with About/About.xml at its root or one level down is a candidate, and wins over an installed mod with the same packageId. With no 'mods'/'packageIdPattern', every mod found under the roots is included."
+            },
             includeGame: { type: "boolean", description: "Also include Core + installed DLC defs (default true) so mod→vanilla edges resolve. Filter them out of searches with filterField 'source' = 'mod'." },
             activeMods: { type: "array", items: { type: "string" }, description: "Extra packageIds to treat as active when judging loadFolders IfModActive/IfModNotActive conditions (corpus mods + installed DLCs are always active)." },
             gameVersion: { type: "string", description: "Override the game version used to pick loadFolders/version folders (default: read from Version.txt, e.g. '1.6')." },
@@ -100,8 +104,13 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
                 const eligible = blocks.filter(b => versionKey(b) <= gv);
                 const pick = eligible.length ? eligible[eligible.length - 1] : (blocks.length ? blocks[0] : null);
                 if (pick) {
-                    const li = root[pick]?.li;
-                    const items = li === undefined ? [] : (Array.isArray(li) ? li : [li]);
+                    // A version tag repeated in the file (a real-world mod typo) parses as an array of blocks — merge them.
+                    const blockList = Array.isArray(root[pick]) ? root[pick] : [root[pick]];
+                    const items: any[] = [];
+                    for (const b of blockList) {
+                        const li = b?.li;
+                        if (li !== undefined) items.push(...(Array.isArray(li) ? li : [li]));
+                    }
                     const folders: string[] = []; const skipped: string[] = [];
                     for (const it of items) {
                         const text = strVal(it) ?? "";
@@ -114,7 +123,7 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
                         const rel = text.replace(/^[\\/]+/, "").replace(/[\\/]+$/, "");
                         (ok ? folders : skipped).push(rel === "" ? "/" : rel);
                     }
-                    return { folders, skipped, via: `${lf.name}:${pick}` };
+                    return { folders: [...new Set(folders)], skipped: [...new Set(skipped)], via: `${lf.name}:${pick}` };
                 }
             }
         } catch { /* fall through to defaults */ }
@@ -126,6 +135,37 @@ function resolveLoadFolders(modRoot: string, gameVersion: string, active: Set<st
         .filter(v => versionKey(v) <= gv).sort((a, b) => versionKey(a) - versionKey(b));
     if (versions.length) folders.push(versions[versions.length - 1]);
     return { folders, skipped: [], via: "default" };
+}
+
+/**
+ * Mod checkouts under the given roots: a subfolder is a mod if About/About.xml sits at its root or one
+ * level down (repos that keep the mod in a nested folder). Reads the mod's OWN packageId, not a dependency's.
+ */
+function scanModRoots(roots: string[]): Array<{ packageId: string; name: string; folder: string; source: string }> {
+    const out: Array<{ packageId: string; name: string; folder: string; source: string }> = [];
+    const tryMod = (folder: string): boolean => {
+        if (!fs.existsSync(path.join(folder, "About", "About.xml"))) return false;
+        try {
+            const about = readModAbout(folder);
+            const packageId = String(about.packageId || "").trim();
+            if (!packageId) return false;
+            out.push({ packageId, name: String(about.name || path.basename(folder)), folder, source: "folder" });
+            return true;
+        } catch { return false; }
+    };
+    for (const root of roots) {
+        let entries: fs.Dirent[] = [];
+        try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+            if (!e.isDirectory() || e.name.startsWith(".")) continue;
+            const folder = path.join(root, e.name);
+            if (tryMod(folder)) continue;
+            let subs: fs.Dirent[] = [];
+            try { subs = fs.readdirSync(folder, { withFileTypes: true }); } catch { continue; }
+            for (const s of subs) if (s.isDirectory() && !s.name.startsWith(".")) tryMod(path.join(folder, s.name));
+        }
+    }
+    return out;
 }
 
 // ---- def extraction -------------------------------------------------------------------------
@@ -291,10 +331,17 @@ export async function buildModDefCorpus(args: any) {
 
     // --- select mods ---
     const cfg = loadConfig();
-    const installed = resolveInstalledMods({ rimworldModsDir: cfg.rimworldModsDir });
+    const modRoots: string[] = Array.isArray(args?.modRoots) ? args.modRoots.map(String) : [];
+    const scanned = scanModRoots(modRoots);
+    const installed = [...resolveInstalledMods({ rimworldModsDir: cfg.rimworldModsDir }), ...scanned];
     const picks = new Map<string, ModPick>();
     const unmatched: string[] = [];
     const selectors: string[] = Array.isArray(args?.mods) ? args.mods.map(String) : [];
+    const toPick = (m: { packageId: string; name: string; folder: string; source: any }): ModPick =>
+        ({ packageId: m.packageId, name: m.name, folder: m.folder, source: String(m.source) });
+    if (modRoots.length && selectors.length === 0 && !args?.packageIdPattern) {
+        for (const m of scanned) picks.set(m.packageId.toLowerCase(), toPick(m));
+    }
     for (const sel of selectors) {
         const s = sel.trim(); const sl = s.toLowerCase();
         let hit = installed.filter(m => m.packageId.toLowerCase() === sl);
@@ -356,7 +403,7 @@ export async function buildModDefCorpus(args: any) {
                 }
             }
         }
-        modReport.push({ packageId: m.packageId, name: m.name, loadFolders: lf.folders, skippedFolders: lf.skipped.length ? lf.skipped : undefined, via: lf.via, xmlFiles: files, defs, patchRecords: patches });
+        modReport.push({ packageId: m.packageId, name: m.name, source: m.source, folder: m.folder, loadFolders: lf.folders, skippedFolders: lf.skipped.length ? lf.skipped : undefined, via: lf.via, xmlFiles: files, defs, patchRecords: patches });
     }
 
     // --- game ---
