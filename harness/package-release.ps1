@@ -44,10 +44,16 @@ foreach ($r in $Repo) {
     $path = Join-Path $root $r
     if (-not (Test-Path (Join-Path $path 'About\About.xml'))) { throw "$r is not a mod checkout at $path" }
 
+    # Owner/repo slug comes from the checkout's own origin remote (repos live in
+    # more than one org — e.g. Regions-and-societies); RimSynapse is only the
+    # fallback for checkouts without a usable origin.
+    $originUrl = git -C $path remote get-url origin
+    $slug = if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?$') { $Matches[1] } else { "RimSynapse/$r" }
+
     # Deliberately NOT a lowercase '$tag' local: PowerShell variable names are
     # case-insensitive, so '$tag = $Tag' is a self-assignment that carries
     # iteration N's tag into iteration N+1.
-    $relTag = if ($Tag) { $Tag } else { gh api "repos/RimSynapse/$r/releases/latest" --jq .tag_name }
+    $relTag = if ($Tag) { $Tag } else { gh api "repos/$slug/releases/latest" --jq .tag_name }
     if (-not $relTag) { throw "${r}: no release found" }
     $version = $relTag.TrimStart('v')
 
@@ -129,9 +135,6 @@ foreach ($r in $Repo) {
     Write-Host "[package] $r $relTag -> $zip (${size} MB)"
 
     if ($Upload) {
-        # Upload slug comes from the repo's own origin remote (repos live in more than one org).
-        $originUrl = git -C $path remote get-url origin
-        $slug = if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?$') { $Matches[1] } else { "RimSynapse/$r" }
         gh release upload -R $slug $relTag $zip --clobber
         if ($LASTEXITCODE -ne 0) { throw "${r}: upload to $relTag failed" }
         Write-Host "[package] $r $relTag asset uploaded"

@@ -34,8 +34,24 @@ export async function handleSyncTool(name: string, args: any, org: string, token
                 fs.rmSync(tempWikiPath, { recursive: true, force: true });
             }
             
+            // The wiki lives wherever the repo actually lives — derive the owner/repo
+            // slug from the checkout's origin remote (repos exist in more than one org,
+            // e.g. Regions-and-societies). The configured org is only the fallback for
+            // checkouts without a usable remote.
+            let slug = `${org}/${repoName}`;
+            try {
+                const originUrl = execSync("git remote get-url origin", {
+                    cwd: localRepoPath,
+                    stdio: ["ignore", "pipe", "pipe"]
+                }).toString().trim();
+                const m = originUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+                if (m) slug = m[1];
+            } catch {
+                // no origin remote — keep the configured-org fallback
+            }
+
             // Clone the wiki repo using the token for auth
-            const wikiUrl = `https://oauth2:${token}@github.com/${org}/${repoName}.wiki.git`;
+            const wikiUrl = `https://oauth2:${token}@github.com/${slug}.wiki.git`;
             execSync(`git clone ${wikiUrl} "${tempWikiPath}"`, { stdio: 'inherit' });
             
             // Copy contents from Learning to wiki
