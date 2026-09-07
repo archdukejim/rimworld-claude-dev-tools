@@ -1,62 +1,52 @@
-# AGENT-HANDOFF — `agent/e2a85d71-discussions`
+# AGENT-HANDOFF — `agent/e2a85d71-integration`
 
-## What this branch adds
+## What this branch is
 
-**Steam Workshop Discussions as the public backlog + changelog** — a `discussions` tool family
-plus the milestone-close-out mode of `swh_post_changelog`, driven by the new USER-LEVEL
-**`workshop-backlog`** skill (`~/.claude/skills/workshop-backlog/SKILL.md`, not in this repo).
-Conventions + write discipline: **`docs/DISCUSSIONS.md`**. Reference target output:
-`regions-and-societies/Core-MMF/About/discussions/*.bbcode`.
+The **integration of every open feature branch into one deconflicted tree, ready to merge to
+`main`** (via `development`). Built on `development` (which already had #35). All non-bridge
+tests pass; `git merge-tree` against `origin/main` is clean.
 
-Built ON TOP of `agent/4c8ab8ba` (PR #34 — steamCdp/steamLogic/bridge modes), which is merged
-into this branch. **Land #34 into development first**, then this PR is a small delta; merging
-this one alone also works (it carries #34's commits).
+## What was merged, and how conflicts were resolved
 
-- **`server/src/steamCdp.ts`** — thread-page reading + post editing, selectors captured LIVE
-  (2026-09-06, item 3784666060): `readThread` (OP `.forum_op` + `.commentthread_comment`
-  replies; author via `a.forum_op_author` / `a.commentthread_author_link` — the avatar link
-  comes first in DOM order, never take the first profile anchor; comments carry TWO timestamp
-  divs, the first an empty template), `openPostEdit`/`saveOpenEdit` (edit control is
-  `a.forum_comment_action.edit_post`; comments PRE-RENDER a hidden empty
-  `#comment_edit_text_<gid>` — visibility decides, never existence; the OP form appears
-  OUTSIDE `.forum_op` as `#forum_topic_edit_<id>_textarea` + visible `input[name=topic]` +
-  "Save Changes" button), `setThreadPinned` (pin AND unpin; `pinThread` kept as wrapper),
-  richer thread rows (lastActivity, author), `topicUrl`.
-- **NEW `server/src/tools/discussions.ts`** — `swh_list_discussions`, `swh_find_discussion`
-  (exact title, the skill's create-vs-edit decision), `swh_get_discussion` (RAW BBCode for own
-  posts via the edit form, opened read-only; rendered for others), `swh_create_discussion`
-  (refuses duplicate titles), `swh_reply_discussion`, `swh_edit_discussion_post` (mandatory
-  re-read, no-op on identical, dry run returns current+proposed; OP edits can retitle),
-  `swh_pin_discussion` (idempotent, verified). Every write: dry-run default / confirm:true,
-  post-cap refusal, domain warnings, public URL + moderation state after.
-- **`server/src/steamLogic.ts`** — `DISCUSSION_POST_CAP` (**provisional 8000** — measure on a
-  hidden test item and update; the old pre-rebrand item 3768364266 may serve),
-  `checkDiscussionPostCap`, `parseTopicId`, `findThreadByTitle`, `findMilestoneThread`,
-  `shippedTitle`.
-- **`server/src/tools/workshop.ts`** — `swh_post_changelog` milestone mode (`milestoneName`):
-  final reply on the `Next milestone: <version> …` thread, retitle `<version> <name> -
-  shipped`, unpin; missing thread errors point at the workshop-backlog skill.
-- Wired ×4 in `index.ts`; `manifest.json` +7; CLAUDE.md family list + publish subsection;
-  `docs/DISCUSSIONS.md`.
-- **Skills (user-level, outside this repo)**: NEW `workshop-backlog`; `ship-it` Step 9b now
-  the milestone close-out + calls workshop-backlog; `work-next-milestone` Phase 2.4 + Exit
-  call it after grooming.
+- **#32 `agent/85a44357`** — sharp dedupe (ERR_DLOPEN fix). Clean; `test:sharp` passes.
+- **#31 `agent/e2a85d71`** — infographic pipeline (`render_html_to_image`, `compose_infographic`,
+  `publish_infographic`, + `cdp.ts`). `test:infographic` 39/39.
+- **#33 `agent/85a44357-mod-corpus`** — `build_mod_def_corpus` (added into the existing
+  `defCorpus` family via `modDefCorpus.ts`; no new index wiring needed). Builds clean.
+- **#34 `agent/4c8ab8ba` + #36 `agent/e2a85d71-discussions`** — Steam publish path (steamCdp /
+  steamLogic / **owner/proxy/unavailable modes bridge**) + the Discussions tool family +
+  milestone close-out. `test:steam` 74/74. (#36 already contained #34.)
+- **#30 `agent/d2029542`** — multi-session robustness. Kept ALL of it EXCEPT the SWH-bridge
+  rewrite: the game-IPC layer (`gameLease` FIFO + `ipcLock`), the `session` family
+  (`use_session`/`set_session_modlist`/`ensure_game`), About.xml force-load order, modlist-aware
+  bring-up, `docs/SESSION-GATING.md`. `test:loadorder` 4/4, `test:lease` 5/5, `test:session` 16/16.
+- **#24 `agent/74d9dd03`** — cherry-picked ONLY the `imgur_status` fix (7cf906b; reports both
+  upload paths). `test:imgur` 27/27.
 
-## Verified this session
-- `npm run build` clean; `npm run test:steam` **74/74** (stub grew discussion probes: readThread,
-  openEditPost/readEditPost/fillEditPost/afterEditPost, clickUnpin + 26 new checks incl. the
-  milestone close-out and the pure logic).
-- LIVE, read-only, item 3784666060: `swh_list_discussions` (topicIds, pinned, lastActivity,
-  author), `swh_get_discussion` returning byte-accurate RAW BBCode for the OP (4,417 chars) and
-  a reply (4,833 chars) — the edit forms opened and never saved. Fixed three anatomy bugs the
-  live run exposed (hidden template textarea, OP form location, author/timestamp selectors).
+### The one real fork — the SWH bridge (`bridge.ts`)
 
-## NOT verified (needs a confirmed live write)
-- Confirmed create / reply / edit-save / pin / unpin / retitle against real Steam, and the true
-  discussion post cap. All dry-run paths and the stub cover the logic; the save-button and
-  new-topic selectors were captured live. First real use = the workshop-backlog skill run
-  against 3784666060 (user-confirmed), where the existing hand-posted threads ("Backlog",
-  "0.4.0 Milestones") should be EDITED/retitled to the conventions, not duplicated.
+Three branches rewrote `bridge.ts` off one base: #34/#36 (owner/**proxy**/unavailable modes),
+#30 (retry-rebind), #24 (637-line cross-process queueing). They are mutually exclusive.
+**Kept the #34/#36 modes bridge** — a losing session *proxies to the owner and works
+immediately* (superset of #30's "error until I take the port"; cross-process calls funnel to the
+owner's single queue, covering #24's queueing intent). #30's and #24's bridge rewrites are
+therefore **superseded**, along with `bridge-rebind.test.js` (removed) and #24's
+`bridge-queue.test.js`/`ipc-lock.test.js` (never merged — the queueing commit was not applied).
 
-## Rollout
-Rebuild + restart the running `node server/build/index.js` processes to expose the family.
+**Known follow-up (not a blocker):** the modes bridge does not auto-take-over the port if the
+current owner dies mid-session (a proxy stays pointed at the dead owner until restart). #30's
+rebind had that property. If wanted, add periodic `listenAsOwner` retry to a proxy/unavailable
+bridge — that would fold #30's rebind benefit into the modes design.
+
+Docs conflicts (CLAUDE.md / manifest.json / package.json) were resolved as unions (every family
++ every test script kept). Two channels stay distinct: the file-based **game IPC** (lease+lock,
+#30) and the **SWH bridge** (modes, #34/#36).
+
+## Verify (done this session)
+`cd server && npm run build` clean; all suites green: imgur 27/27, sharp ✓, steam 74/74,
+infographic 39/39, loadorder 4/4, lease 5/5, session 16/16. No conflict markers in any tracked
+file. `git merge-tree HEAD origin/main` clean.
+
+## Landing
+One PR: this branch → `development`. Supersedes/closes #24, #30, #31, #32, #33, #34, #36.
+Then `development` → `main` is a clean merge.
