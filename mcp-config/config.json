@@ -1,4 +1,8 @@
 {
   "defaultProjectId": "PVT_kwDOEfI01s4Bdlhx",
-  "organization": "RimSynapse"
+  "organization": "RimSynapse",
+  "editions": {
+    "mmf": "C:github\regions-and-societiesCore-MMF",
+    "rp2": "C:github\regions-and-societiesCore-RP2"
+  }
 }

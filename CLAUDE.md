@@ -133,7 +133,12 @@ prompt/response harness — see below),
 `discussions` (`swh_list/find/get/create/reply/edit/pin_discussion` — Steam Workshop
 Discussions threads over the DevTools route; the backlog/milestone threads that replace the
 GitHub backlog + changelog for players. Conventions + write discipline: **`docs/DISCUSSIONS.md`**;
-driven by the user-level `workshop-backlog` skill).
+driven by the user-level `workshop-backlog` skill),
+`infographic` (`render_html_to_image`, `compose_infographic`, `publish_infographic` —
+themed HTML → crisp PNG via headless Chrome → fan-out to edition repos + Steam
+descriptions; the render gotchas [UTF-8 loopback serving, virtual-time budget, forced
+`data-theme`, measured tight height] and the publish flow live in **`docs/INFOGRAPHICS.md`** —
+read it before touching the renderer).
 
 ### Game-free prompt iteration (`promptLab`)
 

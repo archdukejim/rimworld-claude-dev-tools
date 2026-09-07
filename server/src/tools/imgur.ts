@@ -5,6 +5,7 @@ import { createHash, randomBytes } from "crypto";
 import { addKey, getActiveKey, listKeys } from "../keystore";
 import { openUrl } from "./chromeCtl";
 import { sharp } from "./pc/native";
+import { CdpPage, CDP_PORT_DEFAULT, openTab, closeTab, sleep } from "./cdp";
 
 /*
  * Imgur uploads — turn locally generated images into hosted URLs for Steam Workshop descriptions.
@@ -696,59 +697,10 @@ async function listUploads(args: any) {
  * the new post (imgur.com/a/<hash>). Blind UI driving (clicks/keystrokes on a contested desktop)
  * is exactly what stranded past agents — never do that. */
 
-const CDP_PORT_DEFAULT = 9222;
-
-interface CdpTab { id: string; webSocketDebuggerUrl?: string; }
-
-/** Minimal CDP page session over the built-in WebSocket (Node >= 22). */
-class CdpPage {
-    private ws: any; private seq = 0;
-    private pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
-    static async open(wsUrl: string): Promise<CdpPage> {
-        const p = new CdpPage();
-        p.ws = new WebSocket(wsUrl);
-        await new Promise<void>((res, rej) => {
-            p.ws.addEventListener("open", () => res());
-            p.ws.addEventListener("error", () => rej(new Error("websocket error talking to the tab")));
-        });
-        p.ws.addEventListener("message", (ev: any) => {
-            let m: any; try { m = JSON.parse(String(ev.data)); } catch { return; }
-            const h = m.id && p.pending.get(m.id);
-            if (!h) return;
-            p.pending.delete(m.id);
-            m.error ? h.rej(new Error(m.error.message || JSON.stringify(m.error))) : h.res(m.result);
-        });
-        return p;
-    }
-    cmd(method: string, params: any = {}): Promise<any> {
-        return new Promise((res, rej) => {
-            const id = ++this.seq;
-            this.pending.set(id, { res, rej });
-            this.ws.send(JSON.stringify({ id, method, params }));
-        });
-    }
-    async eval(expression: string): Promise<any> {
-        const r = await this.cmd("Runtime.evaluate", { expression, returnByValue: true });
-        if (r?.exceptionDetails) throw new Error("page JS threw: " + (r.exceptionDetails.exception?.description || "unknown"));
-        return r?.result?.value;
-    }
-    close() { try { this.ws.close(); } catch { /* closing */ } }
-}
-
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
 /** Upload one file through the logged-in imgur session; returns the post + direct link. */
 async function webUploadOne(filePath: string, port: number): Promise<{ postUrl: string; albumId?: string; link: string }> {
-    const base = `http://127.0.0.1:${port}`;
-    let tab: CdpTab;
-    try {
-        tab = await (await fetch(`${base}/json/new?${encodeURIComponent("https://imgur.com/upload")}`, { method: "PUT" })).json() as CdpTab;
-    } catch (e: any) {
-        throw new Error(`RimAgentic Chrome is not reachable on port ${port} — run launch_chrome first. (${e?.message || e})`);
-    }
-    if (!tab?.webSocketDebuggerUrl) throw new Error("Chrome opened no debuggable tab (webSocketDebuggerUrl missing).");
-
-    const page = await CdpPage.open(tab.webSocketDebuggerUrl);
+    const tab = await openTab(port, "https://imgur.com/upload");
+    const page = await CdpPage.open(tab.webSocketDebuggerUrl!);
     try {
         await page.cmd("DOM.enable");
         await page.cmd("Runtime.enable");
@@ -785,7 +737,7 @@ async function webUploadOne(filePath: string, port: number): Promise<{ postUrl: 
         return { postUrl: href, albumId, link: link || (albumId ? `https://imgur.com/a/${albumId}` : href) };
     } finally {
         page.close();
-        try { await fetch(`${base}/json/close/${tab.id}`); } catch { /* tab cleanup is best-effort */ }
+        await closeTab(port, tab.id); // tab cleanup is best-effort
     }
 }
 

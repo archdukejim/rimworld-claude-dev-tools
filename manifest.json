@@ -568,6 +568,18 @@
     {
       "name": "swh_pin_discussion",
       "description": "Pin or unpin a discussion thread from the owner admin menu, idempotently, verifying against the thread listing."
+    },
+    {
+      "name": "render_html_to_image",
+      "description": "Render an HTML infographic (file/string/URL) to a crisp PNG with headless Chrome/Edge: UTF-8-safe loopback serving, virtual-time budget for JS/fonts, forced light/dark theme, 2x scale, measured tight height."
+    },
+    {
+      "name": "compose_infographic",
+      "description": "Generate themed, render-ready infographic HTML from structured data via built-in templates (timeline/roadmap, card-grid, stat-sheet) in the house design system."
+    },
+    {
+      "name": "publish_infographic",
+      "description": "Fan a rendered infographic PNG out to every mod edition: commit About/<name>.png + a marker-managed README section to each GitHub repo, and upsert an imgur-hosted [img] section into each Steam Workshop description (CDP live update, handoff file fallback). Supports dryRun."
     }
   ],
   "keywords": [

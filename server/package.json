@@ -10,6 +10,7 @@
     "test:chrome": "node test/chrome-tabgroups.test.js",
     "test:steam": "node test/steam-cdp-stub.test.js",
     "test:sharp": "node test/sharp-dedupe.test.js",
+    "test:infographic": "node test/infographic.test.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
