@@ -88,6 +88,12 @@ foreach ($r in $Repo) {
     New-Item -ItemType Directory -Force $zipDir | Out-Null
     Write-Host "[package] $r -> $path (github: $slug)"
 
+    # Owner/repo slug comes from the checkout's own origin remote (repos live in
+    # more than one org — e.g. Regions-and-societies); RimSynapse is only the
+    # fallback for checkouts without a usable origin.
+    $originUrl = git -C $path remote get-url origin
+    $slug = if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?$') { $Matches[1] } else { "RimSynapse/$r" }
+
     # Deliberately NOT a lowercase '$tag' local: PowerShell variable names are
     # case-insensitive, so '$tag = $Tag' is a self-assignment that carries
     # iteration N's tag into iteration N+1.
