@@ -41,6 +41,7 @@ import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
 import { swhTools, handleSwhTool } from "./tools/workshop";
+import { discussionsTools, handleDiscussionsTool } from "./tools/discussions";
 import { githubTools as swhGithubTools, handleGithubTool as handleSwhGithubTool } from "./tools/github";
 
 // 1. Setup Config & Auth
@@ -92,6 +93,7 @@ const ALL_TOOLS = [
     ...gameIpcTools,
     ...jobsTools,
     ...swhTools,
+    ...discussionsTools,
     ...swhGithubTools,
     ...authTools,
     ...rimsortTools,
@@ -227,6 +229,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Steam Workshop actions: extension bridge when connected, else the DevTools route (workshop.ts).
     if (swhTools.some(t => t.name === name)) {
         return await handleSwhTool(name, args, bridge);
+    }
+
+    // Workshop Discussions (backlog/milestone threads) — DevTools-only (discussions.ts).
+    if (discussionsTools.some(t => t.name === name)) {
+        return await handleDiscussionsTool(name, args);
     }
 
     throw new Error(`Unknown tool: ${name}`);
@@ -393,6 +400,8 @@ async function main() {
                     result = await handleSwhGithubTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
                     result = await handleSwhTool(name, args, bridge);
+                } else if (discussionsTools.some(t => t.name === name)) {
+                    result = await handleDiscussionsTool(name, args);
                 } else {
                     res.status(404).json({ error: "Unknown tool: " + name });
                     return;

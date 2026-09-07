@@ -173,6 +173,7 @@ export async function openPage(url: string, port?: number): Promise<Page> {
 export const editUrl = (fileId: string) => `https://steamcommunity.com/sharedfiles/itemedittext/?id=${encodeURIComponent(fileId)}`;
 export const publicUrl = (fileId: string) => `https://steamcommunity.com/sharedfiles/filedetails/?id=${encodeURIComponent(fileId)}`;
 export const discussionsUrl = (fileId: string) => `https://steamcommunity.com/workshop/filedetails/discussions/${encodeURIComponent(fileId)}/`;
+export const topicUrl = (fileId: string, topicId: string) => `https://steamcommunity.com/workshop/filedetails/discussion/${encodeURIComponent(fileId)}/${encodeURIComponent(topicId)}/`;
 
 // ---------------------------------------------------------------------------- page scripts
 
@@ -284,7 +285,9 @@ const THREADS_EXPR = `(() => {
       name: (x.querySelector('.forum_topic_name') || {}).innerText || '',
       href: (x.querySelector('a.forum_topic_overlay') || {}).href || '',
       pinned: /\\bsticky\\b/.test(x.className),
-      replies: ((x.querySelector('.forum_topic_reply_count') || {}).innerText || '').trim()
+      replies: ((x.querySelector('.forum_topic_reply_count') || {}).innerText || '').trim(),
+      lastActivity: ((x.querySelector('.forum_topic_lastpost') || {}).innerText || '').trim(),
+      author: ((x.querySelector('.forum_topic_op') || {}).innerText || '').trim()
     })).map(t => ({ ...t, name: t.name.trim() }))
   };
 })()`;
@@ -370,27 +373,196 @@ export async function replyOnThread(page: Page, body: string): Promise<{ error: 
 }
 
 /**
- * Best-effort pin from the owner's admin menu on the thread page. The menu is Steam's popup
- * (img.admin_option_icon -> items); we click the first item that reads "pin"/"sticky". Reports
- * false rather than guessing when no such item is present.
+ * Best-effort pin/unpin from the owner's admin menu on the thread page. The menu is Steam's
+ * popup (img.admin_option_icon -> items); we click the first item matching the wanted
+ * direction ("pin"/"sticky" vs "unpin"/"unstick"). Reports false rather than guessing when no
+ * such item is present — a thread already in the wanted state usually only offers the inverse
+ * item, which the caller should treat as "already there" after re-checking the listing.
  */
-export async function pinThread(page: Page): Promise<{ pinned: boolean; note: string }> {
+export async function setThreadPinned(page: Page, want: boolean): Promise<{ acted: boolean; note: string }> {
     const opened = await page.evaluate<string>("openAdminMenu", `(() => {
       const icon = document.querySelector('.admin_option_icon, [class*="admin_option"]');
       if (!icon) return 'no-admin-menu';
       icon.click();
       return 'ok';
     })()`);
-    if (opened !== "ok") return { pinned: false, note: "No owner admin menu (.admin_option_icon) on the thread page — not the owner, or Steam changed the markup." };
+    if (opened !== "ok") return { acted: false, note: "No owner admin menu (.admin_option_icon) on the thread page — not the owner, or Steam changed the markup." };
     await sleep(400);
-    const clicked = await page.evaluate<string>("clickPin", `(() => {
+    const probe = want ? "clickPin" : "clickUnpin";
+    const filter = want
+        ? `/\\b(pin|sticky|stick)\\b/i.test(t) && !/unpin|unstick/i.test(t)`
+        : `/\\b(unpin|unstick)\\b/i.test(t)`;
+    const clicked = await page.evaluate<string>(probe, `(() => {
       const items = [...document.querySelectorAll('.popup_menu_item, .popup_menu a, .popup_menu div, [class*="popup_menu"] *')]
-        .filter(e => /\\b(pin|sticky|stick)\\b/i.test((e.innerText || '').trim()) && !/unpin|unstick/i.test(e.innerText || ''));
-      if (!items.length) return 'no-pin-item';
+        .filter(e => { const t = (e.innerText || '').trim(); return ${filter}; });
+      if (!items.length) return 'no-item';
       items[0].click();
       return 'clicked:' + items[0].innerText.trim();
     })()`);
-    if (clicked === "no-pin-item") return { pinned: false, note: "Admin menu opened but had no pin/sticky item — pin it by hand from the thread's admin menu." };
+    if (clicked === "no-item") return { acted: false, note: `Admin menu opened but had no ${want ? "pin/sticky" : "unpin/unstick"} item — the thread may already be ${want ? "pinned" : "unpinned"}, or do it by hand.` };
     await sleep(1200);
-    return { pinned: true, note: clicked };
+    return { acted: true, note: clicked };
+}
+
+/** Back-compat wrapper used by swh_post_changelog. */
+export async function pinThread(page: Page): Promise<{ pinned: boolean; note: string }> {
+    const r = await setThreadPinned(page, true);
+    return { pinned: r.acted, note: r.note };
+}
+
+// ---------------------------------------------------------------------------- thread reading & post editing
+
+export interface ThreadPost {
+    postId: string;          // "op" for the opening post, else the comment gid
+    author: string;
+    authorHref: string;      // /id/... or /profiles/... URL, "" when not found
+    timestamp: string;       // epoch string when Steam exposes data-timestamp, else the visible date text
+    text: string;            // RENDERED text (BBCode already applied) — raw comes from readPostRaw
+    editable: boolean;       // an edit affordance is present (own post / owner)
+}
+
+export interface ThreadRead { url: string; loggedIn: boolean; title: string; posts: ThreadPost[]; }
+
+/* Thread page anatomy (captured live 2026-09-06, logged in as the owner):
+ *   OP        #forum_op_<topicId>.forum_op — title in .topic, body in .content, date in .date,
+ *             author a.forum_op_author (the avatar's profile link comes FIRST in DOM order, so
+ *             never take the first profile-href anchor). Owner/own-post actions live in
+ *             .forum_comment_actions_ctn as a.forum_comment_action.edit_post / .delete —
+ *             Edit href = javascript:Forum_EditTopic('<topicId>').
+ *   replies   .commentthread_comment#comment_<gid> — author a.commentthread_author_link,
+ *             timestamp .commentthread_comment_timestamp (title attr has the full date),
+ *             body .commentthread_comment_text; Edit href = javascript:CCommentThread.EditComment(…).
+ *   edit UI   Each comment PRE-RENDERS a hidden EMPTY textarea #comment_edit_text_<gid> —
+ *             visibility (offsetParent) decides whether the form is open, never mere existence.
+ *             Clicking edit_post makes it visible and fills it with the RAW BBCode. The OP's
+ *             edit form appears OUTSIDE .forum_op: textarea #forum_topic_edit_<topicId>_textarea
+ *             plus a visible input[name=topic] (the title) and a "Save Changes"
+ *             btn_green_white_innerfade button in the same form container. */
+const READ_THREAD_EXPR = `(() => {
+  const authorOf = (root, sel) => {
+    const a = root.querySelector(sel) ||
+      [...root.querySelectorAll('a[href*="/id/"], a[href*="/profiles/"]')].find(x => (x.innerText || '').trim());
+    return { name: a ? a.innerText.trim() : '', href: a ? a.href : '' };
+  };
+  const hasEdit = (root) => !!root.querySelector('a.forum_comment_action.edit_post');
+  const posts = [];
+  const op = document.querySelector('.forum_op');
+  if (op) {
+    const a = authorOf(op, 'a.forum_op_author');
+    posts.push({
+      postId: 'op', author: a.name, authorHref: a.href,
+      timestamp: ((op.querySelector('.date') || {}).innerText || '').trim(),
+      text: ((op.querySelector('.content') || op).innerText || '').trim(),
+      editable: hasEdit(op)
+    });
+  }
+  for (const c of document.querySelectorAll('.commentthread_comment[id^="comment_"], [id^="comment_"].commentthread_comment')) {
+    const a = authorOf(c, 'a.commentthread_author_link');
+    // Comments carry TWO .commentthread_comment_timestamp divs; the first is an empty template.
+    const ts = [...c.querySelectorAll('.commentthread_comment_timestamp')].find(t => t.getAttribute('data-timestamp') || t.innerText.trim());
+    posts.push({
+      postId: c.id.replace(/^comment_/, ''), author: a.name, authorHref: a.href,
+      timestamp: ts ? (ts.getAttribute('title') || ts.getAttribute('data-timestamp') || ts.innerText.trim()) : '',
+      text: ((c.querySelector('.commentthread_comment_text') || {}).innerText || '').trim(),
+      editable: hasEdit(c)
+    });
+  }
+  return {
+    url: location.href,
+    loggedIn: !!document.querySelector('#account_pulldown'),
+    title: ((document.querySelector('.forum_op .topic, .discussion_topic_title') || {}).innerText || document.title.replace(/ :: .*$/, '')).trim(),
+    posts
+  };
+})()`;
+
+export async function readThread(page: Page): Promise<ThreadRead> {
+    return await page.evaluate<ThreadRead>("readThread", READ_THREAD_EXPR);
+}
+
+/** The root selector for a post: the OP block, or a comment by gid. */
+const postRootJs = (postId: string) =>
+    postId === "op"
+        ? `document.querySelector('.forum_op')`
+        : `document.getElementById('comment_' + ${JSON.stringify(postId)})`;
+
+/* The edit form's textarea. Comments pre-render a hidden empty #comment_edit_text_<gid>, so a
+ * VISIBLE (offsetParent) check is what says the form is open. The OP's form lives OUTSIDE
+ * .forum_op as #forum_topic_edit_<topicId>_textarea — match it by prefix. */
+const editTextareaJs = (postId: string) =>
+    postId === "op"
+        ? `[...document.querySelectorAll('textarea[id^="forum_topic_edit_"]')].find(t => t.offsetParent !== null)`
+        : `(() => { const t = document.getElementById('comment_edit_text_' + ${JSON.stringify(postId)}); return t && t.offsetParent !== null ? t : null; })()`;
+
+/**
+ * Open a post's inline edit form (Steam fills a textarea with the RAW BBCode), without saving.
+ * Returns the raw body — and for the OP also the topic-title input's value — leaving the form
+ * open; close the page (or call saveOpenEdit) afterwards. Only works on posts the session may
+ * edit (a.forum_comment_action.edit_post present).
+ */
+export async function openPostEdit(page: Page, postId: string): Promise<{ ok: boolean; raw: string; title: string | null; note: string }> {
+    const opened = await page.evaluate<string>("openEditPost", `(() => {
+      const root = ${postRootJs(postId)};
+      if (!root) return 'no-post';
+      if (${editTextareaJs(postId)}) return 'ok';
+      const ctl = root.querySelector('a.forum_comment_action.edit_post');
+      if (!ctl) return 'no-edit-control';
+      ctl.click();
+      return 'ok';
+    })()`);
+    if (opened === "no-post") return { ok: false, raw: "", title: null, note: `Post ${postId} not found on the page.` };
+    if (opened === "no-edit-control") return { ok: false, raw: "", title: null, note: `Post ${postId} has no edit affordance (a.forum_comment_action.edit_post) — not this session's post (raw BBCode is only readable on editable posts).` };
+    // Steam fills the raw text when the form opens; poll for the VISIBLE textarea, preferring a
+    // non-empty value (a genuinely empty post settles via the i>=6 fallback).
+    for (let i = 0; i < 16; i++) {
+        await sleep(500);
+        const got = await page.evaluate<{ ready: boolean; raw: string; title: string | null }>("readEditPost", `(() => {
+          const ta = ${editTextareaJs(postId)};
+          if (!ta) return { ready: false, raw: '', title: null };
+          const ti = ${postId === "op" ? `[...document.querySelectorAll('input[name="topic"]')].find(x => x.offsetParent !== null)` : "null"};
+          return { ready: true, raw: ta.value, title: ti ? ti.value : null };
+        })()`);
+        if (got.ready && (got.raw.length > 0 || i >= 6)) return { ok: true, raw: got.raw, title: got.title, note: "edit form open" };
+    }
+    return { ok: false, raw: "", title: null, note: `Clicked the edit control on post ${postId} but no visible edit textarea appeared within 8s — Steam's markup may have changed.` };
+}
+
+/**
+ * Fill and save an ALREADY-OPEN post edit form (openPostEdit first). `title` only applies to the
+ * OP (topic title + body share one form). Verifies by waiting for the form to close.
+ */
+export async function saveOpenEdit(page: Page, postId: string, body: string, title?: string | null): Promise<{ ok: boolean; note: string }> {
+    const filled = await page.evaluate<string>("fillEditPost", `(() => {
+      const ta = ${editTextareaJs(postId)};
+      if (!ta) return 'no-textarea';
+      ta.value = ${JSON.stringify(body)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      const ti = ${postId === "op" ? `[...document.querySelectorAll('input[name="topic"]')].find(x => x.offsetParent !== null)` : "null"};
+      if (ti && ${JSON.stringify(title ?? null)} !== null) {
+        ti.value = ${JSON.stringify(title ?? "")};
+        ti.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      // The "Save Changes" btn_green_white_innerfade sits in the form container around the
+      // textarea — search upward so the OP form (outside .forum_op) is covered too.
+      let scope = ta.parentElement;
+      for (let i = 0; i < 8 && scope; i++) {
+        const b = [...scope.querySelectorAll('button, a.btn_green_white_innerfade, span.btn_green_white_innerfade')]
+          .find(x => /save/i.test((x.innerText || '').trim()));
+        if (b) { b.click(); return 'ok'; }
+        scope = scope.parentElement;
+      }
+      return 'no-save';
+    })()`);
+    if (filled === "no-textarea") return { ok: false, note: `No open edit form on post ${postId} — call openPostEdit first.` };
+    if (filled === "no-save") return { ok: false, note: "Edit form has no Save button near the textarea — Steam's markup may have changed; nothing was saved." };
+    for (let i = 0; i < 16; i++) {
+        await sleep(500);
+        const done = await page.evaluate<{ open: boolean; error: string }>("afterEditPost", `(() => ({
+          open: !!(${editTextareaJs(postId)}),
+          error: ((document.querySelector('[id$="_error"]:not([style*="display: none"])') || {}).innerText || '').trim()
+        }))()`);
+        if (done.error) return { ok: false, note: `Steam refused the edit: ${done.error}` };
+        if (!done.open) return { ok: true, note: "saved (edit form closed)" };
+    }
+    return { ok: false, note: "Save clicked but the edit form did not close within 8s — open the thread and check before retrying (a retry could double-save)." };
 }

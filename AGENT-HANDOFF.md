@@ -1,58 +1,62 @@
-# AGENT-HANDOFF — `agent/4c8ab8ba`
+# AGENT-HANDOFF — `agent/e2a85d71-discussions`
 
 ## What this branch adds
 
-**A self-sufficient Steam Workshop publish path** — everything the `ship-it` PUBLISH half needs works from a
-fresh session with only the RimAgentic Chrome (`launch_chrome`, port 9222, signed into Steam). Reference:
-`docs/STEAM-PUBLISH.md`. Motivation: publishing Regions and Societies 0.3.2 (2026-09-05) needed hand-rolled
-CDP scripts because every `swh_*` call failed with "bridge not started", the 8,000-char cap bit silently,
-and the harness/wiki tooling had `RimSynapse` hardcoded.
+**Steam Workshop Discussions as the public backlog + changelog** — a `discussions` tool family
+plus the milestone-close-out mode of `swh_post_changelog`, driven by the new USER-LEVEL
+**`workshop-backlog`** skill (`~/.claude/skills/workshop-backlog/SKILL.md`, not in this repo).
+Conventions + write discipline: **`docs/DISCUSSIONS.md`**. Reference target output:
+`regions-and-societies/Core-MMF/About/discussions/*.bbcode`.
 
-- **`server/src/bridge.ts`** — `startBridge` never throws. Modes: `owner` (bound 8766), `proxy` (a sibling
-  MCP server owns the port; `call()` forwards to its new `POST /call`, status mirrors its `/health` + pid),
-  `unavailable` (port held by something else; `note` says what). `chrome_status.bridge` shows `mode`/`note`.
-  Root cause of the years-old symptom: ~13 `node server/build/index.js` processes all race for one port.
-- **NEW `server/src/steamCdp.ts`** — zero-dependency DevTools page driver (global `WebSocket`) + Steam page
-  scripts. Every `Runtime.evaluate` carries a `/* swh:<probe> */` marker the stub test keys on. Page anatomy
-  (edit page, public page, discussions list, thread reply form, admin pin menu) is documented in its header.
-- **NEW `server/src/steamLogic.ts`** — pure: cap check (8,000 + "drop the oldest changelog block" advice),
-  moderation-notice parser (removed / awaiting_analysis / hidden / incompatible / visible), version-line
-  extraction, `extractChangelogBlock`, find-or-create thread plan, well-known-domain check.
-- **`server/src/tools/workshop.ts`** — bridge-when-connected, DevTools otherwise, for `swh_get_auth`,
-  `swh_get_item`, `swh_open_item`, `swh_update_description` (read-first → cap refusal → save → verify version
-  line on the public page → `{ ok, verified, versionLine, moderation }`). NEW `swh_get_moderation_state`,
-  `extract_changelog_block`, `swh_post_changelog` (dry-run default; `confirm:true` posts; pins best-effort).
-  Comment/notification/title tools stay bridge-only and explain how the bridge starts (`BRIDGE_HOWTO`).
-- **`server/src/tools/workshopImages.ts`** — `compose_workshop_bbcode` asserts the cap + domain allow-list.
-- **`server/src/tools/sync.ts`** — `sync_repo_wiki { localRepoPath, sourceDir?, message?, prune?, dryRun? }`:
-  slug from the checkout's `origin` (any org), token-HTTPS then SSH clone, git-status-based add/update/remove,
-  orphans reported, `dryRun` prints the diffstat.
-- **`harness/package-release.ps1`** — `-Repo` = name or path; resolution RIMAGENTIC/RIMSYNAPSE_ROOT →
-  legacy `C:\github\rimsynapse` → every workspace beside the checkout; `<owner>/<repo>` from `origin` for
-  `releases/latest` and `-Upload`; zips land in `<workspace>\_release-zips`. `scripts/sync_wikis.ps1` derives
-  the wiki URL from `origin` when no `[Wikis]` entry exists.
-- **Docs**: `docs/STEAM-PUBLISH.md` (new), README "Steam Workshop publishing", CLAUDE.md subsection,
-  `Changelog.md` entry, `manifest.json` (the swh family was never listed there — added, plus the new tools).
-- **Skill**: `~/.claude/skills/ship-it/SKILL.md` Steps 7 (cap rule), 8 (`sync_repo_wiki` dry-run first),
-  9 (no manual CDP; record moderation state), NEW 9b (`swh_post_changelog`, confirm-gated), 10 (no
-  `RIMSYNAPSE_ROOT` / manual upload), testing-gate note (Steam must be running or RimWorld exits silently).
+Built ON TOP of `agent/4c8ab8ba` (PR #34 — steamCdp/steamLogic/bridge modes), which is merged
+into this branch. **Land #34 into development first**, then this PR is a small delta; merging
+this one alone also works (it carries #34's commits).
+
+- **`server/src/steamCdp.ts`** — thread-page reading + post editing, selectors captured LIVE
+  (2026-09-06, item 3784666060): `readThread` (OP `.forum_op` + `.commentthread_comment`
+  replies; author via `a.forum_op_author` / `a.commentthread_author_link` — the avatar link
+  comes first in DOM order, never take the first profile anchor; comments carry TWO timestamp
+  divs, the first an empty template), `openPostEdit`/`saveOpenEdit` (edit control is
+  `a.forum_comment_action.edit_post`; comments PRE-RENDER a hidden empty
+  `#comment_edit_text_<gid>` — visibility decides, never existence; the OP form appears
+  OUTSIDE `.forum_op` as `#forum_topic_edit_<id>_textarea` + visible `input[name=topic]` +
+  "Save Changes" button), `setThreadPinned` (pin AND unpin; `pinThread` kept as wrapper),
+  richer thread rows (lastActivity, author), `topicUrl`.
+- **NEW `server/src/tools/discussions.ts`** — `swh_list_discussions`, `swh_find_discussion`
+  (exact title, the skill's create-vs-edit decision), `swh_get_discussion` (RAW BBCode for own
+  posts via the edit form, opened read-only; rendered for others), `swh_create_discussion`
+  (refuses duplicate titles), `swh_reply_discussion`, `swh_edit_discussion_post` (mandatory
+  re-read, no-op on identical, dry run returns current+proposed; OP edits can retitle),
+  `swh_pin_discussion` (idempotent, verified). Every write: dry-run default / confirm:true,
+  post-cap refusal, domain warnings, public URL + moderation state after.
+- **`server/src/steamLogic.ts`** — `DISCUSSION_POST_CAP` (**provisional 8000** — measure on a
+  hidden test item and update; the old pre-rebrand item 3768364266 may serve),
+  `checkDiscussionPostCap`, `parseTopicId`, `findThreadByTitle`, `findMilestoneThread`,
+  `shippedTitle`.
+- **`server/src/tools/workshop.ts`** — `swh_post_changelog` milestone mode (`milestoneName`):
+  final reply on the `Next milestone: <version> …` thread, retitle `<version> <name> -
+  shipped`, unpin; missing thread errors point at the workshop-backlog skill.
+- Wired ×4 in `index.ts`; `manifest.json` +7; CLAUDE.md family list + publish subsection;
+  `docs/DISCUSSIONS.md`.
+- **Skills (user-level, outside this repo)**: NEW `workshop-backlog`; `ship-it` Step 9b now
+  the milestone close-out + calls workshop-backlog; `work-next-milestone` Phase 2.4 + Exit
+  call it after grooming.
 
 ## Verified this session
-- `cd server && npm run build` clean; `npm run test:steam` 50/50 (stub DevTools endpoint incl. a minimal
-  RFC 6455 websocket; bridge owner/proxy/unavailable on real sockets).
-- Live, read-only, against item 3784666060 through the real RimAgentic Chrome with `bridge = null`:
-  `swh_get_auth` loggedIn true (archdukejim); `swh_get_item` returns the v0.3.2 description (7,539 chars);
-  `swh_get_moderation_state` → `visible`; `swh_post_changelog` dry run → "create thread Changelog" with the
-  exact 0.3.2 block (1,474 chars) and the wiki/Changelog link. Nothing was posted or edited.
-- `harness/package-release.ps1 -Repo Core-MMF -Tag v0.3.2` (no upload) resolved
-  `Regions-and-societies/Core-MMF` from origin with no env override; zip passed the root-layout assertion.
-- `sync_repo_wiki { localRepoPath: …/Core-MMF, dryRun: true }` resolved the same slug and cloned over HTTPS.
+- `npm run build` clean; `npm run test:steam` **74/74** (stub grew discussion probes: readThread,
+  openEditPost/readEditPost/fillEditPost/afterEditPost, clickUnpin + 26 new checks incl. the
+  milestone close-out and the pure logic).
+- LIVE, read-only, item 3784666060: `swh_list_discussions` (topicIds, pinned, lastActivity,
+  author), `swh_get_discussion` returning byte-accurate RAW BBCode for the OP (4,417 chars) and
+  a reply (4,833 chars) — the edit forms opened and never saved. Fixed three anatomy bugs the
+  live run exposed (hidden template textarea, OP form location, author/timestamp selectors).
 
-## Not verified (needs a real post)
-- `swh_post_changelog { confirm:true }` end-to-end on Steam (thread creation, reply anchor, pin via the
-  admin menu). The selectors were captured live from an item with threads; the confirmed flow ran only
-  against the stub. First real use: run the dry run, then confirm on a mod item, and check `pinned`/`pinNote`.
+## NOT verified (needs a confirmed live write)
+- Confirmed create / reply / edit-save / pin / unpin / retitle against real Steam, and the true
+  discussion post cap. All dry-run paths and the stub cover the logic; the save-button and
+  new-topic selectors were captured live. First real use = the workshop-backlog skill run
+  against 3784666060 (user-confirmed), where the existing hand-posted threads ("Backlog",
+  "0.4.0 Milestones") should be EDITED/retitled to the conventions, not duplicated.
 
 ## Rollout
-Rebuild, then kill the stale `node server/build/index.js` processes (`chrome_status.bridge.mode` will show
-`proxy` until the owner is a current build; the DevTools route works regardless).
+Rebuild + restart the running `node server/build/index.js` processes to expose the family.

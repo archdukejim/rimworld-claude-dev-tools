@@ -540,6 +540,34 @@
     {
       "name": "swh_post_changelog",
       "description": "Post a release changelog to the item's Discussions tab: find-or-create the pinned 'Changelog' thread, reply with the BBCode block, pin. Dry-run by default; confirm:true posts. Returns threadUrl + postUrl."
+    },
+    {
+      "name": "swh_list_discussions",
+      "description": "List every thread on a workshop item Discussions tab: topicId, title, url, pinned, replies, last activity. Read-only; DevTools route."
+    },
+    {
+      "name": "swh_find_discussion",
+      "description": "Find a discussion thread by exact title (pinned match wins); returns the thread or null. The create-vs-edit decision point for the workshop-backlog skill."
+    },
+    {
+      "name": "swh_get_discussion",
+      "description": "Read one discussion thread: the OP and every reply with raw BBCode for this session's own posts (via the inline edit form, never saved) and rendered text for others."
+    },
+    {
+      "name": "swh_create_discussion",
+      "description": "Create a discussion thread (title + BBCode body), optionally pinned. Dry-run by default; confirm:true posts. Refuses duplicates and over-cap bodies; reports moderation state."
+    },
+    {
+      "name": "swh_reply_discussion",
+      "description": "Reply on a discussion thread. Dry-run by default; confirm:true posts. Re-reads the thread first; cap + link-domain guardrails; reports moderation state."
+    },
+    {
+      "name": "swh_edit_discussion_post",
+      "description": "Edit a discussion post (OP or reply) in place via Steam's inline edit form — re-reads the current raw BBCode first, diffs, no-ops on identical text; OP edits can retitle the thread. Dry-run by default."
+    },
+    {
+      "name": "swh_pin_discussion",
+      "description": "Pin or unpin a discussion thread from the owner admin menu, idempotently, verifying against the thread listing."
     }
   ],
   "keywords": [

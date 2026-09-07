@@ -118,12 +118,73 @@ function answer(target, probe, expr) {
             state.log.push({ pin: id });
             return { value: "clicked:Pin" };
         }
+        // ---- discussions family (discussions.ts + milestone mode) ----
+        case "readThread": {
+            const t = threadOn(url);
+            if (!t) return { value: { url, loggedIn: state.loggedIn, title: "", posts: [] } };
+            const op = state.posts.find(p => p.thread === t.id && p.id.startsWith("comment_op_"));
+            const posts = [];
+            if (op) posts.push({ postId: "op", author: "archdukejim", authorHref: "https://steamcommunity.com/id/archdukejim", timestamp: "1", text: bbToText(op.body), editable: state.loggedIn });
+            for (const p of postsOn(url)) posts.push({ postId: p.id.replace(/^comment_/, ""), author: p.author || "archdukejim", authorHref: "https://steamcommunity.com/id/archdukejim", timestamp: "2", text: bbToText(p.body), editable: p.author === undefined && state.loggedIn });
+            return { value: { url, loggedIn: state.loggedIn, title: t.name, posts } };
+        }
+        case "openEditPost": {
+            const t = threadOn(url);
+            const pid = editTargetOf(expr);
+            const post = pid && findPost(t, pid);
+            if (!post) return { value: "no-post" };
+            if (post.author !== undefined) return { value: "no-edit-control" }; // someone else's post
+            state.editOpen = { thread: t.id, pid };
+            return { value: "ok" };
+        }
+        case "readEditPost": {
+            const t = threadOn(url);
+            const pid = editTargetOf(expr);
+            const open = state.editOpen && state.editOpen.thread === t.id && state.editOpen.pid === pid;
+            const post = pid && findPost(t, pid);
+            return { value: { ready: !!(open && post), raw: open && post ? post.body : "", title: open && pid === "op" ? t.name : null } };
+        }
+        case "fillEditPost": {
+            const t = threadOn(url);
+            const pid = editTargetOf(expr);
+            const post = pid && findPost(t, pid);
+            if (!post || !state.editOpen) return { value: "no-textarea" };
+            if (state.editError) return { value: "ok" }; // error surfaces in afterEditPost
+            post.body = assigned(expr, "ta");
+            const title = assigned(expr, "ti");
+            if (pid === "op" && title !== null) t.name = title;
+            state.log.push({ editPost: pid, thread: t.id, body: post.body, ...(title !== null ? { retitle: title } : {}) });
+            state.editOpen = null;
+            return { value: "ok" };
+        }
+        case "afterEditPost": return { value: { open: !!state.editOpen && !state.editError, error: state.editError || "" } };
+        case "clickUnpin": {
+            const t = threadOn(url);
+            if (t) t.pinned = false;
+            state.log.push({ unpin: t && t.id });
+            return { value: "clicked:Unpin" };
+        }
         default: throw new Error(`stub has no answer for probe '${probe}'`);
     }
 }
 function postsOn(url) {
     const id = (url.match(/discussion\/\d+\/(\d+)/) || [])[1];
     return state.posts.filter(p => p.thread === id && p.id.startsWith("comment_") && !p.id.startsWith("comment_op_"));
+}
+function threadOn(url) {
+    const id = (url.match(/discussion\/\d+\/(\d+)/) || [])[1];
+    return state.threads.find(t => t.id === id) || null;
+}
+function findPost(t, pid) {
+    if (!t) return null;
+    if (pid === "op") return state.posts.find(p => p.thread === t.id && p.id.startsWith("comment_op_")) || null;
+    return state.posts.find(p => p.thread === t.id && p.id === "comment_" + pid) || null;
+}
+/** Which post an edit expression targets: OP markers -> "op", else the comment gid literal. */
+function editTargetOf(expr) {
+    if (/\.forum_op|forum_topic_edit_/.test(expr)) return "op";
+    const m = expr.match(/getElementById\('comment_(?:edit_text_)?' \+ ("(?:[^"\\]|\\.)*")\)/);
+    return m ? JSON.parse(m[1]) : null;
 }
 
 // ---------------------------------------------------------------------------- stub DevTools endpoint
@@ -350,7 +411,99 @@ stub.listen(0, "127.0.0.1", async () => {
         const c3 = await composeCall({ images: [{ url: "https://i.imgur.com/abc.png" }], intro: "https://ko-fi.com/archdukejim https://steamcommunity.com/x https://discord.gg/y" });
         check("compose is clean for well-known domains", c3.ok === true && c3.warnings.length === 0, c3);
 
-        // 11. bridge modes ---------------------------------------------------------------------
+        // 11. discussions family --------------------------------------------------------------
+        const { handleDiscussionsTool } = build("tools/discussions.js");
+        const dcall = async (n, a) => {
+            const txt = (await handleDiscussionsTool(n, a)).content[0].text;
+            try { return JSON.parse(txt); } catch { return txt; }
+        };
+        // Seed: a pinned Backlog thread (own OP), an active milestone thread, and a player thread.
+        state.threads = [
+            { name: "Backlog - everything planned", href: threadUrl("70"), pinned: true, replies: "3", id: "70" },
+            { name: "Next milestone: 0.4.0 Demographic Fine-tune", href: threadUrl("71"), pinned: true, replies: "1", id: "71" },
+            { name: "Bug reports", href: threadUrl("72"), pinned: false, replies: "9", id: "72" },
+        ];
+        state.posts = [
+            { thread: "70", id: "comment_op_70", body: "[h1]Backlog[/h1]\n[b]v0.3.2[/b]" },
+            { thread: "71", id: "comment_op_71", body: "[h1]Next milestone: 0.4.0[/h1]\nStatus: in development" },
+            { thread: "71", id: "comment_71_1", body: "Landed: #40 passes honoured" },
+            { thread: "72", id: "comment_op_72", body: "post bugs here", author: "someplayer" },
+        ];
+        state.log = []; state.editOpen = null; state.editError = "";
+
+        const dl = await dcall("swh_list_discussions", { fileId: FILE_ID });
+        check("list_discussions maps topicId/title/pinned from the rows", dl.threads.length === 3 && dl.threads[0].topicId === "70" && dl.threads[1].title === "Next milestone: 0.4.0 Demographic Fine-tune" && dl.threads[0].pinned === true && dl.forumId === FORUM_ID, dl);
+        const df = await dcall("swh_find_discussion", { fileId: FILE_ID, title: "backlog - everything planned" });
+        check("find_discussion matches exact title case-insensitively", df.thread && df.thread.topicId === "70", df);
+        const dfNone = await dcall("swh_find_discussion", { fileId: FILE_ID, title: "Changelog" });
+        check("find_discussion returns null for no match", dfNone.thread === null, dfNone);
+
+        const dg = await dcall("swh_get_discussion", { fileId: FILE_ID, topicId: "71" });
+        check("get_discussion returns OP + replies with RAW BBCode for own posts",
+            dg.posts.length === 2 && dg.posts[0].postId === "op" && dg.posts[0].bbcode === "[h1]Next milestone: 0.4.0[/h1]\nStatus: in development" && dg.posts[0].bbcodeSource === "raw" && dg.posts[1].postId === "71_1" && dg.posts[1].bbcodeSource === "raw", dg.posts);
+        const dgOther = await dcall("swh_get_discussion", { fileId: FILE_ID, topicId: "72" });
+        check("get_discussion falls back to rendered text on someone else's post", dgOther.posts[0].bbcodeSource === "rendered" && dgOther.posts[0].bbcode === "post bugs here", dgOther.posts);
+        state.editOpen = null;
+
+        // create: dry run, duplicate refusal, cap refusal, confirmed create + pin
+        state.log = [];
+        const dcDry = await dcall("swh_create_discussion", { fileId: FILE_ID, title: "Changelog", body: "[b]running changelog[/b]" });
+        check("create_discussion dry run posts nothing and shows the body", dcDry.dryRun === true && dcDry.body === "[b]running changelog[/b]" && state.log.length === 0 && state.threads.length === 3, dcDry);
+        const dcDup = await dcall("swh_create_discussion", { fileId: FILE_ID, title: "backlog - everything planned", body: "x", confirm: true });
+        check("create_discussion refuses a duplicate exact title and points at edit", dcDup.refused === true && /swh_edit_discussion_post/.test(dcDup.error) && state.threads.length === 3, dcDup);
+        const dcCap = await failing(() => dcall("swh_create_discussion", { fileId: FILE_ID, title: "x", body: "y".repeat(8001), confirm: true }));
+        check("create_discussion refuses an over-cap body before posting", /8001 characters/.test(dcCap || "") && /8000-character/.test(dcCap || ""), dcCap);
+        check("logic: exactly 8000 chars passes the discussion cap", logic.checkDiscussionPostCap("z".repeat(8000)).ok === true);
+        const dcGo = await dcall("swh_create_discussion", { fileId: FILE_ID, title: "Changelog", body: "[b]running changelog[/b]", pin: true, confirm: true });
+        check("create_discussion confirmed creates + pins + reports moderation", dcGo.ok === true && dcGo.topicId && dcGo.pinned === true && dcGo.moderation.state === "visible" && state.threads.length === 4 && state.log.some(l => l.createThread === "Changelog"), { dcGo, log: state.log });
+
+        // reply: dry run + confirmed
+        state.log = [];
+        const drDry = await dcall("swh_reply_discussion", { fileId: FILE_ID, topicId: "71", body: "Landed: #48 lakes split" });
+        check("reply_discussion dry run shows the thread + body, posts nothing", drDry.dryRun === true && drDry.threadTitle === "Next milestone: 0.4.0 Demographic Fine-tune" && state.log.length === 0, drDry);
+        const drGo = await dcall("swh_reply_discussion", { fileId: FILE_ID, topicId: "71", body: "Landed: #48 lakes split", confirm: true });
+        check("reply_discussion confirmed posts and returns the anchored post URL", drGo.ok === true && /#c71_/.test(drGo.postUrl) && state.log.some(l => l.reply === "Landed: #48 lakes split"), drGo);
+
+        // edit: mandatory re-read, no-op on identical, dry-run diff, confirmed save + retitle
+        state.log = []; state.editOpen = null;
+        const deSame = await dcall("swh_edit_discussion_post", { fileId: FILE_ID, topicId: "70", body: "[h1]Backlog[/h1]\n[b]v0.3.2[/b]", confirm: true });
+        check("edit_discussion_post no-ops when the body is byte-identical", deSame.upToDate === true && state.log.length === 0, deSame);
+        state.editOpen = null;
+        const deDry = await dcall("swh_edit_discussion_post", { fileId: FILE_ID, topicId: "70", body: "[h1]Backlog[/h1]\n[b]v0.4.0[/b]" });
+        check("edit_discussion_post dry run returns current + proposed for the diff", deDry.dryRun === true && deDry.current === "[h1]Backlog[/h1]\n[b]v0.3.2[/b]" && deDry.proposed === "[h1]Backlog[/h1]\n[b]v0.4.0[/b]" && state.log.length === 0, deDry);
+        state.editOpen = null;
+        const deGo = await dcall("swh_edit_discussion_post", { fileId: FILE_ID, topicId: "70", body: "[h1]Backlog[/h1]\n[b]v0.4.0[/b]", confirm: true });
+        check("edit_discussion_post confirmed saves in place", deGo.ok === true && state.posts.find(p => p.id === "comment_op_70").body === "[h1]Backlog[/h1]\n[b]v0.4.0[/b]", deGo);
+        const deOther = await failing(() => dcall("swh_edit_discussion_post", { fileId: FILE_ID, topicId: "72", body: "x", confirm: true }));
+        check("edit_discussion_post refuses someone else's post", /not this session's post/.test(deOther || ""), deOther);
+
+        // pin: idempotent + verified unpin
+        const dpSame = await dcall("swh_pin_discussion", { fileId: FILE_ID, topicId: "70", pinned: true });
+        check("pin_discussion is a no-op when already in the wanted state", dpSame.upToDate === true, dpSame);
+        const dpUn = await dcall("swh_pin_discussion", { fileId: FILE_ID, topicId: "70", pinned: false });
+        check("pin_discussion unpins and verifies against the listing", dpUn.ok === true && dpUn.pinned === false && state.threads.find(t => t.id === "70").pinned === false, dpUn);
+        state.threads.find(t => t.id === "70").pinned = true;
+
+        // 11b. milestone mode of swh_post_changelog --------------------------------------------
+        state.log = []; state.editOpen = null;
+        const mBlock = "[h2]Changelog (v0.4.0)[/h2]\n[list]\n[*] shipped\n[/list]";
+        const mDry = await call("swh_post_changelog", { fileId: FILE_ID, bbcode: mBlock, version: "0.4.0", milestoneName: "Demographic Fine-tune" });
+        check("milestone dry run targets the Next-milestone thread and plans retitle + unpin",
+            mDry.dryRun === true && mDry.mode === "milestone" && mDry.thread.name === "Next milestone: 0.4.0 Demographic Fine-tune" && mDry.newTitle === "0.4.0 Demographic Fine-tune - shipped" && /retitle .* unpin/.test(mDry.would) && mDry.reply === mBlock && state.log.length === 0, mDry);
+        const mGo = await call("swh_post_changelog", { fileId: FILE_ID, bbcode: mBlock, version: "0.4.0", milestoneName: "Demographic Fine-tune", confirm: true });
+        const m71 = state.threads.find(t => t.id === "71");
+        check("milestone confirmed: replies with the block, retitles the thread, unpins it",
+            mGo.ok === true && mGo.retitled === true && mGo.unpinned === true && m71.name === "0.4.0 Demographic Fine-tune - shipped" && m71.pinned === false && state.log.some(l => l.reply && /shipped/.test(l.reply)) && state.log.some(l => l.retitle === "0.4.0 Demographic Fine-tune - shipped") && state.log.some(l => l.unpin === "71"), { mGo, log: state.log });
+        const mMissing = await failing(() => call("swh_post_changelog", { fileId: FILE_ID, bbcode: "x", version: "0.5.0", milestoneName: "Economy Framework" }));
+        check("milestone mode with no matching thread names the workshop-backlog skill", /workshop-backlog/.test(mMissing || ""), mMissing);
+
+        // 11c. pure discussion logic ----------------------------------------------------------
+        check("logic: parseTopicId takes the last numeric segment", logic.parseTopicId("https://steamcommunity.com/workshop/filedetails/discussion/123/456789/") === "456789" && logic.parseTopicId("nope") === null);
+        check("logic: shippedTitle strips the v and appends ' - shipped'", logic.shippedTitle("v0.4.0", "Demographic Fine-tune") === "0.4.0 Demographic Fine-tune - shipped");
+        const fm = logic.findMilestoneThread([{ name: "PINNED: Next milestone: 0.4.0 X", href: "a", pinned: true }, { name: "Next milestone: 0.4.1 Y", href: "b" }], "0.4.0");
+        check("logic: findMilestoneThread matches version-prefixed titles, PINNED stripped, no 0.4.1 bleed", fm && fm.href === "a" && logic.findMilestoneThread([{ name: "Next milestone: 0.4.1 Y", href: "b" }], "0.4.0") === null, fm);
+
+        // 12. bridge modes ---------------------------------------------------------------------
         const holder = net.createServer(); await new Promise(r => holder.listen(0, "127.0.0.1", r));
         const cfg = (port) => ({ bridgeHost: "127.0.0.1", bridgePort: port, pollTimeoutMs: 200, callTimeoutMs: 300 });
         const busyPort = holder.address().port;

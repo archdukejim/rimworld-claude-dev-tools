@@ -129,7 +129,11 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`discussions` (`swh_list/find/get/create/reply/edit/pin_discussion` — Steam Workshop
+Discussions threads over the DevTools route; the backlog/milestone threads that replace the
+GitHub backlog + changelog for players. Conventions + write discipline: **`docs/DISCUSSIONS.md`**;
+driven by the user-level `workshop-backlog` skill).
 
 ### Game-free prompt iteration (`promptLab`)
 
@@ -212,6 +216,10 @@ The full reference is **`docs/STEAM-PUBLISH.md`**. The facts that cost a release
   github, imgur, ko-fi, discord.gg are on the known-good list.
 - **`swh_post_changelog` is dry-run by default**; only `confirm:true` posts (find-or-create the
   pinned "Changelog" Discussions thread, reply with the block from `extract_changelog_block`).
+  With `milestoneName` it instead closes out the `Next milestone: <version> …` thread: final
+  reply, retitle to `<version> <name> - shipped`, unpin (the `workshop-backlog` skill's flow).
+- **Discussions tools** (`swh_*_discussion*`, `docs/DISCUSSIONS.md`) share the route, the
+  dry-run/confirm discipline, the post cap, and the domain allow-list.
 - Tests: `cd server && npm run test:steam` (stub DevTools endpoint; touches nothing real).
 
 ### Image hosting for Workshop descriptions (`imgur`)

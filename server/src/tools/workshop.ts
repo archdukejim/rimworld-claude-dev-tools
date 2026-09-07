@@ -2,11 +2,12 @@ import * as fs from "fs";
 import { Bridge, BRIDGE_HOWTO } from "../bridge";
 import {
     chromeUp, openPage, editUrl, publicUrl, discussionsUrl, readAuth, probeEditPage, saveDescription,
-    readPublicPage, listThreads, createThread, replyOnThread, pinThread, DEFAULT_CDP_PORT
+    readPublicPage, listThreads, createThread, replyOnThread, pinThread, setThreadPinned,
+    openPostEdit, saveOpenEdit, DEFAULT_CDP_PORT
 } from "../steamCdp";
 import {
     checkDescriptionCap, checkLinkDomains, parseModeration, versionLineOf, extractChangelogBlock,
-    planChangelogThread, findChangelogThread, DESCRIPTION_CAP
+    planChangelogThread, findChangelogThread, findMilestoneThread, shippedTitle, DESCRIPTION_CAP
 } from "../steamLogic";
 
 /*
@@ -183,18 +184,28 @@ export const swhTools = [
     {
         name: "swh_post_changelog",
         description:
-            "Post a release changelog to the workshop item's Discussions tab as a running 'Changelog' thread: finds the pinned/first thread named Changelog (case-insensitive); if none, creates it with a short first post linking the wiki Changelog page; then posts the BBCode as a new reply and pins the thread when the owner menu allows. DEFAULT IS A DRY RUN returning exactly what would be posted and where — only confirm:true posts. Supply `bbcode` directly, or `steamDescriptionPath` + `version` to extract the block. Returns { threadUrl, postUrl, pinned } after a confirmed post. DevTools route (needs launch_chrome, owner signed in).",
+            "Post a release changelog to the workshop item's Discussions tab. TWO MODES. Default: the running " +
+            "'Changelog' thread — finds the pinned/first thread named Changelog (case-insensitive); if none, creates " +
+            "it with a short first post linking the wiki Changelog page; then posts the BBCode as a new reply and pins " +
+            "the thread when the owner menu allows. MILESTONE MODE (pass `milestoneName`): closes out the milestone " +
+            "thread instead — posts the changelog block as the final reply on the 'Next milestone: <version> ...' " +
+            "thread, retitles it '<version> <name> - shipped', and unpins it (the next milestone's thread takes the " +
+            "pin — the workshop-backlog skill's ship-it Step 9b flow). DEFAULT IS A DRY RUN returning exactly what " +
+            "would be posted and where — only confirm:true posts. Supply `bbcode` directly, or `steamDescriptionPath` " +
+            "+ `version` to extract the block. Returns { threadUrl, postUrl, pinned/unpinned, retitled } after a " +
+            "confirmed post. DevTools route (needs launch_chrome, owner signed in).",
         inputSchema: {
             type: "object",
             properties: {
                 ...fileIdProp,
                 bbcode: { type: "string", description: "The post body (Steam BBCode). Omit to extract it from steamDescriptionPath + version." },
                 steamDescriptionPath: { type: "string", description: "About/steam_description.txt to extract the changelog block from (with `version`)." },
-                version: { type: "string", description: "Version whose changelog block to extract (e.g. 0.3.2)." },
-                title: { type: "string", description: "Thread title to find or create (default 'Changelog')." },
+                version: { type: "string", description: "Version whose changelog block to extract (e.g. 0.3.2). Also identifies the milestone thread in milestone mode." },
+                milestoneName: { type: "string", description: "MILESTONE MODE: the milestone's name (e.g. 'Demographic Fine-tune'). Targets the 'Next milestone: <version> <name>' thread, retitles it '<version> <name> - shipped', unpins it." },
+                title: { type: "string", description: "Changelog mode: thread title to find or create (default 'Changelog')." },
                 thread: { type: "string", description: "'find-or-create' (default, the only mode)." },
                 wikiChangelogUrl: { type: "string", description: "Wiki Changelog page to link from the first post when creating the thread (default: the wiki link found in steamDescriptionPath)." },
-                pin: { type: "boolean", description: "Try to pin the thread after posting (default true)." },
+                pin: { type: "boolean", description: "Changelog mode: try to pin the thread after posting (default true)." },
                 dryRun: { type: "boolean", description: "Return the plan without posting (default true)." },
                 confirm: { type: "boolean", description: "Actually post. Required for any change; dryRun is implied false when confirm is true." },
                 ...portProp,
@@ -439,6 +450,70 @@ async function postChangelog(fileId: string, a: any, port?: number) {
 
     if (!(await chromeUp(port))) throw new Error(`No RimAgentic Chrome answers on the DevTools port ${port || DEFAULT_CDP_PORT}. Run launch_chrome first.`);
 
+    // ---- MILESTONE MODE: close out the "Next milestone: <version> <name>" thread ----------
+    if (a.milestoneName !== undefined) {
+        const version = String(a.version || "").trim().replace(/^v/i, "");
+        if (!version) throw new Error("milestone mode needs `version` (it identifies the 'Next milestone: <version>' thread).");
+        const milestoneName = String(a.milestoneName).trim();
+        const newTitle = shippedTitle(version, milestoneName);
+        const page = await openPage(discussionsUrl(fileId), port);
+        try {
+            const listing = await listThreads(page);
+            if (!listing.loggedIn) throw new Error("The RimAgentic Chrome is not signed into Steam (no #account_pulldown on the discussions page).");
+            const thread = findMilestoneThread(listing.threads, version);
+            if (!thread) {
+                throw new Error(
+                    `No 'Next milestone: ${version} ...' thread on the Discussions tab (threads: ${listing.threads.map(t => t.name).join(" | ") || "none"}). ` +
+                    `The workshop-backlog skill creates it at milestone start — run it, or post to the running Changelog thread instead (omit milestoneName).`
+                );
+            }
+            const base = {
+                fileId, mode: "milestone", version, milestoneName, discussionsUrl: listing.url,
+                thread: { name: thread.name, href: thread.href, pinned: !!thread.pinned },
+                newTitle, chars: bbcode.length, ...(extracted ? { extracted } : {}),
+            };
+            if (dryRun) {
+                return {
+                    dryRun: true, ...base,
+                    would: `reply on "${thread.name}" (${thread.href}) with the changelog block, retitle the thread to "${newTitle}", and unpin it`,
+                    reply: bbcode,
+                    note: "Nothing was posted. Re-run with confirm:true to do exactly this.",
+                };
+            }
+            await page.navigate(thread.href);
+            const reply = await replyOnThread(page, bbcode);
+            if (reply.error) throw new Error(`Steam refused the reply: ${reply.error}`);
+
+            // Retitle: the OP edit form carries the topic title; keep the body byte-identical.
+            let retitled = false, retitleNote = "";
+            const cur = await openPostEdit(page, "op");
+            if (!cur.ok) retitleNote = `could not open the OP edit form (${cur.note}) — retitle to "${newTitle}" by hand`;
+            else {
+                const saved = await saveOpenEdit(page, "op", cur.raw, newTitle);
+                retitled = saved.ok;
+                retitleNote = saved.note;
+            }
+
+            let unpinned = !thread.pinned, unpinNote = thread.pinned ? "" : "was not pinned";
+            if (thread.pinned) {
+                const pr = await setThreadPinned(page, false);
+                unpinNote = pr.note;
+                await page.navigate(discussionsUrl(fileId));
+                const after = await listThreads(page);
+                unpinned = !after.threads.find(t => t.href === thread.href && t.pinned);
+                if (pr.acted && !unpinned) unpinNote = `clicked the admin-menu item (${pr.note}) but the listing still shows it pinned — unpin by hand`;
+            }
+
+            return {
+                ok: true, ...base, threadUrl: thread.href, postUrl: reply.postUrl, postId: reply.postId ?? null,
+                postConfirmed: !!reply.postId, retitled, retitleNote, unpinned, unpinNote,
+                note: (reply.postId ? "Changelog posted; " : "Reply submitted but not observed — open threadUrl to confirm; ") +
+                    `thread ${retitled ? `retitled to "${newTitle}"` : "NOT retitled"}, ${unpinned ? "unpinned" : "still pinned"}. The next milestone's thread takes the pin (workshop-backlog skill).`,
+            };
+        } finally { await page.close(); }
+    }
+
+    // ---- default: the running Changelog thread --------------------------------------------
     const page = await openPage(discussionsUrl(fileId), port);
     try {
         const listing = await listThreads(page);

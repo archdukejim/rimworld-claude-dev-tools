@@ -129,6 +129,56 @@ export function planChangelogThread(threads: ThreadRow[], bbcode: string, opts: 
     };
 }
 
+// ---------------------------------------------------------------------------- discussion posts
+
+/*
+ * Steam's discussion post cap. PROVISIONAL: the same 8,000 characters as the description cap —
+ * consistent with the hand-written backlog draft being trimmed to 7,988 bytes — but not yet
+ * measured empirically. Measure once by posting to a hidden test item (grow a post until Steam
+ * refuses), then replace this constant and note the date here.
+ */
+export const DISCUSSION_POST_CAP = 8000;
+
+/** Refuse a discussion post body over the cap, naming the overage. */
+export function checkDiscussionPostCap(body: string): CapCheck {
+    const chars = String(body || "").length;
+    const over = chars - DISCUSSION_POST_CAP;
+    if (over <= 0) return { ok: true, chars, cap: DISCUSSION_POST_CAP, over: 0 };
+    return {
+        ok: false, chars, cap: DISCUSSION_POST_CAP, over,
+        message: `Post body is ${chars} characters — ${over} over the ${DISCUSSION_POST_CAP}-character discussion post cap (provisional). ` +
+            `Split it: keep the OP to the intro + index and move each long section into its own reply (the workshop-backlog skill's split rule).`
+    };
+}
+
+/** The topic id is the LAST numeric path segment of a thread URL (`…/discussion/<a>/<topicId>/`). */
+export function parseTopicId(href: string): string | null {
+    const m = String(href || "").match(/\/(\d+)\/?(?:[?#].*)?$/);
+    return m ? m[1] : null;
+}
+
+/** Exact-title thread match (case-insensitive, trimmed, "PINNED:" prefix stripped); pinned first. */
+export function findThreadByTitle(threads: ThreadRow[], title: string): ThreadRow | null {
+    return findChangelogThread(threads, title);
+}
+
+/** Find the active milestone thread for a version: title starts `Next milestone: <version>` (v optional). */
+export function findMilestoneThread(threads: ThreadRow[], version: string): ThreadRow | null {
+    const v = String(version || "").trim().replace(/^v/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`^next milestone:\\s*v?${v}(\\s|$)`, "i");
+    const norm = (n: string) => String(n || "").replace(/^PINNED:\s*/i, "").trim();
+    const hits = (threads || []).filter(t => re.test(norm(t.name)));
+    if (!hits.length) return null;
+    return hits.find(t => t.pinned) || hits[0];
+}
+
+/** The retitle applied when a milestone ships: `Next milestone: 0.4.0 Name` -> `0.4.0 Name - shipped`. */
+export function shippedTitle(version: string, name: string): string {
+    const v = String(version || "").trim().replace(/^v/i, "");
+    const n = String(name || "").trim();
+    return `${v}${n ? " " + n : ""} - shipped`;
+}
+
 // ---------------------------------------------------------------------------- link domains
 
 /** Domains Steam's automated content check is known to accept in Workshop descriptions. */
