@@ -36,11 +36,15 @@ import { jobsTools, handleJobsTool } from "./tools/jobs";
 import { authTools, handleAuthTool } from "./tools/auth";
 import { rimsortTools, handleRimsortTool } from "./tools/rimsort";
 import { promptLabTools, handlePromptLabTool } from "./tools/promptLab";
+import { infographicTools, handleInfographicTool } from "./tools/infographic";
 import { noteGameActivity } from "./gameWatchdog";
+import { withGameLease, GAME_LEASE_TOOLS, gameLeaseTools, handleGameLeaseTool } from "./gameLease";
+import { sessionTools, handleSessionTool, SESSION_LEASE_TOOLS } from "./tools/session";
 import { loadConfig, getGitHubToken, requireGitHubToken } from "./config";
 // Steam Workshop families (merged in from steam-workshop-helper)
 import { startBridge, Bridge } from "./bridge";
 import { swhTools, handleSwhTool } from "./tools/workshop";
+import { discussionsTools, handleDiscussionsTool } from "./tools/discussions";
 import { githubTools as swhGithubTools, handleGithubTool as handleSwhGithubTool } from "./tools/github";
 
 // 1. Setup Config & Auth
@@ -56,7 +60,8 @@ function applyGitHubToken(newToken: string): void {
     octokit = new Octokit({ auth: newToken });
 }
 
-// Steam loopback bridge — set in main(); the swh_* tools require it.
+// Steam loopback bridge — set in main(). Never null after startup: an owner, a proxy to the sibling
+// server that bound the port first, or an "unavailable" stub that explains why (bridge.ts).
 let bridge: Bridge | null = null;
 
 // 2. Setup MCP Server
@@ -91,11 +96,18 @@ const ALL_TOOLS = [
     ...gameIpcTools,
     ...jobsTools,
     ...swhTools,
+    ...discussionsTools,
     ...swhGithubTools,
     ...authTools,
     ...rimsortTools,
-    ...promptLabTools
+    ...promptLabTools,
+    ...infographicTools,
+    ...gameLeaseTools,
+    ...sessionTools
 ];
+
+/** True for tools that must run inside the FIFO game lease (game-resource + the ensure_game takeover). */
+const isLeaseGated = (name: string): boolean => GAME_LEASE_TOOLS.has(name) || SESSION_LEASE_TOOLS.has(name);
 
 // The tools that cannot do anything without a GitHub token. The token is optional overall - the
 // RimWorld and pc-control families never touch GitHub - so this is checked per call rather than at
@@ -123,6 +135,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         requireGitHubToken(token, name);
     }
 
+    // One dispatch closure, so the game-resource tools can be run either directly or wrapped in the
+    // FIFO game lease (below) without duplicating the tool ladder.
+    const dispatch = async (): Promise<any> => {
     // Not GitHub-backed: this is how you INSTALL the token, so it must never require one.
     if (authTools.some(t => t.name === name)) {
         return await handleAuthTool(name, args, applyGitHubToken);
@@ -218,29 +233,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handlePromptLabTool(name, args);
     }
 
+    if (infographicTools.some(t => t.name === name)) {
+        return await handleInfographicTool(name, args);
+    }
+
     // Steam Workshop GitHub issue tools (repo-map based; API direct, no bridge).
     if (swhGithubTools.some(t => t.name === name)) {
         return await handleSwhGithubTool(name, args);
     }
 
+    // Read-only FIFO game-lease status (not lease-gated itself).
+    if (gameLeaseTools.some(t => t.name === name)) {
+        return await handleGameLeaseTool(name, args);
+    }
+
+    // Per-session modlist cache + the ensure_game takeover (ensure_game is lease-gated below).
+    if (sessionTools.some(t => t.name === name)) {
+        return await handleSessionTool(name, args);
+    }
+
     // Steam Workshop actions run in the browser via the loopback bridge.
+    // Steam Workshop actions: extension bridge when connected, else the DevTools route (workshop.ts).
     if (swhTools.some(t => t.name === name)) {
-        if (!bridge) throw new Error("Steam loopback bridge not started yet.");
         return await handleSwhTool(name, args, bridge);
     }
 
+    // Workshop Discussions (backlog/milestone threads) — DevTools-only (discussions.ts).
+    if (discussionsTools.some(t => t.name === name)) {
+        return await handleDiscussionsTool(name, args);
+    }
+
     throw new Error(`Unknown tool: ${name}`);
+    };
+
+    // The game-resource tools (deploy/configure/launch/test/in-game IPC + ensure_game) run one
+    // session at a time in FIFO order so concurrent sessions can't stomp the single game / Mods
+    // folder / ModsConfig. Everything else dispatches directly. See gameLease.ts.
+    return isLeaseGated(name) ? await withGameLease(name, dispatch) : await dispatch();
 });
 
 // 4. Start Server
 async function main() {
-    // Start the Steam Workshop loopback bridge (127.0.0.1). Best-effort: if the
-    // port is taken, the RimWorld/GitHub tools still work; only swh_* are affected.
-    try {
-        bridge = await startBridge(config);
-    } catch (err) {
-        console.error("[rwdt] Steam bridge failed to start (swh_* tools disabled):", err instanceof Error ? err.message : err);
-    }
+    // Start the Steam Workshop loopback bridge (127.0.0.1). Never throws: with several MCP servers
+    // running the port is usually owned by a sibling already, and this one becomes a proxy to it.
+    bridge = await startBridge(config);
 
     const isSse = process.argv.includes("--sse");
     if (isSse) {
@@ -346,6 +382,7 @@ async function main() {
                     requireGitHubToken(token, name);
                 }
 
+                const dispatch = async (): Promise<any> => {
                 let result;
                 if (authTools.some(t => t.name === name)) {
                     result = await handleAuthTool(name, args, applyGitHubToken);
@@ -393,16 +430,26 @@ async function main() {
                     result = await handleJobsTool(name, args);
                 } else if (promptLabTools.some(t => t.name === name)) {
                     result = await handlePromptLabTool(name, args);
+                } else if (infographicTools.some(t => t.name === name)) {
+                    result = await handleInfographicTool(name, args);
                 } else if (swhGithubTools.some(t => t.name === name)) {
                     result = await handleSwhGithubTool(name, args);
+                } else if (gameLeaseTools.some(t => t.name === name)) {
+                    result = await handleGameLeaseTool(name, args);
+                } else if (sessionTools.some(t => t.name === name)) {
+                    result = await handleSessionTool(name, args);
                 } else if (swhTools.some(t => t.name === name)) {
-                    if (!bridge) throw new Error("Steam loopback bridge not started yet.");
                     result = await handleSwhTool(name, args, bridge);
+                } else if (discussionsTools.some(t => t.name === name)) {
+                    result = await handleDiscussionsTool(name, args);
                 } else {
-                    res.status(404).json({ error: "Unknown tool: " + name });
-                    return;
+                    throw new Error("Unknown tool: " + name);
                 }
-                
+                return result;
+                };
+
+                // Game-resource tools serialize FIFO across sessions (gameLease.ts); the rest run direct.
+                const result = isLeaseGated(name) ? await withGameLease(name, dispatch) : await dispatch();
                 res.json(result);
             } catch (err: any) {
                 res.status(500).json({ error: err.message });

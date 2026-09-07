@@ -1,5 +1,25 @@
 # RimSynapse Changelog
 
+## [dev-tools, unreleased] - Self-sufficient Steam Workshop publish path
+The MCP server's `swh_*` family no longer depends on the extension loopback bridge, which with
+several MCP servers running was owned by one process and reported "bridge not started" everywhere else.
+- **Bridge modes**: the first server to bind `127.0.0.1:8766` is the owner; later servers become a
+  proxy to it (`POST /call`), and a port held by something else is reported as `unavailable` with the
+  reason. `chrome_status.bridge` shows `mode` + `note` instead of lying.
+- **DevTools route** (`server/src/steamCdp.ts`, zero dependencies): `swh_get_auth`, `swh_get_item`,
+  `swh_open_item`, `swh_update_description` fall back to it automatically.
+- **`swh_update_description`** reads the current text first, refuses descriptions over the 8,000-char
+  cap (naming the overage + "drop the oldest changelog block"), warns on unfamiliar link domains, saves,
+  and verifies the version line on the public page, returning `{ ok, verified, versionLine, moderation }`.
+- **New `swh_get_moderation_state`** (visible / awaiting_analysis / removed / hidden / incompatible, as
+  the owner sees it), **`swh_post_changelog`** (find-or-create a pinned "Changelog" Discussions thread;
+  dry-run by default, `confirm:true` posts) and **`extract_changelog_block`**.
+- **`compose_workshop_bbcode`** asserts the cap and the well-known-domain list.
+- **`sync_repo_wiki`** derives `<owner>/<repo>` from the mod's `origin` remote (any org), copies
+  `Learning/*.md`, supports `dryRun` (diffstat) and `prune`; `harness/package-release.ps1` resolves
+  `-Repo` across every workspace beside the checkout and takes the release slug from `origin`.
+- Tests: `server/test/steam-cdp-stub.test.js` (`npm run test:steam`). Docs: `docs/STEAM-PUBLISH.md`.
+
 ## [v0.6.0] - The Population Density, Gossip & Legendary Tribute Update
 This update introduces dynamic population density propagation on the world map, procedurally generated homesteads, density-based storyteller weight adjustments, a modular visitor gossip rumor system, and robust save-state backlog fixes.
 

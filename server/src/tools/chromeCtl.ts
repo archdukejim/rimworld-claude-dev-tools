@@ -280,10 +280,10 @@ function defaultBrowser(url: string, why: string): { ok: boolean; via: string; e
 /** Tab-group work lives in the extension; surface a useful error when the bridge isn't up. */
 async function viaBridge(bridge: Bridge | null, method: string, args: any) {
     if (!bridge) return errText("The loopback bridge isn't running, so the extension can't be reached. Restart the MCP server.");
-    const st = bridge.status();
+    const st = await bridge.refresh();
     if (!st.connected) {
         return errText(
-            "The extension isn't connected to the loopback bridge, so tab/group calls can't run.\n" +
+            `The extension isn't connected to the loopback bridge, so tab/group calls can't run (${st.mode}: ${st.note}).\n` +
             "Run launch_chrome (it reports whether the extension registered), and if it says the extension didn't load, " +
             "follow the load-unpacked steps it prints."
         );
@@ -387,7 +387,8 @@ async function describe(port: number, bridge: Bridge | null, extra: Record<strin
     let ts: Target[] = [];
     try { ts = await targets(port); } catch { /* endpoint raced; report what we have */ }
     const pages = ts.filter(t => t.type === "page");
-    const bs = bridge ? bridge.status() : null;
+    // refresh() re-reads the owner's /health in proxy mode, so a proxy never reports a stale answer.
+    const bs = bridge ? await bridge.refresh() : null;
     return {
         running: true,
         port,
@@ -395,7 +396,14 @@ async function describe(port: number, bridge: Bridge | null, extra: Record<strin
         extensionPath: extensionDir(),
         pids: ourChromePids(),
         extension: extensionAlive(ts) as Record<string, unknown>,
-        bridge: bs ? { connected: bs.connected, queued: bs.queued, pending: bs.pending } : { connected: false, note: "bridge not started" },
+        // `mode` says WHICH process the extension talks to: owner (this one), proxy (a sibling MCP
+        // server that bound 8766 first — calls are forwarded to it), or unavailable (the port is
+        // held by something else). `note` is the human explanation. The swh_* auth/item/description/
+        // moderation/discussions tools do not need this at all — they fall back to DevTools.
+        bridge: bs
+            ? { mode: bs.mode, connected: bs.connected, queued: bs.queued, pending: bs.pending, endpoint: bs.endpoint, note: bs.note }
+            : { mode: "unavailable", connected: false, note: "the loopback bridge was never started in this process" },
+        steamRoute: bs?.connected ? "bridge" : "devtools (swh_get_auth / swh_get_item / swh_update_description / swh_get_moderation_state / swh_post_changelog work without the bridge)",
         tabs: pages.map(p => ({ id: p.id, title: p.title, url: p.url })),
         ...extra
     };

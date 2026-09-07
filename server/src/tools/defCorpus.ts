@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { XMLParser } from "fast-xml-parser";
+import { resolveRimWorldDir, walkXml, strVal } from "./defXml";
+import { buildModDefCorpusTool, buildModDefCorpus } from "./modDefCorpus";
 
 /**
  * Offline Def corpus — the "content" half of RimWorld mechanics, available WITHOUT launching.
@@ -9,47 +11,14 @@ import { XMLParser } from "fast-xml-parser";
  * flat catalog (defType, defName, label, description, inheritance, module), and search_defs keyword-
  * searches it. This complements search_game_api (the C# "behavior" half): together the agent knows
  * both what content exists and the code behind it, before the first launch. Game + DLC only — mod
- * Defs are out of scope here (a later extensible "corpus" mechanism will add more).
+ * Defs are out of scope here — build_mod_def_corpus (modDefCorpus.ts, same family) covers mods, with
+ * a relationship graph, via the corpus registry.
  */
 function localAppData(): string {
     return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
 }
 const defsDir = () => path.join(localAppData(), "RimAgentic", "defs");
 const defCorpusPath = () => path.join(defsDir(), "def-corpus.jsonl");
-
-/** Resolve the RimWorld install directory (the folder containing Data/) from an arg or common locations. */
-function resolveRimWorldDir(arg?: string): string | null {
-    const cands: string[] = [];
-    if (arg) cands.push(arg.replace(/[\\/]?RimWorldWin64\.exe$/i, "").replace(/[\\/]+$/, ""));
-    if (process.env.RIMWORLD_PATH) cands.push(process.env.RIMWORLD_PATH.replace(/[\\/]?RimWorldWin64\.exe$/i, ""));
-    cands.push("C:\\Program Files (x86)\\Steam\\steamapps\\common\\RimWorld");
-    cands.push("C:\\GOG Games\\RimWorld");
-    for (const c of cands) { if (c && fs.existsSync(path.join(c, "Data"))) return c; }
-    return null;
-}
-
-function walkXml(root: string, cap: number): string[] {
-    const out: string[] = [];
-    const stack = [root];
-    while (stack.length && out.length < cap) {
-        const dir = stack.pop() as string;
-        let entries: fs.Dirent[];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-        for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) stack.push(full);
-            else if (e.isFile() && e.name.toLowerCase().endsWith(".xml")) { out.push(full); if (out.length >= cap) break; }
-        }
-    }
-    return out;
-}
-
-function strVal(v: any): string | null {
-    if (typeof v === "string") return v.trim();
-    if (typeof v === "number" || typeof v === "boolean") return String(v);
-    if (v && typeof v === "object" && v["#text"] !== undefined) return String(v["#text"]).trim();
-    return null;
-}
 
 // --- corpus cache ---
 let cache: { mtime: number; records: any[] } | null = null;
@@ -101,12 +70,14 @@ export const defCorpusTools = [
             },
             required: ["query"]
         }
-    }
+    },
+    buildModDefCorpusTool
 ];
 
 export async function handleDefCorpusTool(name: string, args: any) {
     if (name === "build_def_corpus") return buildDefCorpus(args);
     if (name === "search_defs") return searchDefs(args);
+    if (name === "build_mod_def_corpus") return buildModDefCorpus(args);
     throw new Error(`Unknown def-corpus tool: ${name}`);
 }
 

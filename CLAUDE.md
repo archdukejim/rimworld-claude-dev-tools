@@ -118,9 +118,11 @@ GitHub-backed (need a token): `issues`, `projects`, `codebase`, `sync`, plus
 
 No token required: `wiki`, `factions`, `psychology`, `pcControl` (desktop
 automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
-`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
-loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
-(generic register/index/graph/search), `harmony` (Harmony patching RAG — a
+`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam — extension
+loopback `bridge` when connected, DevTools fallback otherwise; see below),
+`github` (SWH issue tools, repo-map based), `corpusRegistry`
+(generic register/index/graph/search; `build_mod_def_corpus` in the `defCorpus` family builds a graphed
+corpus over any set of mods' Defs + Patches, e.g. one per mod family, with vanilla defs mixed in), `harmony` (Harmony patching RAG — a
 curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
 `set_active_key`; multiple labelled keys per service, active-key resolution),
@@ -128,7 +130,19 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`discussions` (`swh_list/find/get/create/reply/edit/pin_discussion` — Steam Workshop
+Discussions threads over the DevTools route; the backlog/milestone threads that replace the
+GitHub backlog + changelog for players. Conventions + write discipline: **`docs/DISCUSSIONS.md`**;
+driven by the user-level `workshop-backlog` skill),
+`infographic` (`render_html_to_image`, `compose_infographic`, `publish_infographic` —
+themed HTML → crisp PNG via headless Chrome → fan-out to edition repos + Steam
+descriptions; the render gotchas [UTF-8 loopback serving, virtual-time budget, forced
+`data-theme`, measured tight height] and the publish flow live in **`docs/INFOGRAPHICS.md`** —
+read it before touching the renderer),
+`gameLease` (`game_lease_status` — inspect the FIFO game lease),
+`session` (`use_session`, `set_session_modlist`, `get_session_modlist`, `ensure_game` — per-session
+modlist cache + clean-template game bring-up; see `docs/SESSION-GATING.md`).
 
 ### Game-free prompt iteration (`promptLab`)
 
@@ -189,6 +203,34 @@ automation. Guard rails: pinned, active, and `keep`-matching tabs are never clos
 always survives. Run it at the end of any browser task. Tests: `npm run test:chrome` (needs a real
 browser; it self-launches).
 
+### Steam Workshop publish path (`workshop` / `swh_*`)
+
+The full reference is **`docs/STEAM-PUBLISH.md`**. The facts that cost a release to learn:
+
+- **Two routes, chosen automatically.** The extension bridge (`bridge.ts`, port 8766) is used
+  when connected; otherwise `swh_get_auth` / `swh_get_item` / `swh_open_item` /
+  `swh_update_description` / `swh_get_moderation_state` / `swh_post_changelog` drive the
+  RimAgentic Chrome over the DevTools protocol (`steamCdp.ts`, zero deps, global `WebSocket`).
+  Comment/notification/title tools are bridge-only. **Never hand-roll a CDP script** for a
+  publish — extend `steamCdp.ts` (every `Runtime.evaluate` carries a `swh:<probe>` marker the
+  stub test keys on).
+- **The bridge port has ONE owner.** Every session's MCP server tries to bind 8766; the first
+  wins, later servers proxy to it (`POST /call`), and `chrome_status.bridge.mode` says
+  `owner` / `proxy` / `unavailable` with a `note`. "bridge not started" is gone; a stale owner
+  build (no `/call`) shows up as a proxy error and the tools fall back to DevTools.
+- **8,000-character description cap** — `compose_workshop_bbcode` and `swh_update_description`
+  refuse over it; the fix is to drop the OLDEST `[h2]Changelog (vX)[/h2] … [/list]` block and
+  keep the `Full version history` link. **Unfamiliar link domains** trigger Steam's content
+  check (item hidden, edits return Access Denied) — both tools warn; only steamcommunity,
+  github, imgur, ko-fi, discord.gg are on the known-good list.
+- **`swh_post_changelog` is dry-run by default**; only `confirm:true` posts (find-or-create the
+  pinned "Changelog" Discussions thread, reply with the block from `extract_changelog_block`).
+  With `milestoneName` it instead closes out the `Next milestone: <version> …` thread: final
+  reply, retitle to `<version> <name> - shipped`, unpin (the `workshop-backlog` skill's flow).
+- **Discussions tools** (`swh_*_discussion*`, `docs/DISCUSSIONS.md`) share the route, the
+  dry-run/confirm discipline, the post cap, and the domain allow-list.
+- Tests: `cd server && npm run test:steam` (stub DevTools endpoint; touches nothing real).
+
 ### Image hosting for Workshop descriptions (`imgur`)
 
 Steam BBCode embeds images by URL only, so nothing this server generates
@@ -222,6 +264,12 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   — no window focus, no drag-drop; needs `launch_chrome` + a signed-in imgur session). **Never drive
   the imgur website manually** (clicks/keystrokes/paste into the page) — blind desktop input on a
   contested desktop is what stranded past agents. Browser-session uploads have no deletehash.
+- **`imgur_status` reports BOTH paths — never declare imgur broken from `authorized:false` alone.**
+  It probes the RimAgentic Chrome for a signed-in imgur web session (cookie names over CDP) and
+  reports `webSession.loggedIn` + `uploadsAvailable` + `preferredUpload`. The standing setup on this
+  machine is web-session-only (no API credentials, by choice): that is a WORKING configuration via
+  `imgur_web_upload`, not an error to fix. If Chrome isn't running, launch it and re-check before
+  concluding anything.
 - **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
   into direct full-size image URLs: local ledger first (zero network for anything uploaded via
   `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings
@@ -267,6 +315,31 @@ showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_b
   than reported as clean. The durable reference (what's enforced, the known-good test modlist,
   and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
   **`docs/HARNESS-RELIABILITY.md`**.
+- **The game is FIFO-gated across sessions** — the game-resource tools (`deploy_rimworld_mods`,
+  `configure_active_mods`, `launch_*`, `run_rimworld_tests`, `restart_game`, `execute_game_tool`,
+  `save_rimworld_game`, `list_game_tools`) run one session at a time in arrival order via a
+  cross-process lease (`server/src/gameLease.ts`), so concurrent sessions can't stomp the single
+  game / Mods folder / ModsConfig. A blocked call means another session holds it — check with
+  `game_lease_status`. The raw IPC channel is separately mutexed per round-trip
+  (`server/src/ipcLock.ts`). Reference: **`docs/SESSION-GATING.md`**. (Layer 1 of the multi-PC
+  test-broker plan; the idle watchdog no longer image-kills, so it can't nuke another session's game.)
+- **Prefer `ensure_game` over launching by hand** — Layer 1.5 adds a per-session modlist cache
+  (`set_session_modlist`, keyed by your worktree short-id, inferred from paths or set via
+  `use_session`). `ensure_game` brings the game up with your cached modlist **rebuilt from a clean
+  template every time** (never an incremental ModsConfig mutation — kills the drift-bug class),
+  reusing the live game if its modlist already matches or otherwise taking over (kill → scrub →
+  rewrite → relaunch). See **`docs/SESSION-GATING.md`**.
+
+- **Exactly one `sharp` in the tree — `package.json` `overrides` keeps it that way.** `@xenova/transformers`
+  wants `sharp@^0.32`; the server uses `^0.35`. Without the override npm nests a second sharp under
+  `node_modules/@xenova/transformers/node_modules/`, and both ship a DLL named `libvips-42.dll`. Windows
+  loads a DLL by name once per process, so after any corpus/embedding tool loads transformers (and its
+  old sharp) first, every sharp-backed workshop-image tool fails with ERR_DLOPEN_FAILED "The specified
+  procedure could not be found" for the life of that server process — it is NOT a Node-ABI mismatch,
+  and sharp loads fine in a fresh `node -e`. Guard: `cd server && npm run test:sharp` (loads
+  transformers first, then sharp). If it fails after an `npm install`, delete the nested folder and
+  its `package-lock.json` entries and reinstall — `npm install`/`npm dedupe` do not evict an
+  already-locked nested copy on their own.
 
 ## GitHub auth & release ops (rules)
 

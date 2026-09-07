@@ -19,6 +19,9 @@ const { randomBytes } = require("crypto");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "imgur-e2e-"));
 process.env.LOCALAPPDATA = scratch;
+// Keep the suite hermetic: imgur_status now probes the RimAgentic Chrome for a
+// signed-in imgur web session; port 0 disables that probe.
+process.env.RIMAGENTIC_CDP_PORT = "0";
 
 let uploadCount = 0;
 const deleted = [];
