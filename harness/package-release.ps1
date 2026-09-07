@@ -16,7 +16,14 @@
 #   .\harness\package-release.ps1                       # zip latest release of every shipped repo
 #   .\harness\package-release.ps1 -Repo Core            # one repo
 #   .\harness\package-release.ps1 -Repo Core -Tag v0.9.0
+#   .\harness\package-release.ps1 -Repo Core-MMF -Tag v0.3.2 -Upload   # any org: slug comes from origin
 #   .\harness\package-release.ps1 -Upload               # also attach to the GitHub release
+#
+# -Repo is a mod NAME or a PATH. A name is resolved, in order: RIMAGENTIC_ROOT/RIMSYNAPSE_ROOT
+# (explicit override), the legacy C:\github\rimsynapse pin, then every workspace folder beside
+# this checkout (C:\github\<workspace>\<Repo>) — so Regions-and-societies\Core-MMF resolves with
+# no env var. The GitHub <owner>/<repo> for `releases/latest` and the upload comes from the mod's
+# own `origin` remote, never from a configured org.
 
 param(
     [string[]]$Repo,
@@ -32,17 +39,54 @@ $shipped = @('Core', 'Psychology', 'Conversations', 'Factions', 'WorldNews',
 if (-not $Repo) { $Repo = $shipped }
 if ($Tag -and $Repo.Count -gt 1) { throw "-Tag only makes sense with a single -Repo" }
 
-$root = if ($env:RIMSYNAPSE_ROOT) { $env:RIMSYNAPSE_ROOT } else { 'C:\github\rimsynapse' }
-if (-not $OutDir) { $OutDir = Join-Path $root '_release-zips' }
-New-Item -ItemType Directory -Force $OutDir | Out-Null
+function Test-ModDir([string]$Dir) { return ($Dir -and (Test-Path (Join-Path $Dir 'About\About.xml'))) }
+
+# Turn a -Repo value (name or path) into the mod checkout folder. See the header for the order.
+function Resolve-ModRepo([string]$Name) {
+    if (Test-ModDir $Name) { return (Resolve-Path $Name).Path }
+    $override = if ($env:RIMAGENTIC_ROOT) { $env:RIMAGENTIC_ROOT } else { $env:RIMSYNAPSE_ROOT }
+    if ($override) {
+        $p = Join-Path $override $Name
+        if (Test-ModDir $p) { return $p }
+        throw "$Name is not a mod checkout under $override (RIMAGENTIC_ROOT/RIMSYNAPSE_ROOT is set, so nothing else is searched)"
+    }
+    $legacy = Join-Path 'C:\github\rimsynapse' $Name
+    if (Test-ModDir $legacy) { return $legacy }
+    # Every workspace beside this checkout: walk up from the tooling repo (a worktree sits two
+    # levels deeper than the main checkout) and look at <sibling>\<Name> at each level.
+    $found = @()
+    $dir = Split-Path -Parent $PSScriptRoot
+    for ($i = 0; $i -lt 4 -and $dir; $i++) {
+        $dir = Split-Path -Parent $dir
+        if (-not $dir) { break }
+        $found += Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName $Name } |
+            Where-Object { Test-ModDir $_ }
+    }
+    $found = @($found | Select-Object -Unique)
+    if ($found.Count -eq 1) { return $found[0] }
+    if ($found.Count -gt 1) { throw "$Name exists in more than one workspace ($($found -join ', ')); pass a path or set RIMSYNAPSE_ROOT" }
+    throw "${Name}: no mod checkout found (not a path, not under RIMSYNAPSE_ROOT, C:\github\rimsynapse, or any workspace beside $(Split-Path -Parent $PSScriptRoot))"
+}
+
+# <owner>/<repo> from the mod's own origin remote — repos live in more than one org.
+function Get-OriginSlug([string]$Path) {
+    $originUrl = git -C $Path remote get-url origin 2>$null
+    if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?/?$') { return $Matches[1] }
+    throw "$Path has no GitHub origin remote to derive <owner>/<repo> from (got '$originUrl')"
+}
 
 $payload = @('About', 'Assemblies', 'Defs', 'Languages', 'Learning', 'Patches',
              'Sounds', 'Textures', 'LoadFolders.xml', 'LICENSE')
 
 $results = @()
 foreach ($r in $Repo) {
-    $path = Join-Path $root $r
-    if (-not (Test-Path (Join-Path $path 'About\About.xml'))) { throw "$r is not a mod checkout at $path" }
+    $path = Resolve-ModRepo $r
+    $r = Split-Path -Leaf $path          # zip/staging name, even when -Repo was a path
+    $slug = Get-OriginSlug $path
+    $zipDir = if ($OutDir) { $OutDir } else { Join-Path (Split-Path -Parent $path) '_release-zips' }
+    New-Item -ItemType Directory -Force $zipDir | Out-Null
+    Write-Host "[package] $r -> $path (github: $slug)"
 
     # Owner/repo slug comes from the checkout's own origin remote (repos live in
     # more than one org — e.g. Regions-and-societies); RimSynapse is only the
@@ -117,7 +161,7 @@ foreach ($r in $Repo) {
         }
     }
 
-    $zip = Join-Path $OutDir "$r-$version.zip"
+    $zip = Join-Path $zipDir "$r-$version.zip"
     if (Test-Path $zip) { Remove-Item $zip }
     Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
     # HARD REQUIREMENT: About/About.xml must sit at the ZIP ROOT. RimSort creates the mod folder
@@ -136,10 +180,10 @@ foreach ($r in $Repo) {
 
     if ($Upload) {
         gh release upload -R $slug $relTag $zip --clobber
-        if ($LASTEXITCODE -ne 0) { throw "${r}: upload to $relTag failed" }
-        Write-Host "[package] $r $relTag asset uploaded"
+        if ($LASTEXITCODE -ne 0) { throw "${r}: upload to $slug $relTag failed" }
+        Write-Host "[package] $r $relTag asset uploaded to $slug"
     }
-    $results += [pscustomobject]@{ repo = $r; tag = $relTag; zip = $zip; mb = $size; uploaded = [bool]$Upload }
+    $results += [pscustomobject]@{ repo = $r; github = $slug; tag = $relTag; zip = $zip; mb = $size; uploaded = [bool]$Upload }
 }
 
 $results | Format-Table -AutoSize

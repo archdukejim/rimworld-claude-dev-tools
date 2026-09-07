@@ -42,20 +42,33 @@ if (-not $token) {
 
 $baseDir = Get-Location
 $parentDir = Split-Path $baseDir -Parent
-$repoDirs = Get-ChildItem -Path $parentDir -Directory | Where-Object { $_.Name -like "RimSynapse-*" -or $_.Name -eq "AuraAlgorithm" }
+# Any sibling folder that is a mod checkout (About\About.xml) — not just RimSynapse-* names.
+$repoDirs = Get-ChildItem -Path $parentDir -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'About\About.xml') }
 
 foreach ($dir in $repoDirs) {
     $repoName = $dir.Name
     Write-Host "==============================================" -ForegroundColor Cyan
     Write-Host "Syncing Wiki for $repoName..." -ForegroundColor Cyan
-    
-    if (-not $wikiUrls.ContainsKey($repoName)) {
-        Write-Warning "No explicit Git URL found for $repoName in $TokenFile. Skipping."
+
+    # A [Wikis] entry in the token file wins; otherwise the wiki lives beside the repo's own
+    # origin remote (<owner>/<repo>.wiki.git), whichever org that is. $OrgName is the last resort.
+    $configuredUrl = $null
+    if ($wikiUrls.ContainsKey($repoName)) {
+        $configuredUrl = $wikiUrls[$repoName]
+    } else {
+        $originUrl = git -C $dir.FullName remote get-url origin 2>$null
+        if ($originUrl -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?/?$') {
+            $configuredUrl = "https://github.com/$($Matches[1]).wiki.git"
+        } elseif ($OrgName) {
+            $configuredUrl = "https://github.com/$OrgName/$repoName.wiki.git"
+        }
+    }
+    if (-not $configuredUrl) {
+        Write-Warning "No wiki URL for $repoName (no [Wikis] entry, no GitHub origin). Skipping."
         continue
     }
 
     # Inject the token into the configured URL for authentication
-    $configuredUrl = $wikiUrls[$repoName]
     $wikiUrl = $configuredUrl -replace "https://", "https://${token}@"
     
     $tempDir = Join-Path $baseDir "wiki_temp_$repoName"

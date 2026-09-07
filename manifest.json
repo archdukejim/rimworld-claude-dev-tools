@@ -95,7 +95,7 @@
     },
     {
       "name": "sync_repo_wiki",
-      "description": "Syncs a local Learning folder to its GitHub Wiki repository"
+      "description": "Publish a mod repo's Learning/*.md to its GitHub wiki (<owner>/<repo>.wiki derived from the checkout's origin remote, any org). dryRun prints the diffstat; prune deletes orphaned pages."
     },
     {
       "name": "query_modding_docs",
@@ -179,7 +179,7 @@
     },
     {
       "name": "compose_workshop_bbcode",
-      "description": "Compose Steam Workshop description BBCode embedding a set of Steam-hosted image URLs (with optional captions), combined with an intro and/or existing description — ready to pass to swh_update_description."
+      "description": "Compose Steam Workshop description BBCode embedding hosted image URLs (with optional captions) plus an intro and/or existing description, ready for swh_update_description. Asserts the 8,000-character cap and warns on links to domains Steam's content check may not recognise."
     },
     {
       "name": "render_workshop_infographic",
@@ -255,7 +255,7 @@
     },
     {
       "name": "chrome_status",
-      "description": "Report the RimAgentic Chrome instance: running state, debugging port, pids, whether the extension's service worker is alive, bridge connectivity, and the current tab list."
+      "description": "Report the RimAgentic Chrome instance: running state, debugging port, pids, whether the extension's service worker is alive, the bridge mode (owner | proxy | unavailable) with why, which Steam route the swh_* tools will take, and the current tab list."
     },
     {
       "name": "close_chrome",
@@ -484,6 +484,90 @@
     {
       "name": "save_rimworld_game",
       "description": "Saves the currently running RimWorld dev game to a named slot via the in-game bridge, so you can close the game and later resume this exact state with launch_rimworld's loadSave. Requires a live game (does nothing at the main menu)."
+    },
+    {
+      "name": "swh_open_item",
+      "description": "Open a browser tab on a workshop item and wait until it is ready. Bridge when connected, else the DevTools route in the RimAgentic Chrome."
+    },
+    {
+      "name": "swh_get_auth",
+      "description": "Report Steam login state as seen by the RimAgentic Chrome ({ loggedIn, steamId, accountName, route }). Bridge or DevTools; never logs in."
+    },
+    {
+      "name": "swh_get_context",
+      "description": "Metadata about the workshop item open in the active tab (fileId, appId, ownerSteamId, title). Bridge-only."
+    },
+    {
+      "name": "swh_review_notifications",
+      "description": "Digest of recent comment notifications across all your workshop items, enriched with the latest comments. Bridge-only."
+    },
+    {
+      "name": "swh_get_notifications",
+      "description": "Raw comment-notifications list (which items have new activity). Bridge-only."
+    },
+    {
+      "name": "swh_list_comments",
+      "description": "List comments on a workshop item ({ total, comments[] }). Bridge-only."
+    },
+    {
+      "name": "swh_post_comment",
+      "description": "Post a comment on a workshop item (Steam BBCode). Bridge-only."
+    },
+    {
+      "name": "swh_delete_comment",
+      "description": "Delete a comment by gidcomment. Irreversible. Bridge-only."
+    },
+    {
+      "name": "swh_get_item",
+      "description": "Read a workshop item's editable title/description/visibility from its edit page (owner). Bridge or DevTools; reports chars vs the 8,000 cap."
+    },
+    {
+      "name": "swh_update_description",
+      "description": "Replace a workshop item's whole description: reads current text, refuses over 8,000 chars (naming the overage), warns on unfamiliar link domains, saves, verifies the version line on the public page and returns the moderation state. Bridge or DevTools."
+    },
+    {
+      "name": "swh_update_title",
+      "description": "Update a workshop item's title. Bridge-only."
+    },
+    {
+      "name": "swh_get_moderation_state",
+      "description": "Read an item's moderation state as the logged-in owner: visible | awaiting_analysis | removed | hidden | incompatible, with the notice text and version line. DevTools route."
+    },
+    {
+      "name": "extract_changelog_block",
+      "description": "Pull the [h2]Changelog (v<version>)...[/list] block, byte-identical, out of About/steam_description.txt (plus its wiki link) for swh_post_changelog."
+    },
+    {
+      "name": "swh_post_changelog",
+      "description": "Post a release changelog to the item's Discussions tab: find-or-create the pinned 'Changelog' thread, reply with the BBCode block, pin. Dry-run by default; confirm:true posts. Returns threadUrl + postUrl."
+    },
+    {
+      "name": "swh_list_discussions",
+      "description": "List every thread on a workshop item Discussions tab: topicId, title, url, pinned, replies, last activity. Read-only; DevTools route."
+    },
+    {
+      "name": "swh_find_discussion",
+      "description": "Find a discussion thread by exact title (pinned match wins); returns the thread or null. The create-vs-edit decision point for the workshop-backlog skill."
+    },
+    {
+      "name": "swh_get_discussion",
+      "description": "Read one discussion thread: the OP and every reply with raw BBCode for this session's own posts (via the inline edit form, never saved) and rendered text for others."
+    },
+    {
+      "name": "swh_create_discussion",
+      "description": "Create a discussion thread (title + BBCode body), optionally pinned. Dry-run by default; confirm:true posts. Refuses duplicates and over-cap bodies; reports moderation state."
+    },
+    {
+      "name": "swh_reply_discussion",
+      "description": "Reply on a discussion thread. Dry-run by default; confirm:true posts. Re-reads the thread first; cap + link-domain guardrails; reports moderation state."
+    },
+    {
+      "name": "swh_edit_discussion_post",
+      "description": "Edit a discussion post (OP or reply) in place via Steam's inline edit form — re-reads the current raw BBCode first, diffs, no-ops on identical text; OP edits can retitle the thread. Dry-run by default."
+    },
+    {
+      "name": "swh_pin_discussion",
+      "description": "Pin or unpin a discussion thread from the owner admin menu, idempotently, verifying against the thread listing."
     }
   ],
   "keywords": [

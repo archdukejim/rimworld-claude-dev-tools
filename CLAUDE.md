@@ -118,8 +118,9 @@ GitHub-backed (need a token): `issues`, `projects`, `codebase`, `sync`, plus
 
 No token required: `wiki`, `factions`, `psychology`, `pcControl` (desktop
 automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
-`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
-loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
+`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam — extension
+loopback `bridge` when connected, DevTools fallback otherwise; see below),
+`github` (SWH issue tools, repo-map based), `corpusRegistry`
 (generic register/index/graph/search), `harmony` (Harmony patching RAG — a
 curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
@@ -128,7 +129,11 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
 `rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
 `promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
-prompt/response harness — see below).
+prompt/response harness — see below),
+`discussions` (`swh_list/find/get/create/reply/edit/pin_discussion` — Steam Workshop
+Discussions threads over the DevTools route; the backlog/milestone threads that replace the
+GitHub backlog + changelog for players. Conventions + write discipline: **`docs/DISCUSSIONS.md`**;
+driven by the user-level `workshop-backlog` skill).
 
 ### Game-free prompt iteration (`promptLab`)
 
@@ -188,6 +193,34 @@ stable names and colours, collapses inactive groups) because every tab in that p
 automation. Guard rails: pinned, active, and `keep`-matching tabs are never closed, and one tab
 always survives. Run it at the end of any browser task. Tests: `npm run test:chrome` (needs a real
 browser; it self-launches).
+
+### Steam Workshop publish path (`workshop` / `swh_*`)
+
+The full reference is **`docs/STEAM-PUBLISH.md`**. The facts that cost a release to learn:
+
+- **Two routes, chosen automatically.** The extension bridge (`bridge.ts`, port 8766) is used
+  when connected; otherwise `swh_get_auth` / `swh_get_item` / `swh_open_item` /
+  `swh_update_description` / `swh_get_moderation_state` / `swh_post_changelog` drive the
+  RimAgentic Chrome over the DevTools protocol (`steamCdp.ts`, zero deps, global `WebSocket`).
+  Comment/notification/title tools are bridge-only. **Never hand-roll a CDP script** for a
+  publish — extend `steamCdp.ts` (every `Runtime.evaluate` carries a `swh:<probe>` marker the
+  stub test keys on).
+- **The bridge port has ONE owner.** Every session's MCP server tries to bind 8766; the first
+  wins, later servers proxy to it (`POST /call`), and `chrome_status.bridge.mode` says
+  `owner` / `proxy` / `unavailable` with a `note`. "bridge not started" is gone; a stale owner
+  build (no `/call`) shows up as a proxy error and the tools fall back to DevTools.
+- **8,000-character description cap** — `compose_workshop_bbcode` and `swh_update_description`
+  refuse over it; the fix is to drop the OLDEST `[h2]Changelog (vX)[/h2] … [/list]` block and
+  keep the `Full version history` link. **Unfamiliar link domains** trigger Steam's content
+  check (item hidden, edits return Access Denied) — both tools warn; only steamcommunity,
+  github, imgur, ko-fi, discord.gg are on the known-good list.
+- **`swh_post_changelog` is dry-run by default**; only `confirm:true` posts (find-or-create the
+  pinned "Changelog" Discussions thread, reply with the block from `extract_changelog_block`).
+  With `milestoneName` it instead closes out the `Next milestone: <version> …` thread: final
+  reply, retitle to `<version> <name> - shipped`, unpin (the `workshop-backlog` skill's flow).
+- **Discussions tools** (`swh_*_discussion*`, `docs/DISCUSSIONS.md`) share the route, the
+  dry-run/confirm discipline, the post cap, and the domain allow-list.
+- Tests: `cd server && npm run test:steam` (stub DevTools endpoint; touches nothing real).
 
 ### Image hosting for Workshop descriptions (`imgur`)
 
