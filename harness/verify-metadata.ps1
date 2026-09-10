@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Verify each mod's version and changelog agree everywhere they are stated. Run before a release.
 
 .DESCRIPTION

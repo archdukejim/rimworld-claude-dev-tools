@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Run the comment-triage routine unattended, in draft mode.
 .DESCRIPTION
     Self-contained hands-off run:

@@ -36,6 +36,10 @@ game-mod/Source/bin/
 game-mod/Source/obj/
 game-mod/Assemblies/
 
+# PromptLab dev-only console build output (source is tracked; binaries are not)
+promptlab/bin/
+promptlab/obj/
+
 # screen-capture artifacts (capture_* tools write to the server's cwd = repo root)
 screenshot_*.png
 screenshot_*.jpeg

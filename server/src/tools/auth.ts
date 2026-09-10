@@ -35,13 +35,14 @@ export const authTools = [
     {
         name: "list_keys",
         description:
-            "List the stored GitHub PATs and Anthropic API keys (values MASKED). Shows each key's service, label, whether " +
-            "it's active, when it was added, any expiry you recorded, and an expired flag. Pass verify:true to live-check " +
-            "each key against GitHub/Anthropic and report valid/invalid. Use this to find expired or irrelevant keys, then delete_key them.",
+            "List the stored GitHub PATs, Anthropic API keys, and imgur credentials (values MASKED). Shows each key's " +
+            "service, label, whether it's active, when it was added, any expiry you recorded, and an expired flag. Pass " +
+            "verify:true to live-check each key against GitHub/Anthropic/imgur and report valid/invalid. Use this to find " +
+            "expired or irrelevant keys, then delete_key them.",
         inputSchema: {
             type: "object",
             properties: {
-                service: { type: "string", enum: ["github", "anthropic"], description: "Optional. Limit to one service." },
+                service: { type: "string", enum: ["github", "anthropic", "imgur"], description: "Optional. Limit to one service." },
                 verify: { type: "boolean", description: "Live-check each key's validity (default false)." }
             }
         }
@@ -54,7 +55,7 @@ export const authTools = [
         inputSchema: {
             type: "object",
             properties: {
-                service: { type: "string", enum: ["github", "anthropic"], description: "Which service the key belongs to." },
+                service: { type: "string", enum: ["github", "anthropic", "imgur"], description: "Which service the key belongs to." },
                 label: { type: "string", description: "The key's label (from list_keys)." }
             },
             required: ["service", "label"]
@@ -63,12 +64,13 @@ export const authTools = [
     {
         name: "set_active_key",
         description:
-            "Choose which stored key is active for a service (e.g. switch between a RimSynapse-org PAT and a personal PAT). " +
-            "The chosen key is applied to the running server immediately — no restart. Find labels with list_keys.",
+            "Choose which stored key is active for a service (e.g. switch between a RimSynapse-org PAT and a personal PAT, " +
+            "or between two imgur accounts). The chosen key is applied to the running server immediately — no restart. " +
+            "Find labels with list_keys.",
         inputSchema: {
             type: "object",
             properties: {
-                service: { type: "string", enum: ["github", "anthropic"], description: "Which service to switch." },
+                service: { type: "string", enum: ["github", "anthropic", "imgur"], description: "Which service to switch." },
                 label: { type: "string", description: "The key's label to make active (from list_keys)." }
             },
             required: ["service", "label"]
@@ -132,7 +134,7 @@ async function setGitHubToken(args: any, applyToken: (t: string) => void) {
 }
 
 async function listKeysTool(args: any) {
-    const services: KeyService[] = args.service ? [args.service] : ["github", "anthropic"];
+    const services: KeyService[] = args.service ? [args.service] : ["github", "anthropic", "imgur"];
     const verify = !!args.verify;
     const now = nowIso();
     const out: any = {};
@@ -144,6 +146,9 @@ async function listKeysTool(args: any) {
                 addedAt: e.addedAt, expiresAt: e.expiresAt ?? null, expired: isExpired(e, now),
                 note: e.note ?? null
             };
+            // imgur stores a JSON credential blob, not a bare secret — summarise it instead of
+            // masking the raw JSON (which would leak field names and part of the client id).
+            if (svc === "imgur") Object.assign(row, describeImgur(e.value));
             if (verify) row.valid = await verifyKey(svc, e.value);
             return row;
         }));
@@ -178,12 +183,34 @@ function activeLabel(service: KeyService): string | null {
 async function verifyKey(service: KeyService, value: string): Promise<boolean> {
     try {
         if (service === "github") { await new Octokit({ auth: value }).rest.users.getAuthenticated(); return true; }
+        if (service === "imgur") {
+            // Cheap validity ping: /3/credits accepts either auth mode and costs nothing.
+            const c = JSON.parse(value);
+            const header = c.accessToken ? `Bearer ${c.accessToken}` : `Client-ID ${c.clientId}`;
+            const res = await fetch("https://api.imgur.com/3/credits", { headers: { Authorization: header } });
+            return res.ok;
+        }
         // anthropic: cheap validity ping via a tiny models list call
         const Anthropic = require("@anthropic-ai/sdk");
         const Ctor = Anthropic.default || Anthropic;
         await new Ctor({ apiKey: value }).models.list({ limit: 1 });
         return true;
     } catch { return false; }
+}
+
+/** Summarise an imgur credential blob for list_keys: identity + mode, never the tokens. */
+function describeImgur(value: string): Record<string, unknown> {
+    try {
+        const c = JSON.parse(value);
+        return {
+            masked: maskSecret(String(c.clientId || "")),
+            account: c.accountUsername ?? null,
+            mode: c.refreshToken ? "account" : "anonymous",
+            tokenExpiresAt: c.expiresAt ?? null
+        };
+    } catch {
+        return { masked: "(unparseable imgur credential blob)", mode: "unknown" };
+    }
 }
 
 /** Show a Windows input box and return the pasted text (empty string if cancelled). */

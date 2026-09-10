@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  Verify every shipped binary matches its source of truth. Run before a release.
 
 .DESCRIPTION

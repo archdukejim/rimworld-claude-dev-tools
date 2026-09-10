@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { withIpcLock } from "../ipcLock";
 
 export const gameIpcTools = [
     {
@@ -109,6 +110,21 @@ async function maybeAttachWindow(toolName: string, toolArgs: any, result: any): 
 }
 
 async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promise<any> {
+    // Serialize every raw round-trip on the shared, fixed-filename channel so
+    // concurrent sessions (and un-lease-gated peeks like capture_*) can't clobber
+    // each other's request/response. See ipcLock.ts. Cheap when uncontended; the
+    // session-level FIFO lease (gameLease.ts) is the coarser, fairer layer above.
+    return await withIpcLock(
+        ipcDir(),
+        name,
+        () => callInGameToolUnlocked(name, args, maxWaitMs),
+        // Stale-break: a dead/wedged holder may have left a half-written response
+        // that positional (id-less) correlation would misread as ours. Scrub it.
+        () => { try { fs.unlinkSync(toolOutputFile()); } catch { /* nothing to scrub */ } }
+    );
+}
+
+async function callInGameToolUnlocked(name: string, args: any, maxWaitMs: number): Promise<any> {
     const requestPayload = {
         name,
         arguments: args
@@ -125,7 +141,7 @@ async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promi
     const iterations = Math.max(1, Math.round(maxWaitMs / 100));
     for (let i = 0; i < iterations; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         if (fs.existsSync(toolOutputFile())) {
             try {
                 const outputContent = fs.readFileSync(toolOutputFile(), "utf8");
@@ -137,7 +153,7 @@ async function callInGameTool(name: string, args: any, maxWaitMs = 10000): Promi
             }
         }
     }
-    
+
     // The old message — "Is the game running and unpaused?" — was a guess, and a wrong one twice
     // over: once while the game was running fine but the request had been written to a folder the
     // game was not reading, and once while the game had already died of a native crash. Neither

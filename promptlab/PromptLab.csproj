@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        PromptLab — the universal, game-free RimSynapse prompt/response harness. It composes the EXACT prompt a
+        given LLM call site would send, sends it to the same local model the game uses, and returns the RAW
+        response (+ the composed prompt, an optional family-specific parse, and metadata). It does NOT judge —
+        judging is the job of whatever specific tool is built on top, tuned to that tool's goal.
+
+        Universal by a family REGISTRY (see Contract.cs + Registry.cs): each LLM call site is a `IPromptFamily`.
+        Faithful by construction: a family <Compile>-links the PURE, Verse-free composer authored ONCE in its
+        mod (from the workspace), so the lab can't drift from the game. A mod that isn't present in the
+        workspace simply contributes no family — its linked source + adapter are conditionally excluded and the
+        reflection registry never sees it.
+
+        Built on demand by harness/promptlab.ps1 (which passes -p:WorkspaceRoot=<mod workspace>). NOT built by
+        the TS server build or the .mcpb; it is a dev-only tool.
+
+        Per-mod source roots default under $(WorkspaceRoot) but are overridable (e.g. -p:ConversationsSrc=<path>)
+        so a family can be tested against a mod branch/worktree before it lands in the workspace.
+    -->
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <AssemblyName>PromptLab</AssemblyName>
+        <RootNamespace>RimSynapse.PromptLab</RootNamespace>
+        <Nullable>disable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <LangVersion>latest</LangVersion>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+        <ConversationsSrc Condition="'$(ConversationsSrc)' == ''">$(WorkspaceRoot)\Conversations</ConversationsSrc>
+        <WorldNewsSrc     Condition="'$(WorldNewsSrc)' == ''">$(WorkspaceRoot)\WorldNews</WorldNewsSrc>
+        <PsychologySrc    Condition="'$(PsychologySrc)' == ''">$(WorkspaceRoot)\Psychology</PsychologySrc>
+    </PropertyGroup>
+
+    <!-- Framework core (always compiled). -->
+    <ItemGroup>
+        <Compile Include="Contract.cs" />
+        <Compile Include="Registry.cs" />
+        <Compile Include="CoreConfigReader.cs" />
+        <Compile Include="LlmCaller.cs" />
+        <Compile Include="Program.cs" />
+    </ItemGroup>
+
+    <!-- conversation family: Conversations' pure composer + its adapter, only if the mod source is present. -->
+    <ItemGroup Condition="Exists('$(ConversationsSrc)\Source\Generation\ThinPromptComposer.cs')">
+        <Compile Include="$(ConversationsSrc)\Source\Generation\ConversationBeat.cs"      Link="Linked\conversation\ConversationBeat.cs" />
+        <Compile Include="$(ConversationsSrc)\Source\Generation\ThinPromptComposer.cs"    Link="Linked\conversation\ThinPromptComposer.cs" />
+        <Compile Include="$(ConversationsSrc)\Source\Generation\IdentityComposer.cs"      Link="Linked\conversation\IdentityComposer.cs" />
+        <Compile Include="$(ConversationsSrc)\Source\Generation\LenientDialogueParser.cs" Link="Linked\conversation\LenientDialogueParser.cs" />
+        <Compile Include="Families\ConversationFamily.cs" />
+    </ItemGroup>
+
+    <!-- newspaper family: WorldNews' pure composer + its adapter, only if the mod source is present. -->
+    <ItemGroup Condition="Exists('$(WorldNewsSrc)\Source\Newspaper\NewspaperPromptComposer.cs')">
+        <Compile Include="$(WorldNewsSrc)\Source\Newspaper\NewspaperPromptComposer.cs" Link="Linked\newspaper\NewspaperPromptComposer.cs" />
+        <Compile Include="Families\NewspaperFamily.cs" />
+    </ItemGroup>
+
+    <!-- psychology families: Psychology's pure composers + their adapters, only if the mod source is present. -->
+    <ItemGroup Condition="Exists('$(PsychologySrc)\Source\Prompts\PsychologyPrompt.cs')">
+        <Compile Include="$(PsychologySrc)\Source\Prompts\PsychologyPrompt.cs"                Link="Linked\psychology\PsychologyPrompt.cs" />
+        <Compile Include="$(PsychologySrc)\Source\Prompts\VoiceProfilePromptComposer.cs"      Link="Linked\psychology\VoiceProfilePromptComposer.cs" />
+        <Compile Include="$(PsychologySrc)\Source\Prompts\BreakPromptComposer.cs"             Link="Linked\psychology\BreakPromptComposer.cs" />
+        <Compile Include="$(PsychologySrc)\Source\Prompts\ChildhoodMemoryPromptComposer.cs"   Link="Linked\psychology\ChildhoodMemoryPromptComposer.cs" />
+        <Compile Include="Families\PsychologyFamilies.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    </ItemGroup>
+
+</Project>

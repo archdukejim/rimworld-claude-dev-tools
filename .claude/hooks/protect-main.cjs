@@ -28,7 +28,8 @@ if (!cmd || !/\bgit\b/.test(cmd)) process.exit(0);
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
 const PROTECTED = ["main", "master", "development"];
 
-function sh(c) { try { return execSync(c, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } }
+// windowsHide: the hook runs consoleless, so without it the git child would flash a window per Bash call.
+function sh(c) { try { return execSync(c, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim(); } catch { return ""; } }
 
 // Resolve the directory the command targets: `git -C <dir>`, or a leading `cd <dir> &&`, else the project dir.
 function firstArg(re) { const m = cmd.match(re); return m ? (m[2] || m[3] || m[4]) : null; }

@@ -11,6 +11,9 @@
  * plumbing below is intentionally small and reusable for that.
  */
 
+// Tab/tab-group hygiene lives in its own file; it registers self.RIMAGENTIC_TABS.
+importScripts("/src/tabs.js");
+
 const STEAM_ITEM_RE = /^https:\/\/steamcommunity\.com\/sharedfiles\/filedetails\/.*[?&]id=(\d+)/;
 
 // Send an SWH call to a specific tab's bridge.
@@ -194,11 +197,23 @@ async function openWorkshopItem(args) {
   return { ok: true, tabId: tab.id, url, context };
 }
 
-// Route a bridge command: tab-management actions run here in the background;
+// Route a bridge command. Anything needing chrome.* APIs (tab management, tab GROUPS — which have no
+// DevTools equivalent, so the MCP server can only reach them through here) runs in the background;
 // everything else is forwarded to window.SWH in the active Steam tab.
+const BACKGROUND_METHODS = {
+  openItem: (args) => openWorkshopItem(args || {}),
+  tabsInventory: () => self.RIMAGENTIC_TABS.tabsInventory(),
+  tabsTidy: (args) => self.RIMAGENTIC_TABS.tabsTidy(args || {}),
+};
+
 async function runCommand(method, args) {
-  if (method === "openItem") return await openWorkshopItem(args || {});
-  return await callActiveTab(method, args, 25000);
+  const handler = BACKGROUND_METHODS[method];
+  if (handler) return await handler(args);
+  // This per-call timeout must be LONGER than the server's callTimeoutMs (default 30000, config.ts),
+  // or the extension gives up first and POSTs an error while the Steam write may still be in flight —
+  // the server then reports failure and a retry double-posts. Keeping the server as the outer bound
+  // means a slow-but-successful write still reports through /result before anyone reports failure.
+  return await callActiveTab(method, args, 45000);
 }
 
 async function bridgeEnabled() {

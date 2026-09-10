@@ -10,7 +10,10 @@ import * as path from "path";
  * breaks on upgrade. Stored under %LOCALAPPDATA%\RimAgentic\keys.json, mode 0600.
  */
 
-export type KeyService = "github" | "anthropic";
+// "imgur" stores a JSON credential blob (clientId/clientSecret/access+refresh tokens) rather than a
+// bare secret — see tools/imgur.ts. Everything else here treats it as an opaque string, so the
+// multi-key/active-key machinery gives per-account imgur credentials for free.
+export type KeyService = "github" | "anthropic" | "imgur";
 
 export interface KeyEntry {
     label: string;        // unique per service; how the user names/selects a key

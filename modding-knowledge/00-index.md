@@ -18,6 +18,9 @@ the specific doc for the task. This is a working starter set — expand it over 
 - **06-using-this-toolkit.md** — how to drive THIS toolkit: discover the target
   mod, resolve load order, deploy, launch, run tests, read the log, and use the
   in-game tool bridge to inspect/act on a running game.
+- **07-in-game-tests.md** — the in-game test host (RimAgentic bridge) and per-repo
+  `Source.Tests` suites: where cases live, phases, writing rules, the sentinel
+  cases, and the `[SYNAPSE-TEST]` wire contract.
 
 ## The core mental model
 

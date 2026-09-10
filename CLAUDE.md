@@ -55,7 +55,14 @@ The server is TypeScript, compiled to `server/build/`, and also packaged as an
 - `docs/` — `API.md` (Steam Workshop `window.SWH` API), `MCP-PHASE2.md`,
   `SCHEDULING.md`, `COMMENT-TRIAGE.md`, `CLAUDE-USAGE.md`.
 - `extension/` — the Steam Workshop Helper browser extension.
-- `.claude/skills/` — includes `steam-comment-triage`.
+- `.claude/skills/` — includes `ui-test`, `workshop-page` (repo-scoped on purpose: they lean on
+  in-repo docs/tools). Cross-repo workflow skills live at USER level (`~/.claude/skills/`):
+  `work-next-milestone`, `feature-complete`, `work-bugs`, `ship-it` (absorbed the old
+  `cut-release`), `steam-comment-triage`. Don't duplicate a skill in both places — one home each.
+- `.claude/agents/` — project subagents. `rimworld-isolation-tester` proves a specific
+  *gameplay behavior* fires in a controlled in-game environment (precondition gate →
+  `perf_watch` funnel → verdict). Use it for "does X actually work in-game / why isn't
+  X firing", not for load-time or compile checks.
 
 ## Tool-family pattern (the important convention)
 
@@ -90,10 +97,13 @@ either throw (Claude sees the error) or return an error string in `text`.
 ## Adding a new tool / tool family (checklist)
 
 1. Create `server/src/tools/<family>.ts` following the pattern above.
-2. Wire it into `server/src/index.ts` in **three** places:
+2. Wire it into `server/src/index.ts` in **four** places:
    - `import { <family>Tools, handle<Family>Tool } from "./tools/<family>";`
    - spread `...<family>Tools` into the `ALL_TOOLS` array.
-   - add a dispatch block: `if (<family>Tools.some(t => t.name === name)) return await handle<Family>Tool(name, args);`
+   - add a dispatch block to the `CallToolRequestSchema` handler (stdio):
+     `if (<family>Tools.some(t => t.name === name)) return await handle<Family>Tool(name, args);`
+   - add the **same branch to the SSE `app.post("/api/tools/:name")` chain** further down — it is a
+     separate `else if` ladder, and a family wired only into the stdio path 404s over SSE.
 3. If the tool needs a GitHub token, add its name to the `GITHUB_BACKED_TOOLS`
    set. Token is optional server-wide and checked per-call — non-GitHub families
    (RimWorld, pc-control, wiki, factions, psychology) must stay usable with no token.
@@ -108,17 +118,175 @@ GitHub-backed (need a token): `issues`, `projects`, `codebase`, `sync`, plus
 
 No token required: `wiki`, `factions`, `psychology`, `pcControl` (desktop
 automation via `@nut-tree-fork/nut-js`), `rimworldDev` (deploy/launch/log),
-`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam, via the
-loopback `bridge`), `github` (SWH issue tools, repo-map based), `corpusRegistry`
-(generic register/index/graph/search), `harmony` (Harmony patching RAG — a
+`gameIpc` (live game calls), `testing`, `workshop`/`swh_*` (Steam — extension
+loopback `bridge` when connected, DevTools fallback otherwise; see below),
+`github` (SWH issue tools, repo-map based), `corpusRegistry`
+(generic register/index/graph/search; `build_mod_def_corpus` in the `defCorpus` family builds a graphed
+corpus over any set of mods' Defs + Patches, e.g. one per mod family, with vanilla defs mixed in), `harmony` (Harmony patching RAG — a
 curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
 `auth` (local secret keyring — `set_github_token`, `list_keys`, `delete_key`,
 `set_active_key`; multiple labelled keys per service, active-key resolution),
-`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs).
+`imgur` (host generated images for Workshop descriptions — see below),
+`chromeCtl` (launch/own a dedicated Chrome + tab-group hygiene — see below),
+`rimsort` (`suppress_rimsort_warnings` — quiets RimSort's dev-noise dialogs),
+`promptLab` (`simulate_llm_prompt`, `list_prompt_families` — the universal game-free
+prompt/response harness — see below),
+`discussions` (`swh_list/find/get/create/reply/edit/pin_discussion` — Steam Workshop
+Discussions threads over the DevTools route; the backlog/milestone threads that replace the
+GitHub backlog + changelog for players. Conventions + write discipline: **`docs/DISCUSSIONS.md`**;
+driven by the user-level `workshop-backlog` skill),
+`infographic` (`render_html_to_image`, `compose_infographic`, `publish_infographic` —
+themed HTML → crisp PNG via headless Chrome → fan-out to edition repos + Steam
+descriptions; the render gotchas [UTF-8 loopback serving, virtual-time budget, forced
+`data-theme`, measured tight height] and the publish flow live in **`docs/INFOGRAPHICS.md`** —
+read it before touching the renderer),
+`gameLease` (`game_lease_status` — inspect the FIFO game lease),
+`session` (`use_session`, `set_session_modlist`, `get_session_modlist`, `ensure_game` — per-session
+modlist cache + clean-template game bring-up; see `docs/SESSION-GATING.md`).
+
+### Game-free prompt iteration (`promptLab`)
+
+The **universal** RimSynapse prompt/response harness. `simulate_llm_prompt` composes the EXACT prompt a
+given LLM call site (**family**) would send and — unless `dryRun` — sends it to the same local model the
+game uses, with **no RimWorld launch**, returning the **raw** response (+ composed system/user, an
+optional family parse, and metadata). It replaces the deploy→launch→load→debug-action→read-log loop for
+tuning prompts (e.g. the Conversations #44 clinical-technobabble regression). **It does NOT judge** —
+parsing/scoring the raw is the job of whatever specific tool is built on top, tuned to that tool's goal.
+
+- **Family registry.** Each call site is an `IPromptFamily` (`promptlab/Contract.cs`), discovered by
+  reflection (`Registry.cs`). Current families: `conversation` (Conversations dialogue), `newspaper`
+  (WorldNews broadsheet), and `psychology.voice` / `psychology.break` / `psychology.childhood` (Psychology —
+  note `psychology.voice` produces the `voiceProfile` the `conversation` #44 logic consumes, so the whole
+  register loop is tunable game-free). `list_prompt_families` returns each family's input contract (fields, types,
+  provenance) + catalog size. `mode:"suite"` runs a family's built-in scenario catalog; `mode:"scenario"`
+  runs your own `inputs` (family-specific — see the contract). `dryRun` builds prompts without an LLM.
+- **Faithful by construction:** a family `<Compile>`-links the PURE, Verse-free composer authored ONCE
+  in its mod (`ThinPromptComposer`/`IdentityComposer` in Conversations; `NewspaperPromptComposer` in
+  WorldNews), so the lab can't drift from the game. A TS reimplementation would silently diverge — don't
+  build one. Add a family = add a mod-owned pure composer + a `promptlab/Families/<X>Family.cs` adapter.
+- **Pipeline:** MCP tool → `harness/promptlab.ps1` → `promptlab/PromptLab.exe`. The console links each
+  mod's pure composer from the workspace (`$RS_Root\<Mod>`), reads the **live Core config** for
+  endpoint/model, auto-maps the loaded local model like the game, and POSTs the faithful non-agentic body
+  `{model, messages}` + thinking-disable flags — no temperature/max_tokens/response_format.
+- **Mod source location:** a family only compiles in if its mod's pure composer is present at
+  `$RS_Root\<Mod>`. To test a family against a mod **branch/worktree** before it lands, set the matching
+  `*_SRC` env var (`CONVERSATIONS_SRC`, `WORLDNEWS_SRC`, …) to that checkout — `promptlab.ps1` passes it
+  through as an MSBuild property. Requires `dotnet`.
+
+### The RimAgentic Chrome (`chromeCtl`)
+
+`launch_chrome` starts a Chrome the agent owns, so browser-driven work never depends on the
+user having a browser open. Key facts, each of which cost a debugging cycle to establish:
+
+- **Dedicated profile**, `%LOCALAPPDATA%\RimAgentic\chrome-profile` — never the user's. Chrome
+  can't add a debugging port to an *already running* instance, so sharing the default profile
+  would mean the launcher only works when Chrome happens to be closed. Sessions persist, so you
+  sign into Steam/imgur there once.
+- **`--load-extension` is ignored by Chrome 137+** (anti-malware hardening) — and it fails
+  *silently*. The extension is installed over CDP via `Extensions.loadUnpacked`, which needs
+  `--enable-unsafe-extension-debugging` at launch and a **forward-slash** path (a Windows
+  backslash path returns "File path cannot be resolved"). This is per-session, so the launcher
+  re-installs on every launch — which also means the running extension is always current.
+- **Don't detect the extension by sniffing for any `chrome-extension://` service worker** —
+  Chrome runs its own component extensions and you'll get a false positive. Match the background
+  script path (`/src/background.js`), and treat the bridge connection as the real liveness signal:
+  MV3 service workers spin down when idle.
+- `close_chrome` only kills processes whose command line matches `--user-data-dir=<our profile>`
+  anchored at a word boundary — a bare substring match would also catch sibling profiles.
+
+**Tab groups** (`chrome_tabs`, `chrome_tidy`) are not a DevTools concept — `chrome.tabGroups` is
+extension-only — so they route through the loopback bridge to the service worker
+(`extension/src/tabs.js`, exposed as `tabsInventory` / `tabsTidy`). `chrome_tidy` is deliberately
+aggressive (closes duplicates + idle tabs, dissolves singleton/empty groups, regroups by site with
+stable names and colours, collapses inactive groups) because every tab in that profile belongs to
+automation. Guard rails: pinned, active, and `keep`-matching tabs are never closed, and one tab
+always survives. Run it at the end of any browser task. Tests: `npm run test:chrome` (needs a real
+browser; it self-launches).
+
+### Steam Workshop publish path (`workshop` / `swh_*`)
+
+The full reference is **`docs/STEAM-PUBLISH.md`**. The facts that cost a release to learn:
+
+- **Two routes, chosen automatically.** The extension bridge (`bridge.ts`, port 8766) is used
+  when connected; otherwise `swh_get_auth` / `swh_get_item` / `swh_open_item` /
+  `swh_update_description` / `swh_get_moderation_state` / `swh_post_changelog` drive the
+  RimAgentic Chrome over the DevTools protocol (`steamCdp.ts`, zero deps, global `WebSocket`).
+  Comment/notification/title tools are bridge-only. **Never hand-roll a CDP script** for a
+  publish — extend `steamCdp.ts` (every `Runtime.evaluate` carries a `swh:<probe>` marker the
+  stub test keys on).
+- **The bridge port has ONE owner.** Every session's MCP server tries to bind 8766; the first
+  wins, later servers proxy to it (`POST /call`), and `chrome_status.bridge.mode` says
+  `owner` / `proxy` / `unavailable` with a `note`. "bridge not started" is gone; a stale owner
+  build (no `/call`) shows up as a proxy error and the tools fall back to DevTools.
+- **8,000-character description cap** — `compose_workshop_bbcode` and `swh_update_description`
+  refuse over it; the fix is to drop the OLDEST `[h2]Changelog (vX)[/h2] … [/list]` block and
+  keep the `Full version history` link. **Unfamiliar link domains** trigger Steam's content
+  check (item hidden, edits return Access Denied) — both tools warn; only steamcommunity,
+  github, imgur, ko-fi, discord.gg are on the known-good list.
+- **`swh_post_changelog` is dry-run by default**; only `confirm:true` posts (find-or-create the
+  pinned "Changelog" Discussions thread, reply with the block from `extract_changelog_block`).
+  With `milestoneName` it instead closes out the `Next milestone: <version> …` thread: final
+  reply, retitle to `<version> <name> - shipped`, unpin (the `workshop-backlog` skill's flow).
+- **Discussions tools** (`swh_*_discussion*`, `docs/DISCUSSIONS.md`) share the route, the
+  dry-run/confirm discipline, the post cap, and the domain allow-list.
+- Tests: `cd server && npm run test:steam` (stub DevTools endpoint; touches nothing real).
+
+### Image hosting for Workshop descriptions (`imgur`)
+
+Steam BBCode embeds images by URL only, so nothing this server generates
+(`capture_*`, `render_workshop_infographic`, `merge_workshop_tiles`, the
+`showcase` gallery) is usable in a description until it's hosted. The pipeline is:
+
+```
+showcase_add / render_* → imgur_upload → bbcodeImages → compose_workshop_bbcode → swh_update_description
+```
+
+- **One-time setup:** register an app at <https://api.imgur.com/oauth2/addclient>
+  ("OAuth 2 authorization with a callback URL", callback exactly
+  `http://localhost:8788/imgur/callback`), then `imgur_login { clientId, clientSecret }`.
+  It opens the consent page in the **RimAgentic Chrome** (launching it if needed — see
+  `chromeCtl` above), catches the loopback redirect, and stores tokens in the same
+  keyring as the GitHub PATs (service `imgur`, JSON blob; multiple accounts via `label`).
+  A registered client id is unavoidable: imgur ships its web client id inside a webpack
+  bundle, so there is no registration-free upload path that isn't reverse-engineering
+  their site — don't go looking for one again.
+  `imgur_login { clientId, anonymousOnly: true }` skips OAuth entirely — uploads then
+  aren't tied to an account and are only deletable via the deletehash in the local ledger.
+- **`imgur_upload` is idempotent** — it dedups on file *content* hash against a local ledger
+  (`%LOCALAPPDATA%\RimAgentic\imgur\uploads.json`), so rebuilding a workshop page reuses
+  existing links instead of burning imgur's daily quota. `force: true` overrides.
+- It returns a ready-made `bbcodeImages: [{url, caption}]` — pass it straight to
+  `compose_workshop_bbcode` as `images`. Uploading by `mod` pulls from the showcase gallery
+  and carries each item's caption through, so passing UI-test evidence becomes a description
+  with no manual step.
+- **Upload preference order:** `imgur_upload` (API; needs `imgur_login` once) → `imgur_web_upload`
+  (no credentials: drives the RimAgentic Chrome's logged-in session over CDP `DOM.setFileInputFiles`
+  — no window focus, no drag-drop; needs `launch_chrome` + a signed-in imgur session). **Never drive
+  the imgur website manually** (clicks/keystrokes/paste into the page) — blind desktop input on a
+  contested desktop is what stranded past agents. Browser-session uploads have no deletehash.
+- **`imgur_status` reports BOTH paths — never declare imgur broken from `authorized:false` alone.**
+  It probes the RimAgentic Chrome for a signed-in imgur web session (cookie names over CDP) and
+  reports `webSession.loggedIn` + `uploadsAvailable` + `preferredUpload`. The standing setup on this
+  machine is web-session-only (no API credentials, by choice): that is a WORKING configuration via
+  `imgur_web_upload`, not an error to fix. If Chrome isn't running, launch it and re-check before
+  concluding anything.
+- **`imgur_resolve`** turns any imgur reference (album/gallery/image-page/direct URL, bare hash)
+  into direct full-size image URLs: local ledger first (zero network for anything uploaded via
+  `imgur_upload`), then the imgur API, then a normalised scrape (browser UA; strips query strings
+  and the one-char resize suffix, prefers .png, dedups by base hash, optionally verifies real
+  dimensions). Never hand-roll this with a page fetch — scrapes surface thumbnails first, and
+  WebFetch is blocked for imgur.com.
+- Tests: `cd server && npm run test:imgur` (stub API + temp `LOCALAPPDATA`; touches neither
+  imgur nor your real keyring). The OAuth round-trip itself isn't covered — it needs real credentials.
 
 ## Build / run
 
 - Build: `server/build_server.bat` → runs `npm run build` (`tsc`, `src/` → `build/`).
+- **`server/node_modules` is untracked** (it used to be committed, which made every worktree
+  checkout crawl). In session worktrees it's a **junction to the main checkout's copy** (made by
+  the SessionStart hook) — treat it as read-only there; `npm install` / `npm ci` runs ONLY in
+  `C:\github\rimworld-claude-dev-tools\server`. The committed `package-lock.json` is kept in
+  sync with `package.json`, so `npm ci` works in a fresh clone.
 - Run (stdio): `node server/build/index.js`. SSE: add `--sse --port <n>`.
 - The packaged runtime is `server/localMCP.exe`; `manifest.json` entry point is
   `server/index.js` launched with `node`.
@@ -147,6 +315,31 @@ curated corpus in `harmony-knowledge/` bootstrapped into the corpus registry),
   than reported as clean. The durable reference (what's enforced, the known-good test modlist,
   and headless-testing guidance incl. the RP2 / recovery-NRE caveats) is
   **`docs/HARNESS-RELIABILITY.md`**.
+- **The game is FIFO-gated across sessions** — the game-resource tools (`deploy_rimworld_mods`,
+  `configure_active_mods`, `launch_*`, `run_rimworld_tests`, `restart_game`, `execute_game_tool`,
+  `save_rimworld_game`, `list_game_tools`) run one session at a time in arrival order via a
+  cross-process lease (`server/src/gameLease.ts`), so concurrent sessions can't stomp the single
+  game / Mods folder / ModsConfig. A blocked call means another session holds it — check with
+  `game_lease_status`. The raw IPC channel is separately mutexed per round-trip
+  (`server/src/ipcLock.ts`). Reference: **`docs/SESSION-GATING.md`**. (Layer 1 of the multi-PC
+  test-broker plan; the idle watchdog no longer image-kills, so it can't nuke another session's game.)
+- **Prefer `ensure_game` over launching by hand** — Layer 1.5 adds a per-session modlist cache
+  (`set_session_modlist`, keyed by your worktree short-id, inferred from paths or set via
+  `use_session`). `ensure_game` brings the game up with your cached modlist **rebuilt from a clean
+  template every time** (never an incremental ModsConfig mutation — kills the drift-bug class),
+  reusing the live game if its modlist already matches or otherwise taking over (kill → scrub →
+  rewrite → relaunch). See **`docs/SESSION-GATING.md`**.
+
+- **Exactly one `sharp` in the tree — `package.json` `overrides` keeps it that way.** `@xenova/transformers`
+  wants `sharp@^0.32`; the server uses `^0.35`. Without the override npm nests a second sharp under
+  `node_modules/@xenova/transformers/node_modules/`, and both ship a DLL named `libvips-42.dll`. Windows
+  loads a DLL by name once per process, so after any corpus/embedding tool loads transformers (and its
+  old sharp) first, every sharp-backed workshop-image tool fails with ERR_DLOPEN_FAILED "The specified
+  procedure could not be found" for the life of that server process — it is NOT a Node-ABI mismatch,
+  and sharp loads fine in a fresh `node -e`. Guard: `cd server && npm run test:sharp` (loads
+  transformers first, then sharp). If it fails after an `npm install`, delete the nested folder and
+  its `package-lock.json` entries and reinstall — `npm install`/`npm dedupe` do not evict an
+  already-locked nested copy on their own.
 
 ## GitHub auth & release ops (rules)
 

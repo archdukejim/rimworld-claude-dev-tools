@@ -32,6 +32,16 @@ Two hooks in `.claude/settings.json` do the work:
    `development`. It prints the worktree path and the rules into your context. It never blocks startup;
    if it can't create a worktree it warns and tells you to coordinate.
    - Override the worktree root with `CLAUDE_WORKTREE_ROOT`.
+   - **Dependencies:** `server/node_modules` is untracked; the hook JUNCTIONS the worktree's
+     `server/node_modules` to the main checkout's copy, so a fresh worktree builds immediately.
+     Treat it as **read-only from worktrees** — `npm install` / `npm ci` runs ONLY in the main
+     checkout's `server/` (the junction target every session shares). If the hook says the main
+     checkout has no `node_modules`, install there once, not in the worktree.
+   - **Auto-GC:** the hook also spawns `.claude/hooks/gc-worktrees.cjs` (detached, best-effort),
+     which removes worktrees that are simultaneously fully merged into `origin/development`,
+     clean, and idle for 7+ days — then prunes admin entries and deletes their `agent/*`
+     branches (`-d`, so unmerged work always survives). Dry-run it any time:
+     `node .claude/hooks/gc-worktrees.cjs --dry-run`.
 
 2. **`PreToolUse(Bash)` → `.claude/hooks/protect-main.cjs`**
    Hard-blocks (exit 2) any `git commit` / `merge` / `rebase` / `push` whose target branch is

@@ -41,7 +41,7 @@ claude-cli://open?q=%2Fplugin%20install%20rimagentic%40rimworld-claude-dev-tools
 ## Two halves
 
 - **MCP server** (`server/`) — the tools an agent calls: discover mods, resolve load
-  order, build/deploy, launch an isolated dev instance, run the in-game TestRunner,
+  order, build/deploy, launch an isolated dev instance, run the in-game test suite,
   triage `Player.log`, query the modding docs, and drive the in-game tool bridge.
 - **Game-side mod** (`game-mod/`) — a standalone RimWorld mod (`RimAgentic`) that
   exposes the base game + DLC surface over a file bridge: discover and invoke in-game
@@ -55,6 +55,27 @@ Read `modding-knowledge/` (via the `query_modding_docs` tool) to learn how to mo
 then run the loop: `resolve_mod_load_order` → `configure_active_mods` →
 `deploy_rimworld_mods` → `run_rimworld_tests` → `read_rimworld_log` → inspect with
 `execute_game_tool` → fix → repeat. See `modding-knowledge/06-using-this-toolkit.md`.
+
+## Steam Workshop publishing (`swh_*`)
+
+The Workshop tools drive the logged-in Steam session in the **RimAgentic Chrome**
+(`launch_chrome`: a dedicated profile with remote debugging on port 9222). Two routes:
+
+- **Extension bridge** — the bundled extension long-polls `127.0.0.1:8766` and runs
+  `window.SWH` calls (comments, notifications, title). Only the *first* MCP server to
+  bind the port owns it; later servers proxy to it, and `chrome_status.bridge.mode`
+  says which (`owner` / `proxy` / `unavailable`) plus why.
+- **DevTools fallback** — `swh_get_auth`, `swh_get_item`, `swh_update_description`,
+  `swh_open_item`, `swh_get_moderation_state` and `swh_post_changelog` work with no
+  bridge at all, straight over the DevTools protocol. A release never stalls on
+  "bridge not started" while Chrome is up.
+
+Guardrails that came from real publishes: descriptions over Steam's 8,000-character
+cap are refused up front (drop the oldest changelog block); links to domains Steam's
+content check may not know are flagged; `swh_update_description` verifies the version
+line on the public page and returns the moderation state. `swh_post_changelog` keeps a
+pinned "Changelog" thread on the item's Discussions tab (dry-run by default). Details,
+page anatomy and the ship-it flow: **`docs/STEAM-PUBLISH.md`**. Tests: `npm run test:steam`.
 
 ## Layout
 
